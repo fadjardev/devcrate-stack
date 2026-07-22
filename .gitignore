@@ -1,0 +1,49 @@
+# ============================================================
+#  E:\dev  —  Custom Local PHP Development Stack
+#  Versioned:  scripts, docs, and service CONFIGS only.
+#  Ignored:    vendored binaries, runtime data, secrets, projects.
+#  (Binaries are downloadable; see SETUP.md to rebuild the stack.)
+# ============================================================
+
+# --- Application code (lives in its own repos) ---
+/projects/
+
+# --- Downloaded archives & installers ---
+*.zip
+*.7z
+*.tar.gz
+/_downloads/
+mkcert.exe
+
+# --- Logs, crash dumps, temp ---
+*.log
+*.dump
+erl_crash.dump
+
+# --- Vendored runtimes (downloadable — don't version) ---
+/mariadb/
+/erlang/
+/rabbitmq/
+/composer/
+/tools/
+
+# --- PHP: keep ONLY each version's php.ini, drop binaries/zips/junction ---
+/php/**
+!/php/*/
+!/php/*/php.ini
+/php/current/
+
+# --- Nginx: keep ONLY conf/, drop binaries, logs, temp, and TLS keys ---
+/nginx-1.31.1/**
+!/nginx-1.31.1/conf/
+!/nginx-1.31.1/conf/**
+/nginx-1.31.1/conf/certs/
+
+# --- Claude Code local settings (machine-specific) ---
+.claude/settings.local.json
+
+# --- OS / editor junk ---
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.swp
