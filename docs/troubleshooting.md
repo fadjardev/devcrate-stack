@@ -29,20 +29,36 @@ After `start.bat`, confirm:
 - [ ] `date.timezone` shows `Asia/Jakarta` in phpinfo
 - [ ] `upload_max_filesize` shows `64M` in phpinfo
 - [ ] RabbitMQ mgmt UI reachable at `http://127.0.0.1:15672` (guest/guest)
-- [ ] `E:\dev\php\php82\php.exe E:\dev\tools\rabbitmq-smoketest\test.php` ->
+- [ ] `C:\devcrate\php\php82\php.exe C:\devcrate\tools\rabbitmq-smoketest\test.php` ->
       `RESULT: OK`
 
 ## Log locations
 
 ```
-Nginx errors      E:\dev\nginx-1.31.1\logs\error.log
-Nginx per-site    E:\dev\nginx-1.31.1\logs\<domain>.error.log
-PHP errors        E:\dev\php\php74\php_errors.log
-                  E:\dev\php\php82\php_errors.log
-                  E:\dev\php\php85\php_errors.log
-MariaDB           E:\dev\mariadb\mariadb_error.log
-RabbitMQ          E:\dev\rabbitmq\data\log\rabbit@<HOSTNAME>.log
+Nginx errors      C:\devcrate\nginx-1.31.1\logs\error.log
+Nginx per-site    C:\devcrate\nginx-1.31.1\logs\<domain>.error.log
+PHP errors        C:\devcrate\php\php74\php_errors.log
+                  C:\devcrate\php\php82\php_errors.log
+                  C:\devcrate\php\php85\php_errors.log
+MariaDB           C:\devcrate\mariadb\mariadb_error.log
+RabbitMQ          C:\devcrate\rabbitmq\data\log\rabbit@<HOSTNAME>.log
 ```
+
+## Every PHP site returns 404 "No input file specified"
+
+Vhost roots are prefix-relative (`root projects/<domain>`), resolved through the
+`nginx-1.31.1\projects -> ..\projects` junction. If that junction is missing,
+static requests 404 from nginx and `.php` requests 404 with PHP's
+*No input file specified*. Recreate it (or just run `start.bat`, which
+self-heals it):
+
+```bat
+mklink /J <stack-root>\nginx-1.31.1\projects <stack-root>\projects
+```
+
+Do **not** "fix" a vhost by changing its root to `../projects/...` — nginx will
+serve static files from it, but PHP-CGI on Windows rejects any
+`SCRIPT_FILENAME` containing `..` and returns exactly this 404.
 
 ## php-cgi.exe exits immediately with no output
 
@@ -56,18 +72,19 @@ https://aka.ms/vs/17/release/vc_redist.x64.exe
 | 8.2.31 (vs16) | VC++ 2019 / 2022 x64 |
 | 8.5.x (vs17) | VC++ 2022 x64 |
 
-Then re-test: `E:\dev\php\php85\php-cgi.exe -v`.
+Then re-test: `C:\devcrate\php\php85\php-cgi.exe -v`.
 
 ## `php` is not recognized on the CLI
 
-The `php\current` junction or the PATH entry is missing. Recreate them:
+The `php\current` junction or the PATH entry is missing. Recreate the junction
+by running the switcher once:
 
 ```bat
-mklink /J E:\dev\php\current E:\dev\php\php85
+C:\devcrate\phpuse.bat 85
 ```
 
-Add `E:\dev\php\current` and `E:\dev` to your user PATH, then open a new
-terminal. Full detail:
+Add `C:\devcrate\php\current` and `C:\devcrate` (your actual stack root) to your
+user PATH, then open a new terminal. Full detail:
 [php-versions.md](php-versions.md#first-time-setup).
 
 ## Composer platform error on first load
@@ -79,7 +96,7 @@ vhost's `fastcgi_pass` at the correct port
 
 ## Certificate warning in the browser
 
-- The mkcert local CA is not installed: run `E:\dev\mkcert.exe -install` in an
+- The mkcert local CA is not installed: run `C:\devcrate\mkcert.exe -install` in an
   Admin CMD, then restart the browser.
 - Wrong cert for the domain level: a third-level host (e.g.
   `api.mygroup.test`) needs a `*.mygroup.test` cert, not `*.test`. See
@@ -96,7 +113,7 @@ fails with `Bind on TCP/IP port ... 10048`. Stop that service, or set `port` in
 
 If FlyEnv or a similar tool manages a `#X-HOSTS-BEGIN#` / `#X-HOSTS-END#` block
 in the hosts file, it can overwrite anything inside it. Put the stack's entries
-outside that block, under their own `# E:\dev local stack` heading.
+outside that block, under their own `# Devcrate local stack` heading.
 
 ## RabbitMQ won't restart cleanly
 
@@ -114,10 +131,10 @@ fails, kill any lingering `erl.exe` / `epmd.exe` manually and check
 1. Download the dependency pack from
    `https://windows.php.net/downloads/php-sdk/deps/vc15/x64/` - grab `zlib-*.zip`
    (and `bzip2-*.zip`, `zstd-*.zip` if needed).
-2. Place the `.dll` files into `E:\dev\php\php74\` (the root, not `ext\`).
+2. Place the `.dll` files into `C:\devcrate\php\php74\` (the root, not `ext\`).
 3. Get `php_zip-*-7.4-nts-vc15-x64.zip` from the windows.php.net extras and put
-   `php_zip.dll` into `E:\dev\php\php74\ext\`.
-4. Uncomment `extension=zip` in `E:\dev\php\php74\php.ini`.
+   `php_zip.dll` into `C:\devcrate\php\php74\ext\`.
+4. Uncomment `extension=zip` in `C:\devcrate\php\php74\php.ini`.
 5. Restart the stack.
 
 PHP 8.2 and 8.5 bundle `zip` already.

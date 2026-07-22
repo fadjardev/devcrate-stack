@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The stack is now location-independent** - it runs from any folder (the
+  *stack root*), not just `E:\dev`:
+  - `start.bat`, `stop.bat`, `phpuse.bat`, and `new-vhost.bat` resolve the
+    stack root from their own location (`%~dp0`) instead of hard-coding it.
+  - Vhost confs use nginx-prefix-relative paths: `root projects/<domain>`
+    (through a `nginx-1.31.1\projects -> ..\projects` junction that
+    `start.bat`/`new-vhost.bat` auto-create), `certs/...` (conf-relative), and
+    `logs/...`. The junction exists because PHP-CGI on Windows rejects `..` in
+    `SCRIPT_FILENAME` ("No input file specified"), so roots must stay dot-free.
+  - `php.ini` for 7.4/8.2 now uses relative `extension_dir = "ext"` and
+    `error_log = "php_errors.log"`; `start.bat` launches each `php-cgi.exe`
+    with its own folder as working directory so relative paths resolve there.
+  - Documentation now uses `C:\devcrate` as a stand-in example root and
+    describes the stack-root convention; first-time CLI setup is `phpuse 85`
+    (which creates the `php\current` junction) instead of a manual `mklink`.
+  - The only machine-specific absolute paths left are outside the repo: user
+    `PATH` entries and the `php\current` junction target.
+
 ### Added
 
 - **MIT license** (`LICENSE`), with a License section in the README.

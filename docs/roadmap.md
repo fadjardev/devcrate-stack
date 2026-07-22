@@ -52,7 +52,9 @@ Rust using [ratatui](https://ratatui.rs/) and
   hand-edited config never gets clobbered.
 - Config for the tool itself lives in one versionable file
   (`devcrate.toml`) holding the stack root, installed runtime versions, and
-  port assignments - so `E:\dev` stops being hard-coded.
+  port assignments. (The batch scripts already resolve the stack root from
+  their own location; `devcrate.toml` carries that further so the tool can
+  manage a stack it doesn't live inside.)
 
 **Rough crate list:** `ratatui`, `crossterm`, `tokio`, `serde` + `toml`,
 `sysinfo` (process/port inspection), `tracing`.
@@ -137,8 +139,9 @@ double-clicking a `.bat` file.
   terminal in a sane state on exit or panic (restore the alternate screen and
   cooked mode).
 - **No hard-coded paths** - resolve the stack root from the executable
-  location, a `DEVCRATE_HOME` environment variable, or `devcrate.toml`, so the
-  stack can live anywhere, not only `E:\dev`.
+  location, a `DEVCRATE_HOME` environment variable, or `devcrate.toml`. (The
+  batch scripts already do the `%~dp0` version of this; the binary keeps that
+  property.)
 - **Correct exit codes** so `devcrate start && ...` behaves in a script.
 
 **Beyond Windows.** Nothing above is Windows-specific except the runtime

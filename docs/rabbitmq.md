@@ -1,9 +1,9 @@
 # Message broker - RabbitMQ 4.3.2
 
-- **Broker:** `E:\dev\rabbitmq\`
-- **Erlang:** `E:\dev\erlang\` (OTP 27)
-- **Data / logs / config:** `E:\dev\rabbitmq\data\`
-- **Log file:** `E:\dev\rabbitmq\data\log\rabbit@<HOSTNAME>.log`
+- **Broker:** `C:\devcrate\rabbitmq\`
+- **Erlang:** `C:\devcrate\erlang\` (OTP 27)
+- **Data / logs / config:** `C:\devcrate\rabbitmq\data\`
+- **Log file:** `C:\devcrate\rabbitmq\data\log\rabbit@<HOSTNAME>.log`
 
 RabbitMQ 4.3.2 runs as a portable build alongside Nginx/PHP/MariaDB, started and
 stopped by `start.bat` / `stop.bat`. It is written in Erlang, so Erlang/OTP 27 is
@@ -13,9 +13,9 @@ Everything is kept off `C:` via environment variables that `start.bat` sets
 before launching the broker:
 
 ```bat
-set "ERLANG_HOME=E:\dev\erlang"
-set "RABBITMQ_BASE=E:\dev\rabbitmq\data"
-set "PATH=E:\dev\erlang\bin;%PATH%"
+set "ERLANG_HOME=C:\devcrate\erlang"
+set "RABBITMQ_BASE=C:\devcrate\rabbitmq\data"
+set "PATH=C:\devcrate\erlang\bin;%PATH%"
 ```
 
 `RABBITMQ_BASE` is what relocates the node's data, logs, config, and the
@@ -49,12 +49,12 @@ window `start.bat` was launched from:
 
 ```cmd
 REM start in the foreground (Ctrl+C to stop)
-E:\dev\rabbitmq\sbin\rabbitmq-server.bat
+C:\devcrate\rabbitmq\sbin\rabbitmq-server.bat
 
 REM status / stop / list queues
-E:\dev\rabbitmq\sbin\rabbitmqctl.bat status
-E:\dev\rabbitmq\sbin\rabbitmqctl.bat stop
-E:\dev\rabbitmq\sbin\rabbitmqctl.bat list_queues
+C:\devcrate\rabbitmq\sbin\rabbitmqctl.bat status
+C:\devcrate\rabbitmq\sbin\rabbitmqctl.bat stop
+C:\devcrate\rabbitmq\sbin\rabbitmqctl.bat list_queues
 ```
 
 ## PHP client (php-amqplib)
@@ -81,10 +81,10 @@ $conn = new AMQPStreamConnection('127.0.0.1', 5672, 'guest', 'guest');
 ## Smoke test
 
 A standalone publish -> consume round-trip lives at
-`E:\dev\tools\rabbitmq-smoketest\`. With the broker running:
+`C:\devcrate\tools\rabbitmq-smoketest\`. With the broker running:
 
 ```cmd
-E:\dev\php\php82\php.exe E:\dev\tools\rabbitmq-smoketest\test.php
+C:\devcrate\php\php82\php.exe C:\devcrate\tools\rabbitmq-smoketest\test.php
 ```
 
 Expected output ends with `RESULT: OK - round trip succeeded`.

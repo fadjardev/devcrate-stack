@@ -1,9 +1,14 @@
 # Devcrate
 
 **A portable, multi-PHP development stack for Windows.** The whole stack lives in one
-folder (`E:\dev`) with no system-wide installs. Nginx serves per-project `.test` vhosts
-over HTTPS, each pinned to a specific PHP version via FastCGI, with MariaDB and RabbitMQ
-alongside — a lightweight alternative to XAMPP / Laragon / FlyEnv.
+folder — the *stack root* — with no system-wide installs, and works from **any**
+location: the scripts resolve their own path, and the nginx configs are relative.
+Nginx serves per-project `.test` vhosts over HTTPS, each pinned to a specific PHP
+version via FastCGI, with MariaDB and RabbitMQ alongside — a lightweight alternative
+to XAMPP / Laragon / FlyEnv.
+
+> Path examples in this repo use `C:\devcrate` as the stack root — substitute
+> wherever you cloned it (`D:\tools\devcrate`, `E:\dev`, …).
 
 > **This repo holds configuration only.** The runtime binaries, downloaded archives,
 > TLS keys, runtime data, and the application code under `projects/` are intentionally
@@ -41,7 +46,7 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
 ## Layout
 
 ```
-E:\dev\
+C:\devcrate\                # ← the stack root (any folder works)
 ├─ start.bat / stop.bat     # bring the whole stack up / down
 ├─ new-vhost.bat            # scaffold a new nginx vhost + hosts entry
 ├─ phpuse.bat               # switch the global CLI PHP version
@@ -71,7 +76,7 @@ Binaries aren't in the repo — download and extract them into place:
 Then:
 
 ```bat
-E:\dev\start.bat
+C:\devcrate\start.bat
 ```
 
 ## PHP version switching (CLI)
@@ -84,13 +89,9 @@ phpuse 85         REM switch global CLI PHP to 8.5
 phpuse 82         REM ...or 8.2, 74, etc.
 ```
 
-First-time setup on a new machine (creates the junction and puts it on PATH):
-
-```bat
-mklink /J E:\dev\php\current E:\dev\php\php85
-```
-
-Then add `E:\dev\php\current` and `E:\dev` to your **user** `PATH`, and open a new terminal.
+First-time setup on a new machine: run `phpuse 85` once (it creates the junction),
+then add `<stack-root>\php\current` and `<stack-root>` to your **user** `PATH`
+(e.g. `C:\devcrate\php\current` and `C:\devcrate`) and open a new terminal.
 
 ## Adding a project vhost
 

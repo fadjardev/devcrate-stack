@@ -1,51 +1,60 @@
 @echo off
 setlocal
 
-echo === Devcrate  -  PHP Development Stack (E:\dev)  -  START ===
+REM Resolve the stack root from this script's own location (works anywhere).
+set "ROOT=%~dp0"
+set "ROOT=%ROOT:~0,-1%"
+
+echo === Devcrate  -  PHP Development Stack (%ROOT%)  -  START ===
 echo.
 
 REM FastCGI: spawn 4 child workers per process, recycle after 500 requests
 set PHP_FCGI_CHILDREN=4
 set PHP_FCGI_MAX_REQUESTS=500
 
-REM --- RabbitMQ / Erlang portable env (keeps data + erl off C:) ---
-set "ERLANG_HOME=E:\dev\erlang"
-set "RABBITMQ_BASE=E:\dev\rabbitmq\data"
-set "PATH=E:\dev\erlang\bin;%PATH%"
+REM --- RabbitMQ / Erlang portable env (keeps data + erl inside the stack root) ---
+set "ERLANG_HOME=%ROOT%\erlang"
+set "RABBITMQ_BASE=%ROOT%\rabbitmq\data"
+set "PATH=%ROOT%\erlang\bin;%PATH%"
 
 echo [1/6] MariaDB 12.3  (port 3306) ...
-if exist "E:\dev\mariadb\bin\mariadbd.exe" (
-    start /B "MariaDB" "E:\dev\mariadb\bin\mariadbd.exe" --defaults-file=E:\dev\mariadb\my.ini
-) else ( echo   SKIPPED - E:\dev\mariadb\bin\mariadbd.exe not found )
+if exist "%ROOT%\mariadb\bin\mariadbd.exe" (
+    start /B "MariaDB" "%ROOT%\mariadb\bin\mariadbd.exe" --defaults-file="%ROOT%\mariadb\my.ini"
+) else ( echo   SKIPPED - %ROOT%\mariadb\bin\mariadbd.exe not found )
 
 echo [2/6] PHP 7.4  (port 9074) ...
-if exist "E:\dev\php\php74\php-cgi.exe" (
-    start /B "PHP74-CGI" "E:\dev\php\php74\php-cgi.exe" -b 127.0.0.1:9074
-) else ( echo   SKIPPED - E:\dev\php\php74\php-cgi.exe not found )
+if exist "%ROOT%\php\php74\php-cgi.exe" (
+    start /B /D "%ROOT%\php\php74" "PHP74-CGI" "%ROOT%\php\php74\php-cgi.exe" -b 127.0.0.1:9074
+) else ( echo   SKIPPED - %ROOT%\php\php74\php-cgi.exe not found )
 
 echo [3/6] PHP 8.2  (port 9082) ...
-if exist "E:\dev\php\php82\php-cgi.exe" (
-    start /B "PHP82-CGI" "E:\dev\php\php82\php-cgi.exe" -b 127.0.0.1:9082
-) else ( echo   SKIPPED - E:\dev\php\php82\php-cgi.exe not found )
+if exist "%ROOT%\php\php82\php-cgi.exe" (
+    start /B /D "%ROOT%\php\php82" "PHP82-CGI" "%ROOT%\php\php82\php-cgi.exe" -b 127.0.0.1:9082
+) else ( echo   SKIPPED - %ROOT%\php\php82\php-cgi.exe not found )
 
 echo [4/6] PHP 8.5  (port 9085) ...
-if exist "E:\dev\php\php85\php-cgi.exe" (
-    start /B "PHP85-CGI" "E:\dev\php\php85\php-cgi.exe" -b 127.0.0.1:9085
-) else ( echo   SKIPPED - E:\dev\php\php85\php-cgi.exe not found ^(download PHP 8.5 to enable^) )
+if exist "%ROOT%\php\php85\php-cgi.exe" (
+    start /B /D "%ROOT%\php\php85" "PHP85-CGI" "%ROOT%\php\php85\php-cgi.exe" -b 127.0.0.1:9085
+) else ( echo   SKIPPED - %ROOT%\php\php85\php-cgi.exe not found ^(download PHP 8.5 to enable^) )
 
 echo [5/6] RabbitMQ 4.3.2  (ports 5672 / 15672) ...
-if exist "E:\dev\rabbitmq\sbin\rabbitmq-server.bat" (
+if exist "%ROOT%\rabbitmq\sbin\rabbitmq-server.bat" (
     REM -detached: run the broker as a background Erlang node. Do NOT redirect
     REM stdout/stderr to a file -- OTP's terminal driver crashes with "nouser"
     REM when its console is a non-tty. Logs go to %RABBITMQ_BASE%\log\rabbit@HOST.log
-    start /B "RabbitMQ" cmd /c "E:\dev\rabbitmq\sbin\rabbitmq-server.bat -detached"
-) else ( echo   SKIPPED - E:\dev\rabbitmq\sbin\rabbitmq-server.bat not found )
+    start /B "RabbitMQ" cmd /c ""%ROOT%\rabbitmq\sbin\rabbitmq-server.bat" -detached"
+) else ( echo   SKIPPED - %ROOT%\rabbitmq\sbin\rabbitmq-server.bat not found )
 
 REM Give php-cgi a moment to bind before nginx starts proxying
 timeout /t 2 /nobreak > nul
 
 echo [6/6] Nginx 1.31.1 ...
-start /B "Nginx" "E:\dev\nginx-1.31.1\nginx.exe" -p "E:\dev\nginx-1.31.1" -c "conf/nginx.conf"
+REM Vhost confs use the prefix-relative "root projects/<domain>", which
+REM resolves through this junction. (PHP-CGI rejects paths containing "..",
+REM so the junction keeps SCRIPT_FILENAME dot-free.) Self-heals if missing.
+if not exist "%ROOT%\projects" mkdir "%ROOT%\projects"
+if not exist "%ROOT%\nginx-1.31.1\projects" mklink /J "%ROOT%\nginx-1.31.1\projects" "%ROOT%\projects" >nul
+start /B "Nginx" "%ROOT%\nginx-1.31.1\nginx.exe" -p "%ROOT%\nginx-1.31.1" -c "conf/nginx.conf"
 
 echo.
 echo All services started.

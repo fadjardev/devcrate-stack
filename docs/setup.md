@@ -5,7 +5,9 @@ see the [docs/](index.md) directory.
 
 - **Stack:** Nginx 1.31.1 - PHP 7.4 / 8.2 / 8.5 - MariaDB 12.3 -
   RabbitMQ 4.3.2 (Erlang 27) - mkcert - Windows 10/11 x64
-- **Base path:** `E:\dev\`
+- **Stack root:** any folder you like — the scripts resolve their own location
+  and the nginx configs are relative. Examples below use `C:\devcrate\`;
+  substitute your own path.
 
 This repo tracks configuration only. Binaries, runtime data, TLS keys, and
 `projects/` are not committed - you download and generate them locally. Full
@@ -35,29 +37,29 @@ Download the **Thread-Safe (TS) x64** ZIPs from
 
 | Version | Extract to | Build |
 | --- | --- | --- |
-| PHP 7.4.x | `E:\dev\php\php74\` | vc15 x64 TS |
-| PHP 8.2.x | `E:\dev\php\php82\` | vs16 x64 TS |
-| PHP 8.5.x | `E:\dev\php\php85\` | vs17 x64 TS |
+| PHP 7.4.x | `C:\devcrate\php\php74\` | vc15 x64 TS |
+| PHP 8.2.x | `C:\devcrate\php\php82\` | vs16 x64 TS |
+| PHP 8.5.x | `C:\devcrate\php\php85\` | vs17 x64 TS |
 
 The `php.ini` for each version is already in the repo - don't overwrite it.
 Verify each build:
 
 ```cmd
-E:\dev\php\php74\php-cgi.exe -v
-E:\dev\php\php82\php-cgi.exe -v
-E:\dev\php\php85\php-cgi.exe -v
+C:\devcrate\php\php74\php-cgi.exe -v
+C:\devcrate\php\php82\php-cgi.exe -v
+C:\devcrate\php\php85\php-cgi.exe -v
 ```
 
 **CLI version switching.** `php` on the command line resolves through the
-`php\current` junction. Set it up once:
+`php\current` junction. Create it by running the switcher once:
 
 ```bat
-mklink /J E:\dev\php\current E:\dev\php\php85
+C:\devcrate\phpuse.bat 85
 ```
 
-Add `E:\dev\php\current` and `E:\dev` to your **user** PATH, open a new terminal,
-then switch anytime with `phpuse 85` / `phpuse 82` / `phpuse 74`. Details:
-[php-versions.md](php-versions.md).
+Add `C:\devcrate\php\current` and `C:\devcrate` to your **user** PATH (with your
+actual stack root), open a new terminal, then switch anytime with `phpuse 85` /
+`phpuse 82` / `phpuse 74`. Details: [php-versions.md](php-versions.md).
 
 ---
 
@@ -65,19 +67,19 @@ then switch anytime with `phpuse 85` / `phpuse 82` / `phpuse 74`. Details:
 
 - **Nginx 1.31.1** -> extract so `nginx.exe` sits beside the tracked
   `nginx-1.31.1\conf\`.
-- **MariaDB 12.3** -> `E:\dev\mariadb\` (usage: [database.md](database.md)).
-- **RabbitMQ 4.3.2 + Erlang 27** -> `E:\dev\rabbitmq\` and `E:\dev\erlang\`
+- **MariaDB 12.3** -> `C:\devcrate\mariadb\` (usage: [database.md](database.md)).
+- **RabbitMQ 4.3.2 + Erlang 27** -> `C:\devcrate\rabbitmq\` and `C:\devcrate\erlang\`
   (usage: [rabbitmq.md](rabbitmq.md)).
 
 ---
 
 ## 4. mkcert local CA + TLS certificates (Admin)
 
-Place mkcert at `E:\dev\mkcert.exe`, then in an **Administrator** CMD install the
+Place mkcert at `C:\devcrate\mkcert.exe`, then in an **Administrator** CMD install the
 CA once:
 
 ```cmd
-E:\dev\mkcert.exe -install
+C:\devcrate\mkcert.exe -install
 ```
 
 Generate one wildcard cert per domain group into `nginx-1.31.1\conf\certs\`. The
@@ -92,7 +94,7 @@ full command set and the wildcard strategy are in
 Add the site hostnames to `C:\Windows\System32\drivers\etc\hosts`:
 
 ```
-# E:\dev local stack
+# Devcrate local stack
 127.0.0.1   api-qlearning.qhomeapps.test
 127.0.0.1   qlearning.qhomeapps.test
 127.0.0.1   asm.qhomemart.test
@@ -107,11 +109,11 @@ Add the site hostnames to `C:\Windows\System32\drivers\etc\hosts`:
 
 ---
 
-## 6. Composer (keep it off C:)
+## 6. Composer (keep it inside the stack root)
 
 ```cmd
-setx COMPOSER_HOME      "E:\dev\composer\home"
-setx COMPOSER_CACHE_DIR "E:\dev\composer\cache"
+setx COMPOSER_HOME      "C:\devcrate\composer\home"
+setx COMPOSER_CACHE_DIR "C:\devcrate\composer\cache"
 ```
 
 Restart open terminals afterward.
@@ -121,8 +123,8 @@ Restart open terminals afterward.
 ## 7. Start / stop the stack
 
 ```cmd
-E:\dev\start.bat    REM MariaDB + PHP 7.4/8.2/8.5 FastCGI + RabbitMQ + Nginx
-E:\dev\stop.bat     REM graceful shutdown of everything
+C:\devcrate\start.bat    REM MariaDB + PHP 7.4/8.2/8.5 FastCGI + RabbitMQ + Nginx
+C:\devcrate\stop.bat     REM graceful shutdown of everything
 ```
 
 **Ports:**
@@ -142,7 +144,7 @@ E:\dev\stop.bat     REM graceful shutdown of everything
 ## 8. Add a project
 
 ```cmd
-E:\dev\new-vhost.bat myapp.test php85
+C:\devcrate\new-vhost.bat myapp.test php85
 ```
 
 Scaffolds `projects\myapp.test\public\`, writes the vhost conf, and reloads

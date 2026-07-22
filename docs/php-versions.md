@@ -16,8 +16,8 @@ The stack runs three PHP versions at once. There are two independent notions of
 
 ## CLI version switching (`phpuse`)
 
-`php` on the CLI resolves through a junction at `E:\dev\php\current`. Your user
-`PATH` contains `E:\dev\php\current` (a stable path), so re-pointing the junction
+`php` on the CLI resolves through a junction at `C:\devcrate\php\current`. Your user
+`PATH` contains `C:\devcrate\php\current` (a stable path), so re-pointing the junction
 instantly changes which PHP the `php` command runs - no PATH edits, no new
 terminal needed.
 
@@ -28,7 +28,7 @@ phpuse 82         REM switch to 8.2
 phpuse 74         REM switch to 7.4
 ```
 
-`E:\dev` is also on `PATH`, so `phpuse` and the other `.bat` helpers are callable
+`C:\devcrate` is also on `PATH`, so `phpuse` and the other `.bat` helpers are callable
 from anywhere.
 
 ### How it works
@@ -37,7 +37,7 @@ from anywhere.
 requested `php\<ver>` folder:
 
 ```
-E:\dev\php\current   --junction-->   E:\dev\php\php85
+C:\devcrate\php\current   --junction-->   C:\devcrate\php\php85
         ^ on PATH                            ^ actual binaries
 ```
 
@@ -46,21 +46,24 @@ the change immediately.
 
 ### First-time setup
 
-On a fresh machine, create the junction and put it on PATH once:
+On a fresh machine, run the switcher once — it creates the junction itself:
 
 ```bat
-mklink /J E:\dev\php\current E:\dev\php\php85
+C:\devcrate\phpuse.bat 85
 ```
 
-Then add both of these to your **user** PATH (not system), and open a new
-terminal:
+Then add both of these to your **user** PATH (not system), using your actual
+stack root, and open a new terminal:
 
 ```
-E:\dev\php\current
-E:\dev
+C:\devcrate\php\current
+C:\devcrate
 ```
 
-`mklink /J` creates a directory junction and does not require Administrator.
+(Equivalent manual form: `mklink /J <stack-root>\php\current <stack-root>\php\php85`.
+Junctions do not require Administrator.) These PATH entries and the junction
+target are the only absolute, machine-specific paths in the whole setup — both
+live outside the repo.
 
 ## php.ini
 
@@ -68,7 +71,7 @@ Each version has its own `php.ini` at `php\<ver>\php.ini`, and these are the onl
 PHP files tracked in the repo. Confirm a build is reading the right one:
 
 ```bat
-E:\dev\php\php85\php-cgi.exe -i | findstr "Loaded Configuration"
+C:\devcrate\php\php85\php-cgi.exe -i | findstr "Loaded Configuration"
 ```
 
 Extensions enabled for app work include: `curl`, `mbstring`, `openssl`,
@@ -77,7 +80,7 @@ Extensions enabled for app work include: `curl`, `mbstring`, `openssl`,
 has loaded with:
 
 ```bat
-E:\dev\php\php85\php.exe -m
+C:\devcrate\php\php85\php.exe -m
 ```
 
 Common shared settings (timezone `Asia/Jakarta`, `upload_max_filesize=64M`) are
@@ -99,7 +102,7 @@ fatal error on first load.
 ## Adding a new PHP version
 
 1. Download the Thread-Safe x64 ZIP from https://windows.php.net/download/ and
-   extract to `E:\dev\php\php<NN>\` (e.g. `php84`).
+   extract to `C:\devcrate\php\php<NN>\` (e.g. `php84`).
 2. Install the matching VC++ runtime (see
    [installation.md](installation.md#1-visual-c-redistributable-do-this-first)).
 3. Create `php<NN>\php.ini` (copy an existing one and adjust) and enable the same

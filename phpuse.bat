@@ -2,11 +2,12 @@
 REM ============================================================
 REM  phpuse.bat - switch the global CLI PHP version
 REM  Usage:  phpuse 74 | 82 | 85        (or:  phpuse   to show)
-REM  Works by re-pointing the junction  E:\dev\php\current
-REM  which is what your PATH points at.
+REM  Works by re-pointing the junction  <stack-root>\php\current
+REM  which is what your PATH points at. The stack root is
+REM  resolved from this script's own location.
 REM ============================================================
 setlocal
-set PHPROOT=E:\dev\php
+set "PHPROOT=%~dp0php"
 
 if "%~1"=="" goto :show
 

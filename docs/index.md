@@ -1,7 +1,7 @@
 # Documentation
 
 Comprehensive reference for **Devcrate**, the portable multi-PHP development stack
-at `E:\dev`.
+at `C:\devcrate`.
 
 For a quick overview and the fastest path to a running stack, start with the
 root [README.md](../README.md), then [setup.md](setup.md) for the linear
@@ -31,6 +31,6 @@ install walkthrough.
 | MariaDB | 12.3 | `127.0.0.1:3306` | `root`, no password |
 | RabbitMQ | 4.3.2 (Erlang 27) | `:5672`, UI `:15672` | `guest` / `guest` |
 
-Everything runs out of `E:\dev` with no system-wide installs. Only the scripts
+Everything runs out of `C:\devcrate` with no system-wide installs. Only the scripts
 and service configs are versioned; binaries, runtime data, TLS keys, and
 `projects/` are excluded (see [.gitignore](../.gitignore)).

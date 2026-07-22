@@ -1,9 +1,9 @@
 # Database - MariaDB 12.3
 
-- **Location:** `E:\dev\mariadb\`
-- **Config:** `E:\dev\mariadb\my.ini`
-- **Data:** `E:\dev\mariadb\data\`
-- **Error log:** `E:\dev\mariadb\mariadb_error.log`
+- **Location:** `C:\devcrate\mariadb\`
+- **Config:** `C:\devcrate\mariadb\my.ini`
+- **Data:** `C:\devcrate\mariadb\data\`
+- **Error log:** `C:\devcrate\mariadb\mariadb_error.log`
 
 MariaDB 12.3 (LTS) runs as a portable build, started/stopped by `start.bat` /
 `stop.bat` alongside Nginx and PHP. It is a drop-in MySQL replacement - the
@@ -25,25 +25,25 @@ unchanged.
 ## CLI client
 
 ```cmd
-E:\dev\mariadb\bin\mariadb.exe -u root
+C:\devcrate\mariadb\bin\mariadb.exe -u root
 ```
 
 ## Create a database
 
 ```cmd
-E:\dev\mariadb\bin\mariadb.exe -u root -e "CREATE DATABASE myapp CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+C:\devcrate\mariadb\bin\mariadb.exe -u root -e "CREATE DATABASE myapp CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 ```
 
 ## Import a SQL dump
 
 ```cmd
-E:\dev\mariadb\bin\mariadb.exe -u root myapp < C:\path\to\dump.sql
+C:\devcrate\mariadb\bin\mariadb.exe -u root myapp < C:\path\to\dump.sql
 ```
 
 ## Set a root password (optional)
 
 ```cmd
-E:\dev\mariadb\bin\mariadb-admin.exe -u root password "yourpassword"
+C:\devcrate\mariadb\bin\mariadb-admin.exe -u root password "yourpassword"
 ```
 
 Then update each app's DB config with the new password.

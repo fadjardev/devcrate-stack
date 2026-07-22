@@ -32,11 +32,11 @@ server {
     listen       443 ssl;
     server_name  myapp.test;
 
-    root   E:/dev/projects/myapp.test/public;   # web root
+    root   projects/myapp.test/public;   # web root (prefix-relative, see note)
     index  index.php index.html;
 
-    ssl_certificate      E:/dev/nginx-1.31.1/conf/certs/_wildcard.test.pem;
-    ssl_certificate_key  E:/dev/nginx-1.31.1/conf/certs/_wildcard.test-key.pem;
+    ssl_certificate      certs/_wildcard.test.pem;       # conf-relative
+    ssl_certificate_key  certs/_wildcard.test-key.pem;
 
     location / {
         try_files $uri $uri/ /index.php?$query_string;
@@ -56,9 +56,22 @@ server {
 The `fastcgi_pass` port is what pins the site to a PHP version:
 `9074` = 7.4, `9082` = 8.2, `9085` = 8.5.
 
+**Why the paths are relative.** Nothing in a vhost conf names the stack root, so
+the whole folder can move without touching any config:
+
+- `root projects/<domain>/...` and `access_log logs/...` resolve against the
+  nginx **prefix** (`<stack-root>\nginx-1.31.1`, set by `-p` in `start.bat`).
+  The `projects` path goes through a junction
+  `nginx-1.31.1\projects -> <stack-root>\projects` that `start.bat` and
+  `new-vhost.bat` create automatically. The junction keeps `SCRIPT_FILENAME`
+  free of `..` — PHP-CGI on Windows refuses paths containing `..`
+  ("No input file specified"), so don't replace it with `root ../projects/...`.
+- `ssl_certificate certs/...` resolves against the **conf** directory
+  (`<prefix>\conf`), not the prefix — hence no `conf/` in front.
+
 ## Adding a project vhost
 
-Use the helper (from anywhere, since `E:\dev` is on PATH):
+Use the helper (from anywhere, since the stack root is on PATH):
 
 ```bat
 new-vhost.bat myapp.test php85
@@ -84,7 +97,7 @@ the generated conf when the project differs:
   project folder and block framework internals:
 
   ```nginx
-  root   E:/dev/projects/myapp.test;
+  root   projects/myapp.test;
 
   location ~ ^/(application|system|vendor)/ {
       deny all;
@@ -143,34 +156,34 @@ Existing certs cover:
 One command per group, writing into `nginx-1.31.1\conf\certs\`:
 
 ```cmd
-E:\dev\mkcert.exe ^
-  -cert-file E:\dev\nginx-1.31.1\conf\certs\_wildcard.test.pem ^
-  -key-file  E:\dev\nginx-1.31.1\conf\certs\_wildcard.test-key.pem ^
+C:\devcrate\mkcert.exe ^
+  -cert-file C:\devcrate\nginx-1.31.1\conf\certs\_wildcard.test.pem ^
+  -key-file  C:\devcrate\nginx-1.31.1\conf\certs\_wildcard.test-key.pem ^
   "*.test"
 
-E:\dev\mkcert.exe ^
-  -cert-file E:\dev\nginx-1.31.1\conf\certs\_wildcard.qhomeapps.test.pem ^
-  -key-file  E:\dev\nginx-1.31.1\conf\certs\_wildcard.qhomeapps.test-key.pem ^
+C:\devcrate\mkcert.exe ^
+  -cert-file C:\devcrate\nginx-1.31.1\conf\certs\_wildcard.qhomeapps.test.pem ^
+  -key-file  C:\devcrate\nginx-1.31.1\conf\certs\_wildcard.qhomeapps.test-key.pem ^
   "*.qhomeapps.test"
 
-E:\dev\mkcert.exe ^
-  -cert-file E:\dev\nginx-1.31.1\conf\certs\_wildcard.qhomemart.test.pem ^
-  -key-file  E:\dev\nginx-1.31.1\conf\certs\_wildcard.qhomemart.test-key.pem ^
+C:\devcrate\mkcert.exe ^
+  -cert-file C:\devcrate\nginx-1.31.1\conf\certs\_wildcard.qhomemart.test.pem ^
+  -key-file  C:\devcrate\nginx-1.31.1\conf\certs\_wildcard.qhomemart.test-key.pem ^
   "*.qhomemart.test"
 
-E:\dev\mkcert.exe ^
-  -cert-file E:\dev\nginx-1.31.1\conf\certs\_wildcard.qhomedata.test.pem ^
-  -key-file  E:\dev\nginx-1.31.1\conf\certs\_wildcard.qhomedata.test-key.pem ^
+C:\devcrate\mkcert.exe ^
+  -cert-file C:\devcrate\nginx-1.31.1\conf\certs\_wildcard.qhomedata.test.pem ^
+  -key-file  C:\devcrate\nginx-1.31.1\conf\certs\_wildcard.qhomedata.test-key.pem ^
   "*.qhomedata.test"
 
-E:\dev\mkcert.exe ^
-  -cert-file E:\dev\nginx-1.31.1\conf\certs\_wildcard.qhomemart.cloud.test.pem ^
-  -key-file  E:\dev\nginx-1.31.1\conf\certs\_wildcard.qhomemart.cloud.test-key.pem ^
+C:\devcrate\mkcert.exe ^
+  -cert-file C:\devcrate\nginx-1.31.1\conf\certs\_wildcard.qhomemart.cloud.test.pem ^
+  -key-file  C:\devcrate\nginx-1.31.1\conf\certs\_wildcard.qhomemart.cloud.test-key.pem ^
   "*.qhomemart.cloud.test"
 
-E:\dev\mkcert.exe ^
-  -cert-file E:\dev\nginx-1.31.1\conf\certs\_wildcard.qhomedata.id.test.pem ^
-  -key-file  E:\dev\nginx-1.31.1\conf\certs\_wildcard.qhomedata.id.test-key.pem ^
+C:\devcrate\mkcert.exe ^
+  -cert-file C:\devcrate\nginx-1.31.1\conf\certs\_wildcard.qhomedata.id.test.pem ^
+  -key-file  C:\devcrate\nginx-1.31.1\conf\certs\_wildcard.qhomedata.id.test-key.pem ^
   "*.qhomedata.id.test"
 ```
 
@@ -186,7 +199,7 @@ For a brand-new group, generate `*.newgroup.test` the same way and update the
 After editing a conf:
 
 ```cmd
-"E:\dev\nginx-1.31.1\nginx.exe" -p "E:\dev\nginx-1.31.1" -s reload
+"C:\devcrate\nginx-1.31.1\nginx.exe" -p "C:\devcrate\nginx-1.31.1" -s reload
 ```
 
 Or a full restart with `stop.bat` then `start.bat`. Check
