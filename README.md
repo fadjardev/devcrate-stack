@@ -7,7 +7,17 @@ PHP version via FastCGI, with MariaDB and RabbitMQ alongside.
 > **This repo holds configuration only.** The runtime binaries, downloaded archives,
 > TLS keys, runtime data, and the application code under `projects/` are intentionally
 > **not** committed (see [`.gitignore`](.gitignore)). Follow the steps below to rebuild
-> a working stack from a fresh clone. Full details are in [`SETUP.md`](SETUP.md).
+> a working stack from a fresh clone.
+
+**Documentation:** [`SETUP.md`](SETUP.md) is the linear install walkthrough. The
+[`docs/`](docs/index.md) directory has the full reference —
+[architecture](docs/architecture.md),
+[installation](docs/installation.md),
+[PHP versions](docs/php-versions.md),
+[nginx & vhosts](docs/nginx-vhosts.md),
+[database](docs/database.md),
+[RabbitMQ](docs/rabbitmq.md), and
+[troubleshooting](docs/troubleshooting.md).
 
 ## Stack
 

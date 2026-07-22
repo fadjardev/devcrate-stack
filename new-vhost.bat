@@ -18,7 +18,7 @@ REM
 REM  PHP version / port map:
 REM    php74  ->  9074
 REM    php82  ->  9082
-REM    php83  ->  9083
+REM    php85  ->  9085
 REM ================================================================
 
 if "%~1"=="" goto usage
@@ -30,10 +30,10 @@ set "PORT="
 
 if /i "!PHPVER!"=="php74" set "PORT=9074"
 if /i "!PHPVER!"=="php82" set "PORT=9082"
-if /i "!PHPVER!"=="php83" set "PORT=9083"
+if /i "!PHPVER!"=="php85" set "PORT=9085"
 
 if "!PORT!"=="" (
-    echo ERROR: Unknown PHP version "!PHPVER!". Valid options: php74, php82, php83
+    echo ERROR: Unknown PHP version "!PHPVER!". Valid options: php74, php82, php85
     exit /b 1
 )
 
@@ -124,6 +124,6 @@ echo.
 echo  Usage  : new-vhost.bat ^<domain^> ^<phpversion^>
 echo  Example: new-vhost.bat myapp.test php82
 echo.
-echo  PHP versions:  php74 ^(port 9074^)  php82 ^(port 9082^)  php83 ^(port 9083^)
+echo  PHP versions:  php74 ^(port 9074^)  php82 ^(port 9082^)  php85 ^(port 9085^)
 echo.
 exit /b 1
