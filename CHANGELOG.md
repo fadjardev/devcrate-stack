@@ -1,0 +1,60 @@
+# Changelog
+
+All notable changes to this project are documented here.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.1.0] - 2026-07-22
+
+First tagged prototype of the portable, multi-PHP Windows development stack -
+a self-contained alternative to XAMPP / Laragon / FlyEnv that runs entirely
+from `E:\dev`.
+
+### Added
+
+- **Orchestration scripts**
+  - `start.bat` / `stop.bat` - bring the whole stack (MariaDB, PHP FastCGI,
+    RabbitMQ, Nginx) up and down cleanly.
+  - `new-vhost.bat` - scaffold a project vhost (`public/` web root, TLS cert,
+    nginx reload) for `php74`, `php82`, or `php85`.
+  - `phpuse.bat` - switch the global CLI PHP version instantly via a
+    `php\current` junction on PATH.
+- **Services**
+  - Nginx 1.31.1 serving per-project `.test` vhosts over HTTPS.
+  - PHP 7.4 / 8.2 / 8.5 as FastCGI listeners on ports 9074 / 9082 / 9085.
+  - MariaDB 12.3 on `127.0.0.1:3306`.
+  - RabbitMQ 4.3.2 (Erlang/OTP 27) with the management UI on `:15672`.
+- **PHP 8.5 (8.5.8)** installed and wired into both the CLI switcher and the web
+  stack (FastCGI on port 9085).
+- **CLI PHP version switcher** - `phpuse` plus the `php\current` junction and a
+  user PATH entry, so `php`, `composer`, and `laravel` resolve to the selected
+  version.
+- **TLS** via mkcert with one wildcard certificate per domain group.
+- **Documentation** under `docs/`: setup, architecture, installation,
+  php-versions, nginx-vhosts, database, rabbitmq, and troubleshooting, indexed
+  from the root README.
+- **Repository hygiene**
+  - `.gitignore` tracking only scripts and service configs; excluding binaries,
+    runtime data, downloaded archives, TLS private keys, and `projects/`.
+  - `.gitattributes` normalizing line endings (`.bat`/`.cmd`/`.ps1` as CRLF,
+    configs/docs as LF, binaries flagged).
+
+### Changed
+
+- `start.bat` and `new-vhost.bat` now serve/scaffold **PHP 8.5** (port 9085) in
+  place of the never-installed PHP 8.3 slot.
+- Moved the setup guide to `docs/setup.md` and rewrote it: fixed double-encoded
+  UTF-8 mojibake, corrected all PHP 8.3 / port 9083 references to 8.5 / 9085, and
+  documented the `phpuse` switcher.
+
+### Fixed
+
+- Double-encoded UTF-8 characters in the setup guide and the `stop.bat` banner.
+
+<!-- After adding a GitHub remote, point these at compare URLs, e.g.:
+[Unreleased]: https://github.com/<user>/<repo>/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/<user>/<repo>/releases/tag/v0.1.0
+-->

@@ -2,7 +2,7 @@
 #  E:\dev  —  Custom Local PHP Development Stack
 #  Versioned:  scripts, docs, and service CONFIGS only.
 #  Ignored:    vendored binaries, runtime data, secrets, projects.
-#  (Binaries are downloadable; see SETUP.md to rebuild the stack.)
+#  (Binaries are downloadable; see docs/setup.md to rebuild the stack.)
 # ============================================================
 
 # --- Application code (lives in its own repos) ---

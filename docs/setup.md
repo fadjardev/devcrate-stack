@@ -1,7 +1,7 @@
 # Setup Guide
 
 Linear walkthrough to get the stack running. For deeper reference on any topic,
-see the [docs/](docs/index.md) directory.
+see the [docs/](index.md) directory.
 
 - **Stack:** Nginx 1.31.1 - PHP 7.4 / 8.2 / 8.5 - MariaDB 12.3 -
   RabbitMQ 4.3.2 (Erlang 27) - mkcert - Windows 10/11 x64
@@ -9,7 +9,7 @@ see the [docs/](docs/index.md) directory.
 
 This repo tracks configuration only. Binaries, runtime data, TLS keys, and
 `projects/` are not committed - you download and generate them locally. Full
-detail for each step lives in [docs/installation.md](docs/installation.md).
+detail for each step lives in [installation.md](installation.md).
 
 ---
 
@@ -57,7 +57,7 @@ mklink /J E:\dev\php\current E:\dev\php\php85
 
 Add `E:\dev\php\current` and `E:\dev` to your **user** PATH, open a new terminal,
 then switch anytime with `phpuse 85` / `phpuse 82` / `phpuse 74`. Details:
-[docs/php-versions.md](docs/php-versions.md).
+[php-versions.md](php-versions.md).
 
 ---
 
@@ -65,9 +65,9 @@ then switch anytime with `phpuse 85` / `phpuse 82` / `phpuse 74`. Details:
 
 - **Nginx 1.31.1** -> extract so `nginx.exe` sits beside the tracked
   `nginx-1.31.1\conf\`.
-- **MariaDB 12.3** -> `E:\dev\mariadb\` (usage: [docs/database.md](docs/database.md)).
+- **MariaDB 12.3** -> `E:\dev\mariadb\` (usage: [database.md](database.md)).
 - **RabbitMQ 4.3.2 + Erlang 27** -> `E:\dev\rabbitmq\` and `E:\dev\erlang\`
-  (usage: [docs/rabbitmq.md](docs/rabbitmq.md)).
+  (usage: [rabbitmq.md](rabbitmq.md)).
 
 ---
 
@@ -82,7 +82,7 @@ E:\dev\mkcert.exe -install
 
 Generate one wildcard cert per domain group into `nginx-1.31.1\conf\certs\`. The
 full command set and the wildcard strategy are in
-[docs/nginx-vhosts.md](docs/nginx-vhosts.md#tls-certificates-with-mkcert). These
+[nginx-vhosts.md](nginx-vhosts.md#tls-certificates-with-mkcert). These
 `.pem` files are not versioned - regenerate them after cloning.
 
 ---
@@ -148,14 +148,14 @@ E:\dev\new-vhost.bat myapp.test php85
 Scaffolds `projects\myapp.test\public\`, writes the vhost conf, and reloads
 nginx. Adjust the web root and cert for the framework as needed, then add the
 hosts entry it prints. Full guide (frameworks, web roots, third-level domain
-certs): [docs/nginx-vhosts.md](docs/nginx-vhosts.md).
+certs): [nginx-vhosts.md](nginx-vhosts.md).
 
 ---
 
 ## 9. Verify
 
 Run through the checklist in
-[docs/troubleshooting.md](docs/troubleshooting.md#verification-checklist). If a
+[troubleshooting.md](troubleshooting.md#verification-checklist). If a
 site fails, check `nginx-1.31.1\logs\<domain>.error.log`.
 
 ---
@@ -164,10 +164,10 @@ site fails, check `nginx-1.31.1\logs\<domain>.error.log`.
 
 | Topic | Doc |
 | --- | --- |
-| How it all fits together | [docs/architecture.md](docs/architecture.md) |
-| Full install reference | [docs/installation.md](docs/installation.md) |
-| PHP versions + `phpuse` | [docs/php-versions.md](docs/php-versions.md) |
-| Nginx vhosts + TLS | [docs/nginx-vhosts.md](docs/nginx-vhosts.md) |
-| MariaDB | [docs/database.md](docs/database.md) |
-| RabbitMQ | [docs/rabbitmq.md](docs/rabbitmq.md) |
-| Troubleshooting | [docs/troubleshooting.md](docs/troubleshooting.md) |
+| How it all fits together | [architecture.md](architecture.md) |
+| Full install reference | [installation.md](installation.md) |
+| PHP versions + `phpuse` | [php-versions.md](php-versions.md) |
+| Nginx vhosts + TLS | [nginx-vhosts.md](nginx-vhosts.md) |
+| MariaDB | [database.md](database.md) |
+| RabbitMQ | [rabbitmq.md](rabbitmq.md) |
+| Troubleshooting | [troubleshooting.md](troubleshooting.md) |

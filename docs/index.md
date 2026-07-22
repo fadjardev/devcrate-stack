@@ -3,13 +3,14 @@
 Comprehensive reference for the custom local PHP development stack at `E:\dev`.
 
 For a quick overview and the fastest path to a running stack, start with the
-root [README.md](../README.md), then [SETUP.md](../SETUP.md) for the linear
+root [README.md](../README.md), then [setup.md](setup.md) for the linear
 install walkthrough.
 
 ## Contents
 
 | Doc | What it covers |
 | --- | --- |
+| [setup.md](setup.md) | Linear walkthrough to get the stack running from a fresh clone. |
 | [architecture.md](architecture.md) | How the pieces fit together: folder layout, request flow, ports, and the design decisions behind the stack. |
 | [installation.md](installation.md) | Rebuild the whole stack from a fresh clone: what to download, where it goes, and how to wire it up. |
 | [php-versions.md](php-versions.md) | Running multiple PHP versions: the `phpuse` CLI switcher, per-version FastCGI, `php.ini`, and adding a version. |

@@ -9,15 +9,22 @@ PHP version via FastCGI, with MariaDB and RabbitMQ alongside.
 > **not** committed (see [`.gitignore`](.gitignore)). Follow the steps below to rebuild
 > a working stack from a fresh clone.
 
-**Documentation:** [`SETUP.md`](SETUP.md) is the linear install walkthrough. The
-[`docs/`](docs/index.md) directory has the full reference —
-[architecture](docs/architecture.md),
-[installation](docs/installation.md),
-[PHP versions](docs/php-versions.md),
-[nginx & vhosts](docs/nginx-vhosts.md),
-[database](docs/database.md),
-[RabbitMQ](docs/rabbitmq.md), and
-[troubleshooting](docs/troubleshooting.md).
+## Documentation
+
+Everything lives in [`docs/`](docs/index.md) ([index](docs/index.md)):
+
+| Doc | What it covers |
+| --- | --- |
+| [Setup guide](docs/setup.md) | Linear walkthrough to get the stack running from a fresh clone. |
+| [Architecture](docs/architecture.md) | Folder layout, request flow, ports, and design decisions. |
+| [Installation](docs/installation.md) | Full rebuild reference: what to download and where it goes. |
+| [PHP versions](docs/php-versions.md) | The `phpuse` CLI switcher, per-vhost FastCGI, and `php.ini`. |
+| [Nginx & vhosts](docs/nginx-vhosts.md) | Adding sites, TLS certs with mkcert, per-framework web roots. |
+| [Database](docs/database.md) | MariaDB usage: connecting, databases, imports, per-framework config. |
+| [RabbitMQ](docs/rabbitmq.md) | Broker usage, management UI, PHP client, smoke test. |
+| [Troubleshooting](docs/troubleshooting.md) | Common failures, known limitations, verification checklist. |
+
+See [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## Stack
 
@@ -36,7 +43,8 @@ E:\dev\
 ├─ start.bat / stop.bat     # bring the whole stack up / down
 ├─ new-vhost.bat            # scaffold a new nginx vhost + hosts entry
 ├─ phpuse.bat               # switch the global CLI PHP version
-├─ SETUP.md                 # detailed install / troubleshooting guide
+├─ docs\                    # full documentation (setup, architecture, ...)
+├─ CHANGELOG.md             # release history
 ├─ nginx-1.31.1\conf\       # nginx.conf + sites\*.conf  (tracked)
 ├─ php\php74|php82|php85\    # each version's php.ini is tracked; binaries are not
 ├─ php\current              # junction → the active CLI PHP version (generated)
@@ -54,7 +62,7 @@ Binaries aren't in the repo — download and extract them into place:
 3. **Nginx 1.31.1** → extract so `nginx-1.31.1\nginx.exe` sits beside the tracked `conf\`.
 4. **MariaDB 12.3** → `mariadb\`, **RabbitMQ 4.3.2 + Erlang** → `rabbitmq\` / `erlang\`.
 5. **mkcert** → save as `mkcert.exe`, then generate the local TLS certs into
-   `nginx-1.31.1\conf\certs\` (see `SETUP.md`; keys are never committed).
+   `nginx-1.31.1\conf\certs\` (see [docs/setup.md](docs/setup.md); keys are never committed).
 6. Recreate the CLI switcher junction and PATH — see **PHP version switching** below.
 7. Drop your applications into `projects\`.
 

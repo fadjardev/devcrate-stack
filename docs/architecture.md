@@ -18,8 +18,8 @@ E:\dev\
 |- start.bat / stop.bat        Bring the whole stack up / down
 |- new-vhost.bat               Scaffold a new nginx vhost (+ hosts hint)
 |- phpuse.bat                  Switch the global CLI PHP version
-|- README.md / SETUP.md        Overview / linear install guide
-|- docs\                       This documentation
+|- README.md                   Overview + documentation index
+|- docs\                       Documentation (setup, architecture, per-service, ...)
 |
 |- php\
 |  |- php74\  php82\  php85\    Portable PHP builds (php.ini is versioned; binaries are not)
