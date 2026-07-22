@@ -29,7 +29,7 @@ Everything lives in [`docs/`](docs/index.md) ([index](docs/index.md)):
 | [Database](docs/database.md) | MariaDB usage: connecting, databases, imports, per-framework config. |
 | [RabbitMQ](docs/rabbitmq.md) | Broker usage, management UI, PHP client, smoke test. |
 | [Troubleshooting](docs/troubleshooting.md) | Common failures, known limitations, verification checklist. |
-| [Roadmap](docs/roadmap.md) | Planned development: the Rust/ratatui TUI, runtime installer, and CLI. |
+| [Roadmap](docs/roadmap.md) | Planned development: the Rust/ratatui TUI, runtime installer, CLI, one-step project setup, Node/Bun. |
 
 See [CHANGELOG.md](CHANGELOG.md) for release history.
 
@@ -96,12 +96,16 @@ then add `<stack-root>\php\current` and `<stack-root>` to your **user** `PATH`
 ## Adding a project vhost
 
 ```bat
-new-vhost.bat
+new-vhost.bat myapp.test php85
 ```
 
-Follow the prompts (hostname, PHP version, docroot). It writes `conf/sites/<host>.conf`,
-issues a mkcert cert, and adds the `.test` entry to your hosts file. Restart with
-`stop.bat` then `start.bat`.
+It scaffolds `projects\myapp.test\public\`, writes `conf/sites/myapp.test.conf`
+(reusing the `*.test` wildcard cert), and reloads nginx. Two steps are still
+manual today — adding `127.0.0.1  myapp.test` to your hosts file as
+Administrator (the script prints the line), and issuing a new mkcert wildcard
+for third-level domains such as `api.mygroup.test`. Automating both is
+[roadmap item 4](docs/roadmap.md). See [Nginx & vhosts](docs/nginx-vhosts.md)
+for the details.
 
 ## Roadmap
 
@@ -116,6 +120,11 @@ Devcrate is a prototype. The batch scripts are the starting point, not the desti
 3. **Run from any terminal** — one binary on `PATH` that works in cmd, PowerShell,
    Windows Terminal, and Git Bash, with scriptable subcommands (`devcrate start`,
    `devcrate php use 8.5`, …) behind the same executable as the TUI.
+4. **Open an existing project in one step** — point Devcrate at a folder you already
+   have and get the vhost, the `hosts` entry, and a trusted local TLS certificate
+   issued with mkcert, without editing any of them by hand.
+5. **Node.js and Bun as managed runtimes** — installed and version-switched the same
+   way PHP is, so a project's front-end toolchain lives inside the stack root too.
 
 Details, constraints, and build order: [docs/roadmap.md](docs/roadmap.md).
 

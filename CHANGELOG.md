@@ -32,9 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **MIT license** (`LICENSE`), with a License section in the README.
 - **`docs/roadmap.md`** - planned development: a Rust/ratatui TUI shipped as a
   single executable, an in-program downloader/installer for PHP, Nginx,
-  MariaDB, RabbitMQ, Erlang, and Composer, and a cross-terminal binary with
-  scriptable subcommands. Summarized in the README and linked from the docs
-  index.
+  MariaDB, RabbitMQ, Erlang, and Composer, a cross-terminal binary with
+  scriptable subcommands, one-step setup for an existing project (vhost +
+  `hosts` entry + mkcert TLS), and Node.js/Bun as managed runtimes. Summarized
+  in the README and linked from the docs index.
 
 ## [0.1.0] - 2026-07-22
 

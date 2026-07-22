@@ -12,6 +12,8 @@ stack for you.
 | 1 | Rust TUI (`ratatui`), shipped as a single executable | planned |
 | 2 | Built-in runtime downloader / installer with version selection | planned |
 | 3 | Runs from any terminal, scriptable as well as interactive | planned |
+| 4 | Open an existing project: vhost + hosts entry + mkcert TLS, in one step | planned |
+| 5 | Node.js and Bun as managed runtimes | planned |
 
 ---
 
@@ -153,6 +155,113 @@ the start.
 
 ---
 
+## 4. Open an existing project: vhost, hosts entry, and local TLS
+
+Today, pointing Devcrate at a project you already have on disk is a three-part
+manual job: `new-vhost.bat` scaffolds a *new* folder and writes the conf, but it
+only **prints** the hosts line for you to paste in as Administrator, and the TLS
+certificate has to be issued with mkcert by hand
+([nginx-vhosts.md](nginx-vhosts.md)). Devcrate should do all three.
+
+**What it should do**
+
+- **Open a project** - point at any existing folder (`devcrate site add
+  <path>`, or a directory picker in the TUI), pick the hostname and PHP
+  version, and get a working `https://<host>` without moving or copying the
+  code. The folder does not have to live under `projects\` - the vhost `root`
+  can point anywhere, subject to the constraint below.
+- **Detect the web root** - offer `public/` when it exists (Laravel,
+  CodeIgniter 4, Symfony), otherwise the project root (CodeIgniter 2/3), and
+  suggest a PHP version from `composer.json`'s `require.php` constraint when
+  there is one.
+- **Manage the hosts file** - add `127.0.0.1  <host>` to
+  `C:\Windows\System32\drivers\etc\hosts` directly, and remove it again when the
+  site is deleted. This needs elevation, so:
+  - write the entries inside a marked block
+    (`# --- devcrate begin/end ---`) so the tool only ever touches its own
+    lines and never rewrites a hand-edited hosts file;
+  - back the file up before the first write;
+  - request elevation for just that operation (UAC prompt) instead of
+    requiring the whole tool to run as Administrator;
+  - fall back to printing the line, as now, when elevation is declined.
+- **Issue local TLS with mkcert** - install [mkcert](https://github.com/FiloSottile/mkcert)
+  as a managed tool (item 2), run `mkcert -install` once to add the local CA to
+  the Windows trust store, then issue a certificate per domain group into
+  `nginx-1.31.1\conf\certs\` and wire the `ssl_certificate` lines up
+  automatically.
+  - Reuse an existing wildcard when one covers the host (`*.test` covers
+    `myapp.test`), and issue a new one when it does not - third-level domains
+    such as `api.mygroup.test` need `*.mygroup.test`, which is exactly the
+    manual step called out in `new-vhost.bat` today.
+  - Report certificate expiry in the dashboard and offer to reissue.
+- **Remove a site** - delete the conf, the hosts entry, and optionally the
+  certificate, then reload nginx. The project folder itself is never deleted.
+
+**Constraints**
+
+- Private keys stay out of version control - `conf/certs/` is already
+  gitignored, and the tool must not move keys anywhere else.
+- The hosts file is shared, system-wide state: never rewrite lines outside the
+  Devcrate block, and always leave the file valid if the write is interrupted
+  (write to a temp file, then replace).
+- A project outside the stack root cannot be reached through the
+  `nginx-1.31.1\projects` junction, and PHP-CGI on Windows rejects any
+  `SCRIPT_FILENAME` containing `..` (see
+  [troubleshooting.md](troubleshooting.md)). So for out-of-tree projects the
+  tool must emit an absolute, dot-free `root`, or create a per-project junction
+  under `projects\` - decide once and document it.
+
+---
+
+## 5. Node.js and Bun as managed runtimes
+
+PHP projects increasingly need a JavaScript toolchain for their front end (Vite,
+Laravel Mix, Tailwind). Devcrate should carry that too, with the same
+portable, multi-version approach it uses for PHP - nothing installed
+system-wide, everything inside the stack root.
+
+**What it should do**
+
+- **Install Node.js** from the official Windows zip builds
+  (`nodejs.org/dist/`), several versions side by side under `node\v22\`,
+  `node\v20\`, and so on, including the bundled `npm`. LTS and current lines
+  both listed.
+- **Install Bun** from GitHub releases (`oven-sh/bun`,
+  `bun-windows-x64.zip`) into `bun\<version>\`.
+- **Switch the active version** the same way `phpuse` works today: a
+  `node\current` junction on `PATH`, so `node`, `npm`, and `npx` resolve to the
+  selected version, plus `bun\current`. Commands:
+
+  ```
+  devcrate install node 22.11.0
+  devcrate node use 22
+  devcrate install bun
+  devcrate bun use 1.2
+  ```
+
+- **Per-project version** - read `.nvmrc` or `package.json`'s `engines.node`
+  when opening a project (item 4) and offer to switch or install the version it
+  asks for.
+- **Run dev servers under supervision** - `npm run dev` / `bun run dev` started
+  from the TUI, appearing on the dashboard next to the PHP services with its
+  output in the log viewer, so a Vite dev server is stopped along with the rest
+  of the stack instead of being left behind in some other terminal.
+- **Proxy a dev server through nginx** (optional, later) - a vhost switch that
+  forwards `/` to a local Vite/Bun port with WebSocket upgrade for HMR, so hot
+  reload works over the same `https://<host>.test` as PHP.
+
+**Constraints**
+
+- Bun on Windows is x64-only and younger than the rest of the stack; treat it
+  as optional and never a dependency of the core stack.
+- `npm` writes a global prefix and cache outside the stack root by default -
+  point both inside it (`node\npm-global`, `node\npm-cache`) so nothing leaks
+  into the user profile.
+- Node and Bun are additions, not replacements: the stack must keep working
+  with neither installed.
+
+---
+
 ## Sequencing
 
 1. Rust project skeleton, `devcrate.toml` config model, path/stack-root
@@ -163,6 +272,12 @@ the start.
 3. The ratatui dashboard on top of that core (item 1).
 4. The runtime installer, starting with PHP - it has the most versions and the
    most benefit - then Nginx, Composer, MariaDB, and RabbitMQ/Erlang (item 2).
+5. The full site workflow on top of `site add`: hosts-file management and
+   mkcert issuance/renewal (item 4). The mkcert half depends on the installer
+   from step 4, since mkcert becomes a managed tool.
+6. Node.js and Bun (item 5) - the installer and the `current`-junction switcher
+   are the same machinery as PHP, so this is mostly a new runtime definition;
+   dev-server supervision and the HMR proxy come after.
 
 The batch scripts stay in the repo and keep working until the equivalent
 subcommand is shipped and documented.
