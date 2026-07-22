@@ -1,7 +1,7 @@
 @echo off
 setlocal
 
-echo === E:\dev  PHP Development Stack - START ===
+echo === Devcrate  -  PHP Development Stack (E:\dev)  -  START ===
 echo.
 
 REM FastCGI: spawn 4 child workers per process, recycle after 500 requests

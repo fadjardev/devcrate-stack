@@ -1,6 +1,7 @@
 # Documentation
 
-Comprehensive reference for the custom local PHP development stack at `E:\dev`.
+Comprehensive reference for **Devcrate**, the portable multi-PHP development stack
+at `E:\dev`.
 
 For a quick overview and the fastest path to a running stack, start with the
 root [README.md](../README.md), then [setup.md](setup.md) for the linear

@@ -1,4 +1,4 @@
-# Setup Guide
+# Devcrate — Setup Guide
 
 Linear walkthrough to get the stack running. For deeper reference on any topic,
 see the [docs/](index.md) directory.

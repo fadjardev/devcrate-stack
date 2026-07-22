@@ -1,5 +1,5 @@
 @echo off
-echo === E:\dev  PHP Development Stack - STOP ===
+echo === Devcrate  -  PHP Development Stack (E:\dev)  -  STOP ===
 echo.
 
 echo Gracefully stopping Nginx (waiting for active connections) ...

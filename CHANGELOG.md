@@ -9,9 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - 2026-07-22
 
-First tagged prototype of the portable, multi-PHP Windows development stack -
-a self-contained alternative to XAMPP / Laragon / FlyEnv that runs entirely
-from `E:\dev`.
+First tagged prototype of **Devcrate**, a portable, multi-PHP development stack
+for Windows - a self-contained alternative to XAMPP / Laragon / FlyEnv that runs
+entirely from `E:\dev`.
 
 ### Added
 

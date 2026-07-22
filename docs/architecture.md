@@ -2,8 +2,8 @@
 
 ## What this is
 
-A portable, multi-PHP web stack that runs entirely from `E:\dev` on Windows,
-with nothing installed system-wide. It reproduces a production-like LEMP setup
+Devcrate is a portable, multi-PHP web stack that runs entirely from `E:\dev` on
+Windows, with nothing installed system-wide. It reproduces a production-like LEMP setup
 (Linux -> Windows here) so that several legacy and modern PHP applications, each
 pinned to a different PHP version, can run side by side on one machine.
 

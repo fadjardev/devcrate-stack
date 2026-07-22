@@ -1,8 +1,9 @@
-# Custom Local PHP Development Stack (Windows)
+# Devcrate
 
-A portable, multi-PHP web stack that runs entirely out of `E:\dev` — no system-wide
-installs. Nginx serves per-project `.test` vhosts over HTTPS, each pinned to a specific
-PHP version via FastCGI, with MariaDB and RabbitMQ alongside.
+**A portable, multi-PHP development stack for Windows.** The whole stack lives in one
+folder (`E:\dev`) with no system-wide installs. Nginx serves per-project `.test` vhosts
+over HTTPS, each pinned to a specific PHP version via FastCGI, with MariaDB and RabbitMQ
+alongside — a lightweight alternative to XAMPP / Laragon / FlyEnv.
 
 > **This repo holds configuration only.** The runtime binaries, downloaded archives,
 > TLS keys, runtime data, and the application code under `projects/` are intentionally
