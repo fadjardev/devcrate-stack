@@ -28,10 +28,10 @@ if exist "E:\dev\php\php82\php-cgi.exe" (
     start /B "PHP82-CGI" "E:\dev\php\php82\php-cgi.exe" -b 127.0.0.1:9082
 ) else ( echo   SKIPPED - E:\dev\php\php82\php-cgi.exe not found )
 
-echo [4/6] PHP 8.3  (port 9083) ...
-if exist "E:\dev\php\php83\php-cgi.exe" (
-    start /B "PHP83-CGI" "E:\dev\php\php83\php-cgi.exe" -b 127.0.0.1:9083
-) else ( echo   SKIPPED - E:\dev\php\php83\php-cgi.exe not found ^(download PHP 8.3 to enable^) )
+echo [4/6] PHP 8.5  (port 9085) ...
+if exist "E:\dev\php\php85\php-cgi.exe" (
+    start /B "PHP85-CGI" "E:\dev\php\php85\php-cgi.exe" -b 127.0.0.1:9085
+) else ( echo   SKIPPED - E:\dev\php\php85\php-cgi.exe not found ^(download PHP 8.5 to enable^) )
 
 echo [5/6] RabbitMQ 4.3.2  (ports 5672 / 15672) ...
 if exist "E:\dev\rabbitmq\sbin\rabbitmq-server.bat" (
@@ -52,7 +52,7 @@ echo All services started.
 echo   MariaDB  -^>  127.0.0.1:3306  (user: root, no password)
 echo   PHP 7.4  -^>  127.0.0.1:9074
 echo   PHP 8.2  -^>  127.0.0.1:9082
-echo   PHP 8.3  -^>  127.0.0.1:9083
+echo   PHP 8.5  -^>  127.0.0.1:9085
 echo   RabbitMQ -^>  127.0.0.1:5672  (mgmt UI http://127.0.0.1:15672  guest/guest)
 echo   Nginx    -^>  :80 / :443
 echo.
