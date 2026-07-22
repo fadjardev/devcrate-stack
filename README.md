@@ -24,6 +24,7 @@ Everything lives in [`docs/`](docs/index.md) ([index](docs/index.md)):
 | [Database](docs/database.md) | MariaDB usage: connecting, databases, imports, per-framework config. |
 | [RabbitMQ](docs/rabbitmq.md) | Broker usage, management UI, PHP client, smoke test. |
 | [Troubleshooting](docs/troubleshooting.md) | Common failures, known limitations, verification checklist. |
+| [Roadmap](docs/roadmap.md) | Planned development: the Rust/ratatui TUI, runtime installer, and CLI. |
 
 See [CHANGELOG.md](CHANGELOG.md) for release history.
 
@@ -100,3 +101,23 @@ new-vhost.bat
 Follow the prompts (hostname, PHP version, docroot). It writes `conf/sites/<host>.conf`,
 issues a mkcert cert, and adds the `.test` entry to your hosts file. Restart with
 `stop.bat` then `start.bat`.
+
+## Roadmap
+
+Devcrate is a prototype. The batch scripts are the starting point, not the destination:
+
+1. **A Rust TUI** built with [ratatui](https://ratatui.rs/), shipped as a single
+   `devcrate.exe` — dashboard, service control, log viewer, vhost and PHP-version
+   management.
+2. **Install runtimes from inside the program** — pick a version of PHP, Nginx,
+   MariaDB, RabbitMQ, Erlang, or Composer and have Devcrate download, verify, and
+   configure it, instead of fetching archives from vendor sites by hand.
+3. **Run from any terminal** — one binary on `PATH` that works in cmd, PowerShell,
+   Windows Terminal, and Git Bash, with scriptable subcommands (`devcrate start`,
+   `devcrate php use 8.5`, …) behind the same executable as the TUI.
+
+Details, constraints, and build order: [docs/roadmap.md](docs/roadmap.md).
+
+## License
+
+[MIT](LICENSE) © fadjardev
