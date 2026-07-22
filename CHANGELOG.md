@@ -37,6 +37,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `hosts` entry + mkcert TLS), and Node.js/Bun as managed runtimes. Summarized
   in the README and linked from the docs index.
 
+### Fixed
+
+- README's "Adding a project vhost" section described behaviour `new-vhost.bat`
+  does not have: it takes `<domain> <phpversion>` as arguments rather than
+  prompting, and it only *prints* the hosts-file line instead of adding it -
+  nor does it issue a certificate (it reuses the existing `*.test` wildcard).
+  Rewritten to match the script, with the two manual steps called out.
+
 ## [0.1.0] - 2026-07-22
 
 First tagged prototype of **Devcrate**, a portable, multi-PHP development stack
