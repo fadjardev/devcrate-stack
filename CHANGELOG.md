@@ -63,7 +63,5 @@ entirely from `E:\dev`.
 
 - Double-encoded UTF-8 characters in the setup guide and the `stop.bat` banner.
 
-<!-- After adding a GitHub remote, point these at compare URLs, e.g.:
-[Unreleased]: https://github.com/<user>/<repo>/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/<user>/<repo>/releases/tag/v0.1.0
--->
+[Unreleased]: https://github.com/fadjardev/devcrate-stack/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/fadjardev/devcrate-stack/releases/tag/v0.1.0
