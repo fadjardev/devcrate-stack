@@ -1,0 +1,25 @@
+# Normalize line endings across machines.
+# Text files are stored with LF in the repo and checked out per the rules below.
+* text=auto
+
+# Windows batch files must stay CRLF, or cmd.exe can mis-parse them.
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+# Unix-style shell scripts stay LF.
+*.sh   text eol=lf
+
+# Config kept LF for consistency.
+*.conf text eol=lf
+*.ini  text eol=lf
+*.md   text eol=lf
+
+# Treat these as binary (never touch line endings, never diff as text).
+*.pem     binary
+*.exe     binary
+*.dll     binary
+*.zip     binary
+*.7z      binary
+*.tar.gz  binary
+*.dump    binary
