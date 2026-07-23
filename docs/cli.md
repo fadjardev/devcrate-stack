@@ -79,7 +79,7 @@ Steps 3 and 4 walk upward looking for a directory that *is* a stack root, so
 
 A directory counts as a stack root if it holds `devcrate.toml`, or — which is
 every stack the batch scripts have built so far — if it has a `php\` directory
-alongside `start.bat` or an unpacked `nginx-*` directory.
+alongside `start.bat` or an nginx prefix (a folder holding `conf\nginx.conf`).
 
 `devcrate status` prints which of the four it used, so a wrongly guessed root is
 visible rather than mysterious.
@@ -98,6 +98,9 @@ visible rather than mysterious.
 | `devcrate stop [service]` | **works** — graceful shutdown in the safe order |
 | `devcrate restart [service]` | **works** — stop, then start |
 | `devcrate php use <version>` | **works** — repoints `php\current` |
+| `devcrate nginx list` | **works** — nginx versions in the prefix, and the active one |
+| `devcrate nginx use <version>` | **works** — repoints `nginx\current` |
+| `devcrate nginx migrate` | **works** — moves a pre-restructure stack into the current layout |
 | `devcrate site add <host>` | **works** — web root, conf, junction, reload |
 | `devcrate site set-php <host> <version>` | **works** — repoints an existing vhost |
 | `devcrate site remove <host>` | **works** — removes the conf, keeps the project |
@@ -111,7 +114,8 @@ visible rather than mysterious.
 Wherever a PHP version is named — `php use`, `site add --php`, `site set-php`,
 and the service argument to `start` / `stop` / `restart` — it is matched on its
 digits, so `8.5`, `85`, `php-8.5`, and the older `php85` all mean the same
-version.
+version. nginx versions are matched differently, on the dotted prefix; see
+[`devcrate nginx`](#devcrate-nginx) for why.
 
 Colour is used only as a second channel for the state column and is turned off
 automatically when the output is not a terminal, so `devcrate status > report.txt`
@@ -128,7 +132,7 @@ Devcrate  C:\devcrate
   CLI PHP    php-8.5  (via php\current)
 
   SERVICE   STATE      PORTS           UPTIME  PIDS     PATH
-  nginx     up         80 443          3h 21m  9184 +2  nginx-1.31.1\nginx.exe
+  nginx     up         80 443          3h 21m  9184 +2  nginx\current\nginx.exe
   PHP 7.4   up         9074            3h 21m  4212 +4  php\php-7.4\php-cgi.exe
   PHP 8.2   port busy  9082            -       -        php\php-8.2\php-cgi.exe
   PHP 8.5   stopped    (9085)          -       -        php\php-8.5\php-cgi.exe
@@ -225,7 +229,7 @@ that are easy to lose:
 - PHP workers run with their own directory as the working directory, because
   `php.ini` for 7.4 and 8.2 uses a relative `extension_dir` and `error_log`.
   `PHP_FCGI_CHILDREN=4` and `PHP_FCGI_MAX_REQUESTS=500` are set the same way.
-- The `nginx-1.31.1\projects` junction is recreated if missing, before nginx
+- The `nginx\projects` junction is recreated if missing, before nginx
   starts. See [troubleshooting.md](troubleshooting.md) for why it has to be a
   junction.
 - RabbitMQ gets `ERLANG_HOME`, `RABBITMQ_BASE`, and `erlang\bin` on `PATH`, and
@@ -339,6 +343,87 @@ anything.
 The version is matched on its digits, so `8.5`, `85`, `php-8.5`, and the older
 `php85` folder naming are all equivalent. `phpuse.bat` now does the same.
 
+### `devcrate nginx`
+
+```
+devcrate nginx list                REM the versions in the prefix, and the active one
+devcrate nginx use 1.31.1          REM 1.31.1, nginx-1.31.1, or an unambiguous 1.31
+devcrate nginx migrate [--dry-run] REM move a pre-restructure stack to this layout
+```
+
+```
+  1.29.4  nginx\nginx-1.29.4
+* 1.31.1  nginx\nginx-1.31.1
+
+* = nginx\current -> the version that runs
+```
+
+**The prefix is `nginx\`, and it does not move.** It holds everything belonging
+to the *stack* — `conf\` with the vhosts and certificates, `logs\`, `temp\`, and
+the `projects` junction — while each nginx build gets its own folder inside it
+and `current` names the active one.
+
+This is the mirror image of PHP, deliberately. PHP's configuration is genuinely
+per-version: each `php.ini` differs, three FastCGI workers run at once, and a
+vhost picks one by port. So a PHP version is a self-contained folder. Only one
+nginx runs, and its vhosts and certificates belong to the stack rather than to
+whichever build is serving them — copying them per version would mean a version
+switch quietly abandoned every site you had configured.
+
+**No vhost conf mentions a version, and none is rewritten to switch.** That
+falls out of nginx's two path bases both being outside the versioned folder:
+`root`, `access_log`, and `error_log` resolve against the prefix, and
+`ssl_certificate` against the conf directory. Both move as a unit, so
+`root projects/myapp.test/public` and `certs/_wildcard.test.pem` mean the same
+thing whichever build reads them.
+
+`nginx use` resolves the same way `php use` does — remove the reparse point,
+never follow it, and refuse if `current` turns out to be a real directory. The
+version is matched on the *dotted* prefix rather than PHP's digits-only rule,
+because nginx versions have three components and `digits("1.31")` and
+`digits("1.3.1")` are the same string; `1.3` therefore selects the 1.3 series
+and can never reach 1.31.something. Two releases of one series (`1.3.1` and
+`1.3.2` with `1.3` asked for) is refused as ambiguous rather than guessed.
+
+Switching while nginx is running says so: the change takes effect at the next
+`devcrate restart nginx`, not immediately.
+
+**`nginx migrate`** converts a stack built before this layout, where the
+versioned folder *was* the prefix (`nginx-1.31.1\nginx.exe` beside
+`nginx-1.31.1\conf\`). It lifts the parts belonging to the stack — the
+certificates, `logs\`, `temp\`, and the whole `conf\` if the prefix has none
+yet — up into `nginx\`, moves the build inside it, and creates the `current`
+and `projects` junctions:
+
+```
+  drop the nginx-1.31.1\projects junction
+  nginx-1.31.1\conf\certs -> nginx\conf\certs
+  nginx-1.31.1\logs -> nginx\logs
+  nginx-1.31.1\temp -> nginx\temp
+  nginx-1.31.1 -> nginx\nginx-1.31.1
+  link nginx\current -> nginx\nginx-1.31.1
+  link nginx\projects -> projects
+```
+
+It refuses while nginx is running — moving the directory it is executing from
+would leave it up with no configuration to reload — and does nothing on a stack
+already in this layout, so running it twice is harmless. `--dry-run` prints the
+plan and changes nothing. The build moves *last*, after the certificates and
+logs have been lifted out of it, which is what makes them land in the prefix
+rather than travel along inside the folder.
+
+**One rough edge, stated rather than hidden:** between pulling the restructure
+and running the migration, the tracked `conf\` is at `nginx\` while `nginx.exe`
+is still in `nginx-1.31.1\`, so `devcrate status` reports nginx as `absent` —
+it looks for the binary in the prefix, and it is not there yet. Nothing is
+broken: a running nginx keeps serving, and `migrate` still finds it and refuses
+until it is stopped. Migrating clears it.
+
+**Both layouts keep working** either way. A directory is recognised as a prefix
+by holding `conf\nginx.conf` — the file `-c conf/nginx.conf` resolves to —
+rather than by its name, so an unmigrated stack still starts, and `start.bat`,
+`stop.bat`, and `new-vhost.bat` resolve it the same way the binary does.
+
 ### `devcrate site add` / `site remove`
 
 ```
@@ -350,7 +435,7 @@ devcrate site remove myapp.test
 ```
   created  projects\myapp.test\public
   created  projects\myapp.test\public\index.php
-  wrote    nginx-1.31.1\conf\sites\myapp.test.conf
+  wrote    nginx\conf\sites\myapp.test.conf
   reloaded nginx
 
 https://myapp.test -> PHP 8.5 (fastcgi 9085)
@@ -392,7 +477,7 @@ devcrate site set-php myapp.test 7.4
 ```
 
 ```
-  nginx-1.31.1\conf\sites\myapp.test.conf : fastcgi 9085 -> 9074
+  nginx\conf\sites\myapp.test.conf : fastcgi 9085 -> 9074
   reloaded nginx
 
 https://myapp.test -> PHP 7.4 (fastcgi 9074)
@@ -556,7 +641,7 @@ devcrate config show > C:\devcrate\devcrate.toml
 
 ```toml
 [nginx]
-dir = "nginx-1.31.1"
+dir = "nginx"
 ports = [80, 443]
 
 [mariadb]

@@ -52,7 +52,7 @@ no output. The program knows exactly what it needs — it should just get it.
   in `_downloads\` after the hash matches. A `--from` archive is hashed into the
   receipt but not judged — it may legitimately be a release the feed no longer
   lists.*
-- [x] Extract into the standard layout (`php\php-8.5\`, `nginx-1.31.1\`, `mariadb\`, …)
+- [x] Extract into the standard layout (`php\php-8.5\`, `nginx\`, `mariadb\`, …)
   — *PHP only. The extractor already strips a wrapper directory, which is what
   nginx's zip needs, but no other runtime is wired up.*
 - [x] Generate first-run config: a `php.ini` seeded from `php.ini-development` with
@@ -137,12 +137,30 @@ no output. The program knows exactly what it needs — it should just get it.
   machine-readable form, still needs checking one by one before it is written
   down as fact.
 - GitHub API rate limits for the unauthenticated release lookups (RabbitMQ, Erlang).
-- **New:** the nginx directory is versioned (`nginx-1.31.1`), and discovery picks
-  the highest-sorting `nginx-*` folder. Installing a second version would create
-  a second folder and silently change which one the stack uses. PHP avoids this
-  entirely because its versions are meant to coexist and `php\current` names the
-  active one. Decide before building the nginx installer: keep versioned folders
-  and move the prefix with them, or adopt a `nginx\current` junction like PHP's.
+- ~~The nginx directory is versioned (`nginx-1.31.1`), and discovery picks the
+  highest-sorting `nginx-*` folder, so installing a second version would
+  silently change which one the stack uses.~~ **Settled: one stable prefix,
+  versions inside it, `nginx\current` naming the active one** — the PHP model,
+  adapted. Done ahead of the nginx installer, since it decides where an
+  installed nginx has to land.
+
+  The adaptation matters. PHP's config is genuinely *per-version* (each
+  `php.ini` differs, and three workers run at once), so a version is a
+  self-contained folder. nginx's config is *per-stack*: the vhosts, the
+  certificates, and the logs belong to the stack, and only one nginx runs. So
+  the prefix holds all of that and the builds sit inside it — the mirror image
+  of PHP, for the same reason.
+
+  The payoff is that no vhost conf needed rewriting, because nginx's two path
+  bases both stay put: `root` and the logs resolve against the prefix,
+  `ssl_certificate` against the conf directory, and neither is inside the
+  versioned folder. `devcrate nginx migrate` moves an older stack across, and
+  both layouts are still detected so an unmigrated one keeps running.
+
+  This model will **not** transfer to MariaDB or RabbitMQ: their on-disk data
+  formats are version-specific, so switching versions under one data directory
+  is a migration, not a junction rewrite. Composer and mkcert are single
+  binaries and want in-place replacement instead.
 
 ## Out of scope
 

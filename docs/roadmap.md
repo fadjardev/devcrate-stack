@@ -37,7 +37,7 @@ and structured results cover it.
   `start.bat` and `stop.bat` while keeping the same graceful-shutdown order
   (nginx `-s quit` -> PHP -> RabbitMQ via `rabbitmqctl stop` -> MariaDB via
   `mariadb-admin shutdown`).
-- **Log viewer** - tail `nginx-1.31.1\logs\*.log`, the MariaDB error log, and
+- **Log viewer** - tail `nginx\logs\*.log`, the MariaDB error log, and
   the RabbitMQ node log inside the TUI, with per-site filtering.
 - **Vhost manager** - list `conf/sites/*.conf`, create a site (what
   `new-vhost.bat` does now: scaffold the web root, write the vhost, issue the
@@ -134,12 +134,18 @@ install with `--from`.
 
 - **Install** - pick a version, download with a progress bar, verify the
   checksum/signature the vendor publishes, extract into the standard layout
-  (`php\php-8.5\`, `nginx-1.31.1\`, `mariadb\`, ...), and generate the
+  (`php\php-8.5\`, `nginx\nginx-1.31.1\`, `mariadb\`, ...), and generate the
   first-run config (a `php.ini` seeded from `php.ini-development` with the
   extension set Devcrate expects; `my.ini`; the FastCGI port).
 - **Multiple versions side by side** for PHP specifically - installing 8.5
   must not disturb 7.4 or 8.2, and it should register the new FastCGI port
   (`90` + version digits) and offer it in the vhost editor and `phpuse`.
+  **Built for nginx too**, differently: one stable `nginx\` prefix holds the
+  vhosts, certificates, and logs, with the builds versioned inside it and
+  `nginx\current` naming the active one. PHP coexists because each version is
+  self-contained; nginx switches because everything worth keeping is outside
+  the versioned folder. The same model will *not* fit MariaDB or RabbitMQ,
+  whose on-disk data formats are version-specific.
 - **Uninstall / prune** - remove a version and warn first if any vhost still
   points at its FastCGI port.
 - **Preflight checks** - detect the missing Visual C++ redistributable, which
@@ -235,7 +241,7 @@ certificate has to be issued with mkcert by hand
 - **Issue local TLS with mkcert** - install [mkcert](https://github.com/FiloSottile/mkcert)
   as a managed tool (item 2), run `mkcert -install` once to add the local CA to
   the Windows trust store, then issue a certificate per domain group into
-  `nginx-1.31.1\conf\certs\` and wire the `ssl_certificate` lines up
+  `nginx\conf\certs\` and wire the `ssl_certificate` lines up
   automatically.
   - Reuse an existing wildcard when one covers the host (`*.test` covers
     `myapp.test`), and issue a new one when it does not - third-level domains
@@ -253,7 +259,7 @@ certificate has to be issued with mkcert by hand
   Devcrate block, and always leave the file valid if the write is interrupted
   (write to a temp file, then replace).
 - A project outside the stack root cannot be reached through the
-  `nginx-1.31.1\projects` junction, and PHP-CGI on Windows rejects any
+  `nginx\projects` junction, and PHP-CGI on Windows rejects any
   `SCRIPT_FILENAME` containing `..` (see
   [troubleshooting.md](troubleshooting.md)). So for out-of-tree projects the
   tool must emit an absolute, dot-free `root`, or create a per-project junction
@@ -363,11 +369,12 @@ system-wide, everything inside the stack root.
    through the identical pipeline. The version it produces is discovered by
    `status`, `php list`, and the dashboard with no config written.
 
-   Not delivered: uninstall, and every runtime other than PHP. Nginx is next
-   and is gated on the layout question logged in
-   [issue-2](issue/issue-2.md) - one prefix, versioned binary directories, a
-   `current` junction - which restructures the stack root and deserves its own
-   piece of work.
+   Not delivered: uninstall, and every runtime other than PHP. Nginx is next,
+   and the layout question that gated it is now settled and built: one stable
+   `nginx\` prefix, versioned build directories inside it, and a
+   `nginx\current` junction naming the active one, with `devcrate nginx
+   migrate` moving older stacks across. An installed nginx now has an obvious
+   place to land, which is what the installer was waiting for.
 6. The full site workflow on top of `site add`: hosts-file management and
    mkcert issuance/renewal (item 4). The mkcert half depends on the installer
    from step 5, since mkcert becomes a managed tool.

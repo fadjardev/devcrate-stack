@@ -10,6 +10,8 @@ mod cli;
 mod config;
 mod control;
 mod install;
+mod junction;
+mod nginx;
 mod php;
 mod probe;
 mod root;
@@ -23,7 +25,7 @@ use std::process::ExitCode;
 use anyhow::Result;
 use clap::Parser;
 
-use crate::cli::{Cli, Command, ConfigCommand, PhpCommand, SiteCommand};
+use crate::cli::{Cli, Command, ConfigCommand, NginxCommand, PhpCommand, SiteCommand};
 use crate::config::Stack;
 
 /// Exit codes. 2 is clap's own code for a usage error. 3 used to mean "not
@@ -77,6 +79,12 @@ fn run(cli: Cli) -> Result<u8> {
             Ok(exit::OK)
         }
         Command::Php(PhpCommand::Use(args)) => php::switch(&stack, &args.version),
+
+        Command::Nginx(NginxCommand::List) => nginx::list(&stack),
+        Command::Nginx(NginxCommand::Use(args)) => nginx::switch(&stack, &args.version),
+        Command::Nginx(NginxCommand::Migrate(args)) => {
+            nginx::migrate_command(&stack, args.dry_run)
+        }
 
         Command::Site(SiteCommand::List) => {
             site_list(&stack);

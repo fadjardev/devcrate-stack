@@ -55,7 +55,10 @@ C:\devcrate\                # ← the stack root (any folder works)
 ├─ devcrate\                # Rust sources for the devcrate CLI
 ├─ docs\                    # full documentation (setup, architecture, ...)
 ├─ CHANGELOG.md             # release history
-├─ nginx-1.31.1\conf\       # nginx.conf + sites\*.conf  (tracked)
+├─ nginx\                   # the nginx prefix — it never moves
+│  ├─ conf\                 #   nginx.conf + sites\*.conf + certs\  (conf tracked)
+│  ├─ nginx-1.31.1\         #   one folder per nginx build (not tracked)
+│  └─ current               #   junction → the active nginx build (generated)
 ├─ php\php-7.4|php-8.2|php-8.5\  # each version's php.ini is tracked; binaries are not
 ├─ php\current              # junction → the active CLI PHP version (generated)
 └─ projects\                # your app code — NOT tracked
@@ -71,10 +74,14 @@ Binaries aren't in the repo — download and extract them into place:
    extract to `php\php-7.4\`, `php\php-8.2\`, `php\php-8.5\` — or, once the
    `devcrate` binary is built, `devcrate install php 8.5` downloads, verifies,
    and installs a version itself.
-3. **Nginx 1.31.1** → extract so `nginx-1.31.1\nginx.exe` sits beside the tracked `conf\`.
+3. **Nginx** → extract into `nginx\`, so the build lands at
+   `nginx\nginx-1.31.1\nginx.exe` beside the tracked `nginx\conf\`, then run
+   `devcrate nginx use 1.31.1`.
 4. **MariaDB 12.3** → `mariadb\`, **RabbitMQ 4.3.2 + Erlang** → `rabbitmq\` / `erlang\`.
 5. **mkcert** → save as `mkcert.exe`, then generate the local TLS certs into
-   `nginx-1.31.1\conf\certs\` (see [docs/setup.md](docs/setup.md); keys are never committed).
+   `nginx\conf\certs\` (see [docs/setup.md](docs/setup.md); keys are never committed).
+   They live under the prefix, not under a version, so switching nginx builds
+   leaves them alone.
 6. Recreate the CLI switcher junction and PATH — see **PHP version switching** below.
 7. Drop your applications into `projects\`.
 
@@ -150,6 +157,7 @@ devcrate                          REM the dashboard
 devcrate status --json            REM ...or one thing, for a script
 devcrate start / stop / restart
 devcrate php use 8.5
+devcrate nginx list / use / migrate
 devcrate site add / set-php / remove
 ```
 

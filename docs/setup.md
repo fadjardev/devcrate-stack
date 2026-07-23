@@ -66,7 +66,7 @@ actual stack root), open a new terminal, then switch anytime with `phpuse 8.5` /
 ## 3. Nginx, MariaDB, RabbitMQ
 
 - **Nginx 1.31.1** -> extract so `nginx.exe` sits beside the tracked
-  `nginx-1.31.1\conf\`.
+  `nginx\conf\`.
 - **MariaDB 12.3** -> `C:\devcrate\mariadb\` (usage: [database.md](database.md)).
 - **RabbitMQ 4.3.2 + Erlang 27** -> `C:\devcrate\rabbitmq\` and `C:\devcrate\erlang\`
   (usage: [rabbitmq.md](rabbitmq.md)).
@@ -82,7 +82,7 @@ CA once:
 C:\devcrate\mkcert.exe -install
 ```
 
-Generate one wildcard cert per domain group into `nginx-1.31.1\conf\certs\`. The
+Generate one wildcard cert per domain group into `nginx\conf\certs\`. The
 full command set and the wildcard strategy are in
 [nginx-vhosts.md](nginx-vhosts.md#tls-certificates-with-mkcert). These
 `.pem` files are not versioned - regenerate them after cloning.
@@ -158,7 +158,7 @@ certs): [nginx-vhosts.md](nginx-vhosts.md).
 
 Run through the checklist in
 [troubleshooting.md](troubleshooting.md#verification-checklist). If a
-site fails, check `nginx-1.31.1\logs\<domain>.error.log`.
+site fails, check `nginx\logs\<domain>.error.log`.
 
 ---
 

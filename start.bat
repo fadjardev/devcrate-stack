@@ -48,13 +48,41 @@ if exist "%ROOT%\rabbitmq\sbin\rabbitmq-server.bat" (
 REM Give php-cgi a moment to bind before nginx starts proxying
 timeout /t 2 /nobreak > nul
 
-echo [6/6] Nginx 1.31.1 ...
-REM Vhost confs use the prefix-relative "root projects/<domain>", which
-REM resolves through this junction. (PHP-CGI rejects paths containing "..",
-REM so the junction keeps SCRIPT_FILENAME dot-free.) Self-heals if missing.
-if not exist "%ROOT%\projects" mkdir "%ROOT%\projects"
-if not exist "%ROOT%\nginx-1.31.1\projects" mklink /J "%ROOT%\nginx-1.31.1\projects" "%ROOT%\projects" >nul
-start /B "Nginx" "%ROOT%\nginx-1.31.1\nginx.exe" -p "%ROOT%\nginx-1.31.1" -c "conf/nginx.conf"
+echo [6/6] Nginx ...
+REM --- Resolve the nginx prefix and binary -------------------------------
+REM The prefix is the folder holding conf\, logs\, and temp\ -- what -p is
+REM given. Two layouts answer to that and both keep working: the current
+REM one puts the versions inside a stable "nginx" folder with a "current"
+REM junction naming the active build, and the original one made the
+REM versioned folder the prefix itself. A folder qualifies by holding
+REM conf\nginx.conf, which is what -c resolves to.
+REM (`devcrate nginx migrate` converts the original layout to the current
+REM one. The same resolution is mirrored in stop.bat and new-vhost.bat.)
+set "NGX_PREFIX="
+if exist "%ROOT%\nginx\conf\nginx.conf" set "NGX_PREFIX=%ROOT%\nginx"
+if not defined NGX_PREFIX for /d %%D in ("%ROOT%\nginx-*") do if exist "%%D\conf\nginx.conf" set "NGX_PREFIX=%%D"
+
+set "NGX_EXE="
+if defined NGX_PREFIX (
+    if exist "%NGX_PREFIX%\current\nginx.exe" set "NGX_EXE=%NGX_PREFIX%\current\nginx.exe"
+)
+if defined NGX_PREFIX if not defined NGX_EXE (
+    if exist "%NGX_PREFIX%\nginx.exe" set "NGX_EXE=%NGX_PREFIX%\nginx.exe"
+)
+if defined NGX_PREFIX if not defined NGX_EXE (
+    for /d %%D in ("%NGX_PREFIX%\nginx-*") do if exist "%%D\nginx.exe" set "NGX_EXE=%%D\nginx.exe"
+)
+
+if not defined NGX_EXE (
+    echo   SKIPPED - no nginx.exe found under %ROOT%\nginx or %ROOT%\nginx-*
+) else (
+    REM Vhost confs use the prefix-relative "root projects/<domain>", which
+    REM resolves through this junction. (PHP-CGI rejects paths containing "..",
+    REM so the junction keeps SCRIPT_FILENAME dot-free.) Self-heals if missing.
+    if not exist "%ROOT%\projects" mkdir "%ROOT%\projects"
+    if not exist "%NGX_PREFIX%\projects" mklink /J "%NGX_PREFIX%\projects" "%ROOT%\projects" >nul
+    start /B "Nginx" "%NGX_EXE%" -p "%NGX_PREFIX%" -c "conf/nginx.conf"
+)
 
 echo.
 echo All services started.

@@ -35,8 +35,8 @@ After `start.bat`, confirm:
 ## Log locations
 
 ```
-Nginx errors      C:\devcrate\nginx-1.31.1\logs\error.log
-Nginx per-site    C:\devcrate\nginx-1.31.1\logs\<domain>.error.log
+Nginx errors      C:\devcrate\nginx\logs\error.log
+Nginx per-site    C:\devcrate\nginx\logs\<domain>.error.log
 PHP errors        C:\devcrate\php\php-7.4\php_errors.log
                   C:\devcrate\php\php-8.2\php_errors.log
                   C:\devcrate\php\php-8.5\php_errors.log
@@ -47,13 +47,13 @@ RabbitMQ          C:\devcrate\rabbitmq\data\log\rabbit@<HOSTNAME>.log
 ## Every PHP site returns 404 "No input file specified"
 
 Vhost roots are prefix-relative (`root projects/<domain>`), resolved through the
-`nginx-1.31.1\projects -> ..\projects` junction. If that junction is missing,
+`nginx\projects -> ..\projects` junction. If that junction is missing,
 static requests 404 from nginx and `.php` requests 404 with PHP's
 *No input file specified*. Recreate it (or just run `start.bat`, which
 self-heals it):
 
 ```bat
-mklink /J <stack-root>\nginx-1.31.1\projects <stack-root>\projects
+mklink /J <stack-root>\nginx\projects <stack-root>\projects
 ```
 
 Do **not** "fix" a vhost by changing its root to `../projects/...` — nginx will

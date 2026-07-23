@@ -48,6 +48,10 @@ pub enum Command {
     #[command(subcommand)]
     Php(PhpCommand),
 
+    /// nginx versions and the layout of its prefix.
+    #[command(subcommand)]
+    Nginx(NginxCommand),
+
     /// Vhosts.
     #[command(subcommand)]
     Site(SiteCommand),
@@ -96,6 +100,30 @@ pub enum PhpCommand {
 pub struct PhpUseArgs {
     /// Version to switch to: 8.5, 85, and php-8.5 all mean the same thing.
     pub version: String,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum NginxCommand {
+    /// List the nginx versions in the prefix and which one is active.
+    List,
+    /// Switch the active nginx by repointing the nginx\current junction.
+    Use(NginxUseArgs),
+    /// Move a pre-restructure stack into the current layout: one stable
+    /// prefix holding conf\, logs\, and the versioned builds.
+    Migrate(NginxMigrateArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct NginxUseArgs {
+    /// Version to switch to: 1.31.1, nginx-1.31.1, or an unambiguous 1.31.
+    pub version: String,
+}
+
+#[derive(Debug, Args)]
+pub struct NginxMigrateArgs {
+    /// Print what would move, and change nothing.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Subcommand)]

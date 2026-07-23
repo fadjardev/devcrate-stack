@@ -2,9 +2,9 @@
 //!
 //! The config file is entirely optional and every key in it is optional too. A
 //! stack built by the batch scripts has no `devcrate.toml` at all, so anything
-//! missing is discovered from the layout on disk instead: the `nginx-*`
-//! directory, and one PHP entry per `php\php-*` folder. That keeps the binary
-//! read-compatible with the stack as it exists today.
+//! missing is discovered from the layout on disk instead: the nginx prefix, and
+//! one PHP entry per `php\php-*` folder. That keeps the binary read-compatible
+//! with the stack as it exists today, in either nginx layout.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -35,7 +35,14 @@ pub struct Config {
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NginxConfig {
-    /// Directory holding `nginx.exe` and `conf\`, relative to the stack root.
+    /// The nginx prefix, relative to the stack root: the directory holding
+    /// `conf\`, `logs\`, and `temp\`, which is what `nginx -p` is given.
+    ///
+    /// Which *binary* runs is not configured here. It is whichever version the
+    /// `current` junction inside this directory names, so switching versions
+    /// stays a junction rewrite rather than a config edit -- and pinning a
+    /// stack that still keeps `nginx.exe` beside `conf\` needs no extra key,
+    /// since that is one of the places the binary is looked for.
     pub dir: Option<PathBuf>,
     pub ports: Option<Vec<u16>>,
 }
@@ -138,7 +145,13 @@ pub struct Stack {
     pub root_source: root::RootSource,
     /// `Some` when a `devcrate.toml` was read; `None` when defaults were used.
     pub config_path: Option<PathBuf>,
-    pub nginx_dir: PathBuf,
+    /// What `nginx -p` is given: `conf\`, `logs\`, `temp\`, and the `projects`
+    /// junction all hang off this, and it stays put across a version switch.
+    pub nginx_prefix: PathBuf,
+    /// The `nginx.exe` that would be run, resolved through `current` where
+    /// there is one. Points at the conventional spot when nothing is installed,
+    /// so it doubles as the "not installed" marker.
+    pub nginx_bin: PathBuf,
     pub php_dir: PathBuf,
     pub services: Vec<Service>,
 }
@@ -149,10 +162,12 @@ impl Stack {
         let (config, config_path) = Config::load(&root.path)?;
         let base = root.path.clone();
 
-        let nginx_dir = match &config.nginx.dir {
+        let nginx_prefix = match &config.nginx.dir {
             Some(dir) => base.join(dir),
-            None => root::nginx_dir(&base).unwrap_or_else(|| base.join("nginx-1.31.1")),
+            None => root::nginx_prefix(&base).unwrap_or_else(|| base.join("nginx")),
         };
+        let nginx_bin =
+            root::nginx_exe(&nginx_prefix).unwrap_or_else(|| nginx_prefix.join("nginx.exe"));
         let php_dir = base.join("php");
 
         let mut services = Vec::new();
@@ -161,8 +176,12 @@ impl Stack {
             id: "nginx".into(),
             name: "nginx".into(),
             kind: ServiceKind::Nginx,
-            install_marker: nginx_dir.join("nginx.exe"),
-            process_prefix: nginx_dir.join("nginx.exe"),
+            install_marker: nginx_bin.clone(),
+            // The prefix directory, not the binary. Any nginx.exe under the
+            // prefix is this stack's -- which keeps a running nginx findable
+            // after `nginx use` repoints `current` at a different version, and
+            // still cannot match an nginx installed anywhere else.
+            process_prefix: nginx_prefix.clone(),
             exclude_names: Vec::new(),
             ports: config.nginx.ports.clone().unwrap_or_else(|| vec![80, 443]),
         });
@@ -209,15 +228,21 @@ impl Stack {
             root: base,
             root_source: root.source,
             config_path,
-            nginx_dir,
+            nginx_prefix,
+            nginx_bin,
             php_dir,
             services,
         })
     }
 
-    /// `<nginx>\conf\sites`, where the per-vhost confs live.
+    /// `<prefix>\conf\sites`, where the per-vhost confs live.
     pub fn sites_dir(&self) -> PathBuf {
-        self.nginx_dir.join("conf").join("sites")
+        self.nginx_prefix.join("conf").join("sites")
+    }
+
+    /// Which nginx version `nginx\current` points at, if the stack names one.
+    pub fn current_nginx(&self) -> Option<PathBuf> {
+        crate::junction::target(&self.nginx_prefix.join("current"))
     }
 
     /// The vhost confs, sorted by file name.
@@ -236,8 +261,7 @@ impl Stack {
     /// Which PHP version `php\current` points at -- the version the CLI resolves
     /// to, since that junction is what sits on `PATH`.
     pub fn current_php(&self) -> Option<PathBuf> {
-        let current = self.php_dir.join("current");
-        std::fs::read_link(&current).ok().or_else(|| root::clean(&current).ok())
+        crate::junction::target(&self.php_dir.join("current"))
     }
 
     pub fn by_kind(&self, kind: ServiceKind) -> Option<&Service> {
@@ -266,7 +290,7 @@ impl Stack {
     pub fn to_config(&self) -> Config {
         let mut config = Config::default();
 
-        config.nginx.dir = Some(self.rel_path(&self.nginx_dir));
+        config.nginx.dir = Some(self.rel_path(&self.nginx_prefix));
         if let Some(nginx) = self.by_kind(ServiceKind::Nginx) {
             config.nginx.ports = Some(nginx.ports.clone());
         }

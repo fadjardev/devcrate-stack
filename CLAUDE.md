@@ -37,7 +37,7 @@ build (gitignored) so `devcrate` resolves on `PATH` — re-copy it after every
 build or you are running the old binary.
 
 The stack is usually running; `devcrate status` says. Stop it before renaming or
-replacing anything under `php\` or `nginx-1.31.1\`.
+replacing anything under `php\` or `nginx\`.
 
 ## Constraints that must not regress
 
@@ -52,11 +52,24 @@ Each of these cost real effort to find.
   against the *prefix*; `ssl_certificate` and `ssl_certificate_key` against the
   *conf directory*. Generated vhosts therefore say `root projects/<host>/public`,
   `certs/_wildcard.test.pem`, `logs/<host>.access.log`.
+- **The nginx prefix is `nginx\` and does not move.** It holds what belongs to
+  the *stack* — `conf\` (vhosts + certs), `logs\`, `temp\`, the `projects`
+  junction — while each build lives in `nginx\nginx-<version>\` and
+  `nginx\current` names the active one. Both path bases above therefore sit
+  outside the versioned folder, which is exactly why no vhost conf mentions a
+  version or needs rewriting to switch. The mirror image of PHP, and for the
+  opposite reason: PHP versions coexist and each is self-contained, whereas one
+  nginx runs and its config belongs to the stack. A directory is recognised as
+  a prefix by holding `conf\nginx.conf`, not by its name, so the pre-restructure
+  layout (`nginx-1.31.1\nginx.exe` beside its own `conf\`) still runs;
+  `devcrate nginx migrate` converts it. Don't reintroduce a hard-coded
+  `nginx-1.31.1`.
 - **PHP-CGI on Windows rejects any `SCRIPT_FILENAME` containing `..`** — it
   answers "No input file specified", and `$realpath_root` is a no-op on win32.
-  That is why `nginx-1.31.1\projects` is a directory junction to `..\projects`:
+  That is why `nginx\projects` is a directory junction to `..\projects`:
   it keeps document roots dot-free. `mklink /J` needs no Administrator, and the
-  same trick powers `php\current`.
+  same trick powers `php\current` and `nginx\current` (all three go through
+  `junction.rs`).
 - **PHP versions are folders**, named `php-<X.Y>` (`php-7.4`, `php-8.2`,
   `php-8.5`). Both the display version and the FastCGI port (`90` + the digits)
   are derived from the folder name, so unpacking `php-8.4\` is the whole of
@@ -68,8 +81,8 @@ Each of these cost real effort to find.
   printing in a thin CLI wrapper. The dashboard must never call anything that
   writes to stdout — stdout is the screen it just drew.
 - **Never commit** binaries, downloaded archives, runtime data, `projects/`, or
-  TLS private keys (`nginx-1.31.1/conf/certs/*-key.pem`). Check `.gitignore`
-  before adding anything.
+  TLS private keys (`nginx/conf/certs/*-key.pem`, plus a repo-wide `*-key.pem`
+  rule). Check `.gitignore` before adding anything.
 
 ## Working agreements
 

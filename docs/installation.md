@@ -69,11 +69,57 @@ C:\devcrate\php\php-8.5\php-cgi.exe -v
 Then set up the CLI switcher (junction + PATH) - see
 [php-versions.md](php-versions.md#first-time-setup).
 
-## 3. Nginx 1.31.1
+## 3. Nginx
 
-Download nginx 1.31.1 for Windows and extract so that `nginx.exe` sits at
-`C:\devcrate\nginx-1.31.1\nginx.exe`, beside the `conf\` folder that is already in
-the repo. Do not overwrite the versioned `conf\nginx.conf` or `conf\sites\`.
+`C:\devcrate\nginx\` is the **prefix**: it holds the `conf\` folder that is
+already in the repo, plus `logs\` and `temp\` at runtime. The nginx builds go
+*inside* it, one folder each, with `current` naming the active one:
+
+```
+C:\devcrate\nginx\
+├─ conf\              ← in the repo: nginx.conf, sites\, and your certs\
+├─ nginx-1.31.1\      ← the download, extracted here
+│  └─ nginx.exe
+└─ current            ← junction -> nginx-1.31.1
+```
+
+Download nginx for Windows and extract it so that `nginx.exe` lands at
+`C:\devcrate\nginx\nginx-<version>\nginx.exe` (the zip already wraps everything
+in a `nginx-<version>\` folder, so extracting into `C:\devcrate\nginx\` does
+it). Then point `current` at it:
+
+```bat
+devcrate nginx use 1.31.1
+```
+
+Do not overwrite the versioned `conf\nginx.conf` or `conf\sites\` — the build's
+own `conf\` is never read, because `-p` and `-c` point at the prefix's.
+
+Splitting it this way is what lets a second version be unpacked beside the
+first without touching a single vhost: everything a vhost path resolves
+against — the prefix for `root` and the logs, the conf directory for
+`ssl_certificate` — lives outside the versioned folder. See
+[`devcrate nginx`](cli.md#devcrate-nginx).
+
+> **Upgrading a stack built before this layout?** Older stacks put `nginx.exe`
+> and `conf\` together in `C:\devcrate\nginx-1.31.1\`. Both layouts still run,
+> but the tracked `conf\` has moved, so migrate once with the stack stopped:
+>
+> ```bat
+> devcrate stop nginx
+> devcrate nginx migrate --dry-run
+> devcrate nginx migrate
+> ```
+>
+> It moves your certificates and logs up to the prefix, moves the build inside
+> it, and creates the `current` and `projects` junctions.
+>
+> **Migrate promptly after pulling.** In the window between the two, the
+> tracked `conf\` has arrived at `nginx\` while your `nginx.exe` is still in
+> `nginx-1.31.1\`, so `devcrate status` reports nginx as `absent` — it is
+> looking in the new prefix, and the binary is not there yet. A *running*
+> nginx is unaffected and keeps serving; `nginx migrate` still detects it and
+> refuses until you stop it, so nothing is moved out from under a live server.
 
 ## 4. MariaDB 12.3
 
@@ -101,7 +147,7 @@ to `mkcert.exe`, and place it at `C:\devcrate\mkcert.exe`. Then, in an
 C:\devcrate\mkcert.exe -install
 ```
 
-Generate one wildcard cert per domain group into `nginx-1.31.1\conf\certs\`.
+Generate one wildcard cert per domain group into `nginx\conf\certs\`.
 The full command set and the wildcard strategy are in
 [nginx-vhosts.md](nginx-vhosts.md#tls-certificates-with-mkcert). These certs and
 their private keys are intentionally not in the repo.

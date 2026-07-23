@@ -33,15 +33,23 @@ erl_crash.dump
 !/php/*/php.ini
 /php/current/
 
-# --- Nginx: keep ONLY conf/, drop binaries, logs, temp, and TLS keys ---
-# Wildcarded rather than naming one version. These rules used to spell out
-# nginx-1.31.1, so a second unpacked nginx (nginx-1.32\) matched none of them
-# and its nginx.exe and conf\certs\*-key.pem were both committable. The php\
-# rules above have always been version-agnostic; these now match.
-/nginx-*/**
-!/nginx-*/conf/
-!/nginx-*/conf/**
-/nginx-*/conf/certs/
+# --- Nginx: keep ONLY the prefix's conf/, drop binaries, logs, temp, keys ---
+# nginx\ is the prefix: conf\ belongs to the stack and is versioned, and
+# everything else under it is runtime -- logs\, temp\, the projects and
+# current junctions, and the versioned builds (nginx\nginx-1.31.1\) that now
+# live inside it.
+/nginx/**
+!/nginx/conf/
+!/nginx/conf/**
+/nginx/conf/certs/
+
+# The pre-restructure layout, where the versioned folder was itself the
+# prefix. Nothing in it is tracked any more -- `devcrate nginx migrate` moves
+# what matters into nginx\ -- so the whole thing is ignored rather than
+# carefully carved up. Wildcarded, not spelled nginx-1.31.1: these rules used
+# to name one version, so a second unpacked nginx matched none of them and its
+# nginx.exe and conf\certs\*-key.pem were both committable.
+/nginx-*/
 
 # --- TLS private keys, wherever they end up ---
 # A belt to the certs\ rule above rather than a replacement for it. mkcert names

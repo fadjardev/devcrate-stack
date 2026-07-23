@@ -15,7 +15,7 @@ devcrate
 ╰──────────────────────────────────────────────╯╰──────────────────────────────────────────────╯
 ╭Services──────────────────────────────────────────────────────────────────────────────────────╮
 │SERVICE    STATE       PORTS          UPTIME    PIDS       PATH                               │
-│nginx      up          80 443         1h 06m    9184 +2    nginx-1.31.1\nginx.exe             │
+│nginx      up          80 443         1h 06m    9184 +2    nginx\current\nginx.exe             │
 │PHP 7.4    up          9074           1h 06m    4212 +4    php\php-7.4\php-cgi.exe            │
 │PHP 8.2    crashed     (9082)         -         -          php\php-8.2\php-cgi.exe            │
 │MariaDB    up          3306           1h 06m    7768       mariadb\bin\mariadbd.exe           │

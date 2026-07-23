@@ -9,6 +9,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The nginx directory is now a stable prefix with the versions inside it.**
+  `nginx\` holds everything belonging to the stack - `conf\` (the vhosts and
+  certificates), `logs\`, `temp\`, and the `projects` junction - while each
+  build lives in `nginx\nginx-<version>\` and `nginx\current` names the active
+  one. Previously the versioned folder *was* the prefix
+  (`nginx-1.31.1\nginx.exe` beside `nginx-1.31.1\conf\`), so unpacking a second
+  version would have created a second folder, silently changed which one
+  discovery picked, and abandoned every vhost and certificate configured in the
+  first.
+  - **The mirror image of PHP, deliberately.** PHP's configuration is genuinely
+    per-version - each `php.ini` differs, three FastCGI workers run at once, and
+    a vhost picks one by port - so a PHP version is a self-contained folder.
+    Only one nginx runs, and its vhosts and certificates belong to the stack
+    rather than to the build serving them, so those stay in the prefix and the
+    builds move underneath them.
+  - **No vhost conf changed, and none has to change to switch versions.** That
+    falls out of nginx's two path bases both being outside the versioned
+    folder: `root` and the logs resolve against the prefix, `ssl_certificate`
+    against the conf directory. `root projects/myapp.test/public` and
+    `certs/_wildcard.test.pem` mean the same thing whichever build reads them.
+  - **`devcrate nginx migrate` converts an existing stack**, with `--dry-run` to
+    see the plan first. It lifts the certificates, `logs\`, and `temp\` up into
+    the prefix - and the whole `conf\` if the prefix has none yet, which is the
+    case when migrating before pulling - then moves the build inside and creates
+    the `current` and `projects` junctions. It refuses while nginx is running,
+    and does nothing on a stack already converted, so running it twice is
+    harmless. The build moves *last*, after the certificates and logs are out of
+    it, which is what makes them land in the prefix rather than travel along.
+  - **Both layouts keep working.** A directory is recognised as a prefix by
+    holding `conf\nginx.conf` - the file `-c conf/nginx.conf` resolves to -
+    rather than by its name, so an unmigrated stack still starts. `start.bat`,
+    `stop.bat`, and `new-vhost.bat` resolve it the same way the binary does, and
+    none of them names a version any more.
+  - The tracked configuration moved from `nginx-1.31.1\conf\` to `nginx\conf\`,
+    and `.gitignore` follows: `nginx\conf\` is versioned, everything else under
+    `nginx\` is not, and the old `nginx-*\` is ignored wholesale.
+- **`devcrate nginx list` / `use` / `migrate`** - the versions in the prefix and
+  which one is active, switching by repointing `nginx\current`, and the
+  migration above. `use` matches on the *dotted* prefix rather than PHP's
+  digits-only rule, because nginx versions have three components and
+  `digits("1.31")` and `digits("1.3.1")` are the same string: `1.3` selects the
+  1.3 series and can never reach 1.31.something, and two releases of one series
+  are refused as ambiguous rather than guessed. Switching while nginx is running
+  says the change waits for a restart.
+
 - **PHP folders are named `php-7.4` / `php-8.2` / `php-8.5`** instead of
   `php74` / `php82` / `php85`, and any version installed later follows the same
   `php-<X.Y>` pattern. The dotted form matches how the version is written
@@ -30,7 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `start.bat`, `stop.bat`, `phpuse.bat`, and `new-vhost.bat` resolve the
     stack root from their own location (`%~dp0`) instead of hard-coding it.
   - Vhost confs use nginx-prefix-relative paths: `root projects/<domain>`
-    (through a `nginx-1.31.1\projects -> ..\projects` junction that
+    (through a `nginx\projects -> ..\projects` junction that
     `start.bat`/`new-vhost.bat` auto-create), `certs/...` (conf-relative), and
     `logs/...`. The junction exists because PHP-CGI on Windows rejects `..` in
     `SCRIPT_FILENAME` ("No input file specified"), so roots must stay dot-free.
@@ -188,7 +233,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     safe to run twice. Keeps the details that matter - each PHP worker's own
     directory as its working directory (relative `extension_dir` /
     `error_log`), `PHP_FCGI_CHILDREN` / `PHP_FCGI_MAX_REQUESTS`, the
-    `nginx-1.31.1\projects` junction self-heal, and RabbitMQ's `ERLANG_HOME` /
+    `nginx\projects` junction self-heal, and RabbitMQ's `ERLANG_HOME` /
     `RABBITMQ_BASE`. Unlike `start.bat`, `devcrate start > log.txt` returns as
     soon as the stack is up: the script's `start /B` leaks the redirected
     stdout handle to every child, so the pipe stays open until MariaDB or the
@@ -253,11 +298,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keys.** The `.gitignore` rules for nginx spelled out `nginx-1.31.1` in all
   four of them, so a `nginx-1.32\` directory matched none: both
   `nginx-1.32\nginx.exe` and `nginx-1.32\conf\certs\*-key.pem` were trackable,
-  against the repo's own rule that neither is ever committed. The rules are now
-  wildcarded (`/nginx-*/...`), matching the `php\` rules, which have always been
-  version-agnostic. Verified both ways - the binaries, logs, temp files, and
-  certificate directories of *any* nginx version are ignored, and every
-  version's `conf\nginx.conf` and `conf\sites\*.conf` are still tracked.
+  against the repo's own rule that neither is ever committed. The rules no
+  longer name a version, matching the `php\` rules, which have always been
+  version-agnostic. Verified both ways - binaries, logs, temp files, and
+  certificate directories are ignored under the prefix and under any leftover
+  `nginx-*\`, while `nginx\conf\nginx.conf` and `nginx\conf\sites\*.conf` stay
+  tracked. (The prefix restructure above then moved where those tracked files
+  live; the rules were rewritten with it.)
   - Also added `*-key.pem` as a repository-wide rule. mkcert names every private
     key it issues that way, its own CA included, so a certificate directory that
     is moved or added somewhere the nginx paths do not reach is still covered.

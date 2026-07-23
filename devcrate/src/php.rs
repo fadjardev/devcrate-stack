@@ -10,7 +10,7 @@ use std::process::Command;
 use anyhow::{Context, Result, anyhow};
 
 use crate::config::{Service, Stack};
-use crate::exit;
+use crate::{exit, junction};
 
 /// Find a PHP version by any of the spellings someone might reasonably type:
 /// `8.5`, `85`, or `php-8.5`.
@@ -72,24 +72,8 @@ pub fn use_version(stack: &Stack, wanted: &str) -> Result<Switched> {
     }
 
     let current = stack.php_dir.join("current");
-    remove_link(&current, stack)?;
-
-    // mklink /J needs no privileges; std's symlink_dir does.
-    let output = Command::new("cmd")
-        .args(["/c", "mklink", "/J"])
-        .arg(&current)
-        .arg(dir)
-        .output()
-        .context("running mklink")?;
-    if !output.status.success() {
-        let message = String::from_utf8_lossy(&output.stderr);
-        let message = if message.trim().is_empty() {
-            String::from_utf8_lossy(&output.stdout).trim().to_string()
-        } else {
-            message.trim().to_string()
-        };
-        return Err(anyhow!("could not create {}: {message}", stack.rel(&current)));
-    }
+    junction::create(&current, dir)
+        .with_context(|| format!("pointing {} at {}", stack.rel(&current), stack.rel(dir)))?;
 
     Ok(Switched {
         name: service.name.clone(),
@@ -106,25 +90,6 @@ pub fn switch(stack: &Stack, wanted: &str) -> Result<u8> {
         None => println!("  (php -v produced no output)"),
     }
     Ok(exit::OK)
-}
-
-/// Remove the existing `current` junction, if there is one.
-///
-/// `remove_dir` deletes the reparse point rather than following it, so the PHP
-/// installation it pointed at is untouched. A *real* directory there fails the
-/// same call unless it is empty, which is the outcome we want: refusing beats
-/// deleting something that is not ours to delete.
-fn remove_link(current: &Path, stack: &Stack) -> Result<()> {
-    if std::fs::symlink_metadata(current).is_err() {
-        return Ok(());
-    }
-    std::fs::remove_dir(current).with_context(|| {
-        format!(
-            "removing the existing {} (if it is a real directory rather than a junction, \
-             move it aside by hand)",
-            stack.rel(current)
-        )
-    })
 }
 
 fn version_banner(php_exe: &Path) -> Option<String> {

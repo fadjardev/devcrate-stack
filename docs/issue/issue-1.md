@@ -37,7 +37,7 @@ explained where they appear.
 
 ## Motivation
 
-Today you have to know which script does what, read `nginx-1.31.1\logs\*.log` in a
+Today you have to know which script does what, read `nginx\logs\*.log` in a
 separate editor, and find out a service died only when a request fails. There is no
 single place that answers "is the stack up, and on which ports?". A TUI makes the
 stack's actual state visible and controllable from one screen.
@@ -62,7 +62,7 @@ stack's actual state visible and controllable from one screen.
       inside an action that is still running.
 
 ### Log viewer
-- [x] Tail `nginx-1.31.1\logs\*.log`, the MariaDB error log, and the RabbitMQ node log
+- [x] Tail `nginx\logs\*.log`, the MariaDB error log, and the RabbitMQ node log
 - [x] Filter by site / log file — the file list is discovered, not fixed, so a
       vhost added this session appears once it has been requested
 - [x] Follow mode with scrollback. Scrolling up turns follow off, so the view

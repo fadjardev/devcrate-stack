@@ -22,7 +22,7 @@ pub struct LogFile {
 pub fn discover(stack: &Stack) -> Vec<LogFile> {
     let mut files = Vec::new();
 
-    collect(&mut files, "nginx", &stack.nginx_dir.join("logs"), &["log"]);
+    collect(&mut files, "nginx", &stack.nginx_prefix.join("logs"), &["log"]);
 
     if let Some(mariadb) = stack.by_kind(ServiceKind::MariaDb)
         && let Some(dir) = mariadb.install_marker.parent().and_then(Path::parent)

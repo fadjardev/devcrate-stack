@@ -9,8 +9,28 @@ echo === Devcrate  -  PHP Development Stack (%ROOT%)  -  STOP ===
 echo.
 
 echo Gracefully stopping Nginx (waiting for active connections) ...
-"%ROOT%\nginx-1.31.1\nginx.exe" -p "%ROOT%\nginx-1.31.1" -s quit
-timeout /t 4 /nobreak > nul
+REM Same prefix/binary resolution as start.bat -- see the comment there.
+set "NGX_PREFIX="
+if exist "%ROOT%\nginx\conf\nginx.conf" set "NGX_PREFIX=%ROOT%\nginx"
+if not defined NGX_PREFIX for /d %%D in ("%ROOT%\nginx-*") do if exist "%%D\conf\nginx.conf" set "NGX_PREFIX=%%D"
+
+set "NGX_EXE="
+if defined NGX_PREFIX (
+    if exist "%NGX_PREFIX%\current\nginx.exe" set "NGX_EXE=%NGX_PREFIX%\current\nginx.exe"
+)
+if defined NGX_PREFIX if not defined NGX_EXE (
+    if exist "%NGX_PREFIX%\nginx.exe" set "NGX_EXE=%NGX_PREFIX%\nginx.exe"
+)
+if defined NGX_PREFIX if not defined NGX_EXE (
+    for /d %%D in ("%NGX_PREFIX%\nginx-*") do if exist "%%D\nginx.exe" set "NGX_EXE=%%D\nginx.exe"
+)
+
+if defined NGX_EXE (
+    "%NGX_EXE%" -p "%NGX_PREFIX%" -s quit
+    timeout /t 4 /nobreak > nul
+) else (
+    echo   SKIPPED - no nginx.exe found
+)
 
 echo Terminating PHP-CGI processes ...
 taskkill /F /IM php-cgi.exe /T 2>nul

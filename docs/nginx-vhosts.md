@@ -1,7 +1,7 @@
 # Nginx and virtual hosts
 
 Nginx serves every project over HTTPS on `:443` (with `:80` redirecting to
-HTTPS). The main config is `nginx-1.31.1\conf\nginx.conf`, which includes every
+HTTPS). The main config is `nginx\conf\nginx.conf`, which includes every
 per-project vhost from `conf\sites\*.conf`.
 
 ## Current sites
@@ -60,9 +60,9 @@ The `fastcgi_pass` port is what pins the site to a PHP version:
 the whole folder can move without touching any config:
 
 - `root projects/<domain>/...` and `access_log logs/...` resolve against the
-  nginx **prefix** (`<stack-root>\nginx-1.31.1`, set by `-p` in `start.bat`).
+  nginx **prefix** (`<stack-root>\nginx`, set by `-p` in `start.bat`).
   The `projects` path goes through a junction
-  `nginx-1.31.1\projects -> <stack-root>\projects` that `start.bat` and
+  `nginx\projects -> <stack-root>\projects` that `start.bat` and
   `new-vhost.bat` create automatically. The junction keeps `SCRIPT_FILENAME`
   free of `..` — PHP-CGI on Windows refuses paths containing `..`
   ("No input file specified"), so don't replace it with `root ../projects/...`.
@@ -159,37 +159,37 @@ Existing certs cover:
 
 ### Generating certs (Admin CMD)
 
-One command per group, writing into `nginx-1.31.1\conf\certs\`:
+One command per group, writing into `nginx\conf\certs\`:
 
 ```cmd
 C:\devcrate\mkcert.exe ^
-  -cert-file C:\devcrate\nginx-1.31.1\conf\certs\_wildcard.test.pem ^
-  -key-file  C:\devcrate\nginx-1.31.1\conf\certs\_wildcard.test-key.pem ^
+  -cert-file C:\devcrate\nginx\conf\certs\_wildcard.test.pem ^
+  -key-file  C:\devcrate\nginx\conf\certs\_wildcard.test-key.pem ^
   "*.test"
 
 C:\devcrate\mkcert.exe ^
-  -cert-file C:\devcrate\nginx-1.31.1\conf\certs\_wildcard.qhomeapps.test.pem ^
-  -key-file  C:\devcrate\nginx-1.31.1\conf\certs\_wildcard.qhomeapps.test-key.pem ^
+  -cert-file C:\devcrate\nginx\conf\certs\_wildcard.qhomeapps.test.pem ^
+  -key-file  C:\devcrate\nginx\conf\certs\_wildcard.qhomeapps.test-key.pem ^
   "*.qhomeapps.test"
 
 C:\devcrate\mkcert.exe ^
-  -cert-file C:\devcrate\nginx-1.31.1\conf\certs\_wildcard.qhomemart.test.pem ^
-  -key-file  C:\devcrate\nginx-1.31.1\conf\certs\_wildcard.qhomemart.test-key.pem ^
+  -cert-file C:\devcrate\nginx\conf\certs\_wildcard.qhomemart.test.pem ^
+  -key-file  C:\devcrate\nginx\conf\certs\_wildcard.qhomemart.test-key.pem ^
   "*.qhomemart.test"
 
 C:\devcrate\mkcert.exe ^
-  -cert-file C:\devcrate\nginx-1.31.1\conf\certs\_wildcard.qhomedata.test.pem ^
-  -key-file  C:\devcrate\nginx-1.31.1\conf\certs\_wildcard.qhomedata.test-key.pem ^
+  -cert-file C:\devcrate\nginx\conf\certs\_wildcard.qhomedata.test.pem ^
+  -key-file  C:\devcrate\nginx\conf\certs\_wildcard.qhomedata.test-key.pem ^
   "*.qhomedata.test"
 
 C:\devcrate\mkcert.exe ^
-  -cert-file C:\devcrate\nginx-1.31.1\conf\certs\_wildcard.qhomemart.cloud.test.pem ^
-  -key-file  C:\devcrate\nginx-1.31.1\conf\certs\_wildcard.qhomemart.cloud.test-key.pem ^
+  -cert-file C:\devcrate\nginx\conf\certs\_wildcard.qhomemart.cloud.test.pem ^
+  -key-file  C:\devcrate\nginx\conf\certs\_wildcard.qhomemart.cloud.test-key.pem ^
   "*.qhomemart.cloud.test"
 
 C:\devcrate\mkcert.exe ^
-  -cert-file C:\devcrate\nginx-1.31.1\conf\certs\_wildcard.qhomedata.id.test.pem ^
-  -key-file  C:\devcrate\nginx-1.31.1\conf\certs\_wildcard.qhomedata.id.test-key.pem ^
+  -cert-file C:\devcrate\nginx\conf\certs\_wildcard.qhomedata.id.test.pem ^
+  -key-file  C:\devcrate\nginx\conf\certs\_wildcard.qhomedata.id.test-key.pem ^
   "*.qhomedata.id.test"
 ```
 
@@ -205,8 +205,8 @@ For a brand-new group, generate `*.newgroup.test` the same way and update the
 After editing a conf:
 
 ```cmd
-"C:\devcrate\nginx-1.31.1\nginx.exe" -p "C:\devcrate\nginx-1.31.1" -s reload
+"C:\devcrate\nginx\current\nginx.exe" -p "C:\devcrate\nginx" -s reload
 ```
 
 Or a full restart with `stop.bat` then `start.bat`. Check
-`nginx-1.31.1\logs\<domain>.error.log` if a site fails to load.
+`nginx\logs\<domain>.error.log` if a site fails to load.

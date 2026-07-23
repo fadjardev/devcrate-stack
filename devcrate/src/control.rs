@@ -278,10 +278,10 @@ fn reap_helpers(service: &Service) -> usize {
 /// The service's own shutdown command, where it has one.
 fn ask_nicely(stack: &Stack, service: &Service) -> Result<()> {
     match service.kind {
-        ServiceKind::Nginx => {
-            let prefix = stack.nginx_dir.clone();
-            run(Command::new(&service.install_marker).arg("-p").arg(&prefix).args(["-s", "quit"]))
-        }
+        ServiceKind::Nginx => run(Command::new(&stack.nginx_bin)
+            .arg("-p")
+            .arg(&stack.nginx_prefix)
+            .args(["-s", "quit"])),
         // No shutdown command exists for a php-cgi FastCGI listener.
         ServiceKind::Php => Ok(()),
         ServiceKind::RabbitMq => {
@@ -568,8 +568,11 @@ fn launch(stack: &Stack, service: &Service) -> Result<()> {
 
         ServiceKind::Nginx => {
             ensure_projects_junction(stack)?;
-            let mut command = Command::new(&service.install_marker);
-            command.arg("-p").arg(&stack.nginx_dir).args(["-c", "conf/nginx.conf"]);
+            let mut command = Command::new(&stack.nginx_bin);
+            // -p is the prefix, which is *not* where the binary lives once
+            // versions sit inside it; -c is resolved against the prefix, so
+            // conf/nginx.conf is the stack's config whichever version runs.
+            command.arg("-p").arg(&stack.nginx_prefix).args(["-c", "conf/nginx.conf"]);
             background(&mut command)
         }
     }
@@ -607,12 +610,11 @@ pub fn ensure_projects_junction(stack: &Stack) -> Result<()> {
     if !projects.is_dir() {
         std::fs::create_dir_all(&projects)?;
     }
-    let link = stack.nginx_dir.join("projects");
+    let link = stack.nginx_prefix.join("projects");
     if link.exists() {
         return Ok(());
     }
-    // mklink /J needs no privileges; std's symlink_dir does.
-    run(Command::new("cmd").args(["/c", "mklink", "/J"]).arg(&link).arg(&projects))
+    crate::junction::create(&link, &projects)
 }
 
 /// Ask a running nginx to re-read its configuration. `Ok(false)` means nginx
@@ -632,11 +634,8 @@ pub fn reload_nginx(stack: &Stack) -> Result<bool> {
         return Ok(false);
     }
 
-    let test = Command::new(&nginx.install_marker)
-        .arg("-p")
-        .arg(&stack.nginx_dir)
-        .arg("-t")
-        .output()?;
+    let test =
+        Command::new(&stack.nginx_bin).arg("-p").arg(&stack.nginx_prefix).arg("-t").output()?;
     if !test.status.success() {
         // nginx -t writes its verdict, including the offending file and line,
         // to stderr.
@@ -645,9 +644,9 @@ pub fn reload_nginx(stack: &Stack) -> Result<bool> {
         return Err(anyhow!("nginx configuration test failed: {}", detail.join("; ")));
     }
 
-    run(Command::new(&nginx.install_marker)
+    run(Command::new(&stack.nginx_bin)
         .arg("-p")
-        .arg(&stack.nginx_dir)
+        .arg(&stack.nginx_prefix)
         .args(["-s", "reload"]))?;
     Ok(true)
 }
