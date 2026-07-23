@@ -37,7 +37,7 @@ no output. The program knows exactly what it needs — it should just get it.
 
 - [ ] Pick a version and download it with a progress bar
 - [ ] Verify the checksum/signature the vendor publishes **before** extracting
-- [ ] Extract into the standard layout (`php\php85\`, `nginx-1.31.1\`, `mariadb\`, …)
+- [ ] Extract into the standard layout (`php\php-8.5\`, `nginx-1.31.1\`, `mariadb\`, …)
 - [ ] Generate first-run config: a `php.ini` seeded from `php.ini-development` with
   the extension set Devcrate expects (curl, exif, fileinfo, gd, intl, mbstring,
   openssl, pdo_mysql, pdo_sqlite, sodium, sqlite3, zip), `my.ini`, and the

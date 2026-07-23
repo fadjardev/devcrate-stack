@@ -37,29 +37,29 @@ Download the **Thread-Safe (TS) x64** ZIPs from
 
 | Version | Extract to | Build |
 | --- | --- | --- |
-| PHP 7.4.x | `C:\devcrate\php\php74\` | vc15 x64 TS |
-| PHP 8.2.x | `C:\devcrate\php\php82\` | vs16 x64 TS |
-| PHP 8.5.x | `C:\devcrate\php\php85\` | vs17 x64 TS |
+| PHP 7.4.x | `C:\devcrate\php\php-7.4\` | vc15 x64 TS |
+| PHP 8.2.x | `C:\devcrate\php\php-8.2\` | vs16 x64 TS |
+| PHP 8.5.x | `C:\devcrate\php\php-8.5\` | vs17 x64 TS |
 
 The `php.ini` for each version is already in the repo - don't overwrite it.
 Verify each build:
 
 ```cmd
-C:\devcrate\php\php74\php-cgi.exe -v
-C:\devcrate\php\php82\php-cgi.exe -v
-C:\devcrate\php\php85\php-cgi.exe -v
+C:\devcrate\php\php-7.4\php-cgi.exe -v
+C:\devcrate\php\php-8.2\php-cgi.exe -v
+C:\devcrate\php\php-8.5\php-cgi.exe -v
 ```
 
 **CLI version switching.** `php` on the command line resolves through the
 `php\current` junction. Create it by running the switcher once:
 
 ```bat
-C:\devcrate\phpuse.bat 85
+C:\devcrate\phpuse.bat 8.5
 ```
 
 Add `C:\devcrate\php\current` and `C:\devcrate` to your **user** PATH (with your
-actual stack root), open a new terminal, then switch anytime with `phpuse 85` /
-`phpuse 82` / `phpuse 74`. Details: [php-versions.md](php-versions.md).
+actual stack root), open a new terminal, then switch anytime with `phpuse 8.5` /
+`phpuse 8.2` / `phpuse 7.4`. Details: [php-versions.md](php-versions.md).
 
 ---
 
@@ -144,7 +144,7 @@ C:\devcrate\stop.bat     REM graceful shutdown of everything
 ## 8. Add a project
 
 ```cmd
-C:\devcrate\new-vhost.bat myapp.test php85
+C:\devcrate\new-vhost.bat myapp.test 8.5
 ```
 
 Scaffolds `projects\myapp.test\public\`, writes the vhost conf, and reloads

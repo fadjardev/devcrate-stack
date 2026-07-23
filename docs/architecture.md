@@ -25,7 +25,7 @@ C:\devcrate\                   <- the stack root (any folder works)
 |- docs\                       Documentation (setup, architecture, per-service, ...)
 |
 |- php\
-|  |- php74\  php82\  php85\    Portable PHP builds (php.ini is versioned; binaries are not)
+|  |- php-7.4\  php-8.2\  php-8.5\    Portable PHP builds (php.ini is versioned; binaries are not)
 |  |- current                  Junction -> the active CLI PHP version (generated)
 |
 |- nginx-1.31.1\
@@ -79,14 +79,23 @@ selected by `phpuse`.
 | Nginx HTTP | `0.0.0.0:80` | redirects to HTTPS |
 | Nginx HTTPS | `0.0.0.0:443` | TLS via mkcert |
 
-The FastCGI port convention is `90` + the PHP version digits: `php74 -> 9074`,
-`php82 -> 9082`, `php85 -> 9085`.
+The FastCGI port convention is `90` + the PHP version digits: `php-7.4 -> 9074`,
+`php-8.2 -> 9082`, `php-8.5 -> 9085`.
+
+**The folder name is the source of truth.** A PHP version has no entry in a
+registry anywhere; it is a `php\php-<X.Y>\` directory, and both the display
+version and the FastCGI port are derived from its name. Unpacking `php-8.4\`
+is the whole of installing a version as far as `devcrate php list`,
+`devcrate start`, `phpuse.bat`, and `new-vhost.bat` are concerned. Because only
+the digits are read, the older `php85` spelling still resolves, and any command
+that takes a version accepts `8.5`, `85`, or `php-8.5` interchangeably.
 
 ## Two ways PHP version is selected
 
 1. **Web (per site):** the `fastcgi_pass` port in each vhost. Changing a site's
    PHP version means pointing its `fastcgi_pass` at a different port and
-   restarting. See [nginx-vhosts.md](nginx-vhosts.md).
+   reloading — `devcrate site set-php <host> <version>` does exactly that. See
+   [nginx-vhosts.md](nginx-vhosts.md).
 2. **CLI (global):** the `php\current` junction, repointed by `phpuse`. This is
    what `php`, `composer`, and `laravel` on the command line resolve to. See
    [php-versions.md](php-versions.md).

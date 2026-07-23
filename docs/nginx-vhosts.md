@@ -74,13 +74,19 @@ the whole folder can move without touching any config:
 Use the helper (from anywhere, since the stack root is on PATH):
 
 ```bat
-new-vhost.bat myapp.test php85
+new-vhost.bat myapp.test 8.5
 ```
 
 It scaffolds `projects\myapp.test\public\index.php` (a phpinfo stub), writes
 `conf\sites\myapp.test.conf` with the `public/` web root and the `*.test`
-wildcard cert, and reloads nginx. Valid PHP arguments: `php74`, `php82`,
-`php85`.
+wildcard cert, and reloads nginx. The PHP argument is resolved against the
+`php\php-*` folders that are actually installed, and may be spelled `8.5`, `85`,
+or `php-8.5`.
+
+`devcrate site add myapp.test --php 8.5` does the same and tests the
+configuration before reloading; `devcrate site set-php myapp.test 7.4` changes
+an existing vhost's version without touching the rest of its conf. See
+[cli.md](cli.md).
 
 Then add the printed hosts line (Notepad as Admin):
 

@@ -35,18 +35,18 @@ https://windows.php.net/download/ and extract each into its own folder:
 
 | Version | Extract to | Build |
 | --- | --- | --- |
-| PHP 7.4.x | `C:\devcrate\php\php74\` | vc15 x64 TS |
-| PHP 8.2.x | `C:\devcrate\php\php82\` | vs16 x64 TS |
-| PHP 8.5.x | `C:\devcrate\php\php85\` | vs17 x64 TS |
+| PHP 7.4.x | `C:\devcrate\php\php-7.4\` | vc15 x64 TS |
+| PHP 8.2.x | `C:\devcrate\php\php-8.2\` | vs16 x64 TS |
+| PHP 8.5.x | `C:\devcrate\php\php-8.5\` | vs17 x64 TS |
 
 The `php.ini` for each version is already in the repo at
 `php\<ver>\php.ini` - do not overwrite it with `php.ini-development`. Verify
 each build starts:
 
 ```bat
-C:\devcrate\php\php74\php-cgi.exe -v
-C:\devcrate\php\php82\php-cgi.exe -v
-C:\devcrate\php\php85\php-cgi.exe -v
+C:\devcrate\php\php-7.4\php-cgi.exe -v
+C:\devcrate\php\php-8.2\php-cgi.exe -v
+C:\devcrate\php\php-8.5\php-cgi.exe -v
 ```
 
 Then set up the CLI switcher (junction + PATH) - see

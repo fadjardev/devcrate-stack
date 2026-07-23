@@ -19,8 +19,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow};
 
 use crate::config::{Service, ServiceKind, Stack};
-use crate::exit;
 use crate::probe::{self, ProcessTable};
+use crate::{exit, php};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -141,17 +141,33 @@ fn select<'a>(
     let want = want.to_ascii_lowercase();
     // `php` on its own means every version, which is what someone typing it
     // after seeing three php* rows in `devcrate status` almost certainly means.
-    let matched: Vec<&Service> = if want == "php" {
-        ordered.iter().copied().filter(|s| s.kind == ServiceKind::Php).collect()
-    } else {
-        ordered.iter().copied().filter(|s| s.id == want).collect()
-    };
-
-    if matched.is_empty() {
-        let known: Vec<&str> = ordered.iter().map(|s| s.id.as_str()).collect();
-        return Err(anyhow!("unknown service {want:?}; known: {}, php", known.join(", ")));
+    if want == "php" {
+        return Ok(ordered.into_iter().filter(|s| s.kind == ServiceKind::Php).collect());
     }
-    Ok(matched)
+
+    let matched: Vec<&Service> = ordered.iter().copied().filter(|s| s.id == want).collect();
+    if !matched.is_empty() {
+        return Ok(matched);
+    }
+
+    // A PHP version may be named by its digits in any spelling, the way
+    // `devcrate php use` accepts them -- so `stop php85`, `stop php-8.5`, and
+    // `stop 8.5` are one command, and renaming the directories does not
+    // invalidate anybody's script.
+    let wanted_digits = php::digits(&want);
+    if !wanted_digits.is_empty() {
+        let by_version: Vec<&Service> = ordered
+            .iter()
+            .copied()
+            .filter(|s| s.kind == ServiceKind::Php && php::digits(&s.id) == wanted_digits)
+            .collect();
+        if !by_version.is_empty() {
+            return Ok(by_version);
+        }
+    }
+
+    let known: Vec<&str> = ordered.iter().map(|s| s.id.as_str()).collect();
+    Err(anyhow!("unknown service {want:?}; known: {}, php", known.join(", ")))
 }
 
 fn stop_service(stack: &Stack, service: &Service) -> Stopped {
@@ -177,6 +193,18 @@ fn stop_service(stack: &Stack, service: &Service) -> Stopped {
 
 fn running(service: &Service) -> Vec<u32> {
     ProcessTable::scan().matching(&service.process_prefix, &service.exclude_names)
+}
+
+/// Who is on a port we wanted. Worth a full process scan: this only runs on
+/// the way to reporting a failure, and "port 3306 is taken" without a name
+/// leaves the reader nowhere to go.
+fn port_holder(port: u16) -> Option<String> {
+    let pid = probe::listeners().get(&port).copied()?;
+    let table = ProcessTable::scan();
+    Some(match table.name_of(pid) {
+        Some(name) => format!("{name} (pid {pid})"),
+        None => format!("pid {pid}"),
+    })
 }
 
 fn wait_until_gone(service: &Service, grace: Duration) -> bool {
@@ -302,14 +330,18 @@ pub enum Started {
     Silent(Duration),
     /// The process went away again.
     Exited,
-    /// Somebody else is on the port, so it was not started at all.
-    PortBusy(u16),
+    /// Somebody else is on the port, so it was not started at all. `holder`
+    /// names them where the kernel's table will say.
+    PortBusy { port: u16, holder: Option<String> },
     Failed(String),
 }
 
 impl Started {
     fn is_failure(&self) -> bool {
-        matches!(self, Started::Silent(_) | Started::Exited | Started::PortBusy(_) | Started::Failed(_))
+        matches!(
+            self,
+            Started::Silent(_) | Started::Exited | Started::PortBusy { .. } | Started::Failed(_)
+        )
     }
 }
 
@@ -397,7 +429,7 @@ fn start_service(stack: &Stack, service: &Service) -> Started {
     // Preflight: ours is not running, so anything already on one of its ports
     // belongs to somebody else and starting would just fail to bind.
     if let Some(&port) = service.ports.iter().find(|&&port| probe::is_listening(port)) {
-        return Started::PortBusy(port);
+        return Started::PortBusy { port, holder: port_holder(port) };
     }
 
     if let Err(err) = launch(stack, service) {
@@ -597,7 +629,10 @@ fn describe_start(service: &Service, outcome: &Started) -> String {
                 .into()
         }
         Started::Exited => "FAILED: exited immediately".into(),
-        Started::PortBusy(port) => {
+        Started::PortBusy { port, holder: Some(who) } => {
+            format!("FAILED: port {port} is held by {who}; not started")
+        }
+        Started::PortBusy { port, holder: None } => {
             format!("FAILED: port {port} is held by another process; not started")
         }
         Started::Failed(why) => format!("FAILED: {why}"),

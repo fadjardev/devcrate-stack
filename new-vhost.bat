@@ -19,10 +19,11 @@ REM  For third-level domains  (e.g. api.mygroup.test)  you must
 REM  generate an additional wildcard cert for *.mygroup.test
 REM  and edit the ssl_certificate lines in the generated conf.
 REM
-REM  PHP version / port map:
-REM    php74  ->  9074
-REM    php82  ->  9082
-REM    php85  ->  9085
+REM  PHP version / port map:  90 + the version digits, so
+REM    php-7.4  ->  9074
+REM    php-8.2  ->  9082
+REM    php-8.5  ->  9085
+REM  Any spelling of the version works: 8.5, 85, or php-8.5.
 REM ================================================================
 
 set "ROOT=%~dp0"
@@ -33,14 +34,22 @@ if "%~2"=="" goto usage
 
 set "DOMAIN=%~1"
 set "PHPVER=%~2"
-set "PORT="
 
-if /i "!PHPVER!"=="php74" set "PORT=9074"
-if /i "!PHPVER!"=="php82" set "PORT=9082"
-if /i "!PHPVER!"=="php85" set "PORT=9085"
+REM Resolve the version against what is actually installed rather than a list
+REM baked into this script, and derive the port the way start.bat assigns it.
+call :digits WANT "!PHPVER!"
+set "PORT="
+for /d %%D in ("%ROOT%\php\php-*") do (
+    call :digits HAVE "%%~nxD"
+    if /i "!HAVE!"=="!WANT!" (
+        set "PHPVER=%%~nxD"
+        set "PORT=90!HAVE!"
+    )
+)
 
 if "!PORT!"=="" (
-    echo ERROR: Unknown PHP version "!PHPVER!". Valid options: php74, php82, php85
+    echo ERROR: PHP "%~2" is not installed. Installed versions:
+    for /d %%D in ("%ROOT%\php\php-*") do echo    %%~nxD
     exit /b 1
 )
 
@@ -135,8 +144,18 @@ goto :eof
 :usage
 echo.
 echo  Usage  : new-vhost.bat ^<domain^> ^<phpversion^>
-echo  Example: new-vhost.bat myapp.test php82
+echo  Example: new-vhost.bat myapp.test 8.2
 echo.
-echo  PHP versions:  php74 ^(port 9074^)  php82 ^(port 9082^)  php85 ^(port 9085^)
+echo  Installed PHP versions ^(the FastCGI port is 90 + the digits^):
+for /d %%D in ("%ROOT%\php\php-*") do echo    %%~nxD
 echo.
 exit /b 1
+
+REM Reduce a version spelling to its digits: php-8.5 / 8.5 / 85 -^> 85
+:digits
+set "_D=%~2"
+set "_D=%_D:.=%"
+set "_D=%_D:php=%"
+set "_D=%_D:-=%"
+set "%~1=%_D%"
+exit /b 0

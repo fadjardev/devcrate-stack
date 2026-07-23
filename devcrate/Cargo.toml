@@ -20,4 +20,10 @@ toml = "1.1.3"
 strip = true
 
 [target."cfg(windows)".dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation"] }
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    # GetExtendedTcpTable: which PID holds a listening port.
+    "Win32_NetworkManagement_IpHelper",
+    # GetConsoleMode / SetConsoleMode: enabling ANSI on a Windows console.
+    "Win32_System_Console",
+] }

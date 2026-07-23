@@ -12,6 +12,7 @@ mod probe;
 mod root;
 mod site;
 mod status;
+mod term;
 
 use std::process::ExitCode;
 
@@ -75,6 +76,9 @@ fn run(cli: Cli) -> Result<u8> {
         Command::Site(SiteCommand::Add(args)) => {
             site::add(&stack, &args.host, args.php.as_deref(), args.force)
         }
+        Command::Site(SiteCommand::SetPhp(args)) => {
+            site::set_php(&stack, &args.host, &args.version)
+        }
         Command::Site(SiteCommand::Remove(args)) => site::remove(&stack, &args.host),
 
         Command::Start(args) => control::start(&stack, args.service.as_deref()),
@@ -115,16 +119,25 @@ fn php_list(stack: &Stack) {
         return;
     }
 
+    let width = services.iter().map(|p| p.id.chars().count()).max().unwrap_or(0);
     for php in services {
-        let active = if current_name.as_deref() == Some(php.id.as_str()) { "*" } else { " " };
+        let is_current = current_name.as_deref() == Some(php.id.as_str());
+        let active = if is_current { "*" } else { " " };
         let port = php.ports.first().map(|p| p.to_string()).unwrap_or_else(|| "-".into());
         let state = if php.is_installed() { "" } else { "  (php-cgi.exe missing)" };
-        println!("{active} {:<8}  {:<6}  fastcgi {port}{state}", php.name, php.id);
+        let row = format!(
+            "{active} {:<8}  {:<width$}  fastcgi {port}{state}",
+            php.name, php.id
+        );
+        match is_current {
+            true => println!("{}", term::paint(&row, term::Color::Green)),
+            false => println!("{row}"),
+        }
     }
 
     match current_name {
         Some(name) => println!("\n* = php\\current -> {name} (what the CLI resolves to)"),
-        None => println!("\nphp\\current is not set; run `phpuse 85` to create it"),
+        None => println!("\nphp\\current is not set; run `devcrate php use 8.5` to create it"),
     }
 }
 

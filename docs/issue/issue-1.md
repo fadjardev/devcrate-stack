@@ -17,17 +17,23 @@ a second implementation:
 
 | Scope item | Core available today |
 | --- | --- |
-| Dashboard: status, PID, port | `devcrate status` — but no uptime, and the scan is synchronous |
+| Dashboard: status, PID, port | `devcrate status` |
+| Dashboard: uptime | `devcrate status` — the leader's age, in the table and in `--json` |
+| Dashboard: refresh off the UI thread | **no** — the scan is synchronous, which is the TUI's problem to solve |
 | Start / stop / restart, shutdown order | `devcrate start` / `stop` / `restart` |
 | Report a crashed child | **no** — nothing is resident to notice |
 | Log viewer | no |
 | Vhost list | `devcrate site list` |
 | Vhost create | `devcrate site add` (cert reuse only; mkcert issuance is #2/#4) |
-| Vhost edit: change PHP version | **no** — `site add` writes a whole conf or refuses, it never edits one |
+| Vhost edit: change PHP version | `devcrate site set-php` — rewrites the `fastcgi_pass` line only |
 | PHP switcher: show active | `devcrate php list` |
 | PHP switcher: repoint junction | `devcrate php use` |
 | Preflight: detect port conflicts | `devcrate start` refuses a port held by another process |
-| Preflight: name the holder | **no** — needs a port→PID map (`GetExtendedTcpTable`); `sysinfo` has none |
+| Preflight: name the holder | `probe::listeners()` — `GetExtendedTcpTable`, used by both `status` and `start` |
+
+What is left in that table is what genuinely cannot exist until something stays
+resident: crash detection, the log viewer, and moving the scan off the drawing
+thread. Everything else the TUI needs is now a function call away.
 
 ## Motivation
 

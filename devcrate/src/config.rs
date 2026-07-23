@@ -3,7 +3,7 @@
 //! The config file is entirely optional and every key in it is optional too. A
 //! stack built by the batch scripts has no `devcrate.toml` at all, so anything
 //! missing is discovered from the layout on disk instead: the `nginx-*`
-//! directory, and one PHP entry per `php\php*` folder. That keeps the binary
+//! directory, and one PHP entry per `php\php-*` folder. That keeps the binary
 //! read-compatible with the stack as it exists today.
 
 use std::fmt;
@@ -107,7 +107,9 @@ impl ServiceKind {
 
 #[derive(Debug, Clone)]
 pub struct Service {
-    /// Stable identifier for scripting: `nginx`, `php74`, `mariadb`, `rabbitmq`.
+    /// Stable identifier for scripting: `nginx`, `php-7.4`, `mariadb`,
+    /// `rabbitmq`. It is the directory name, so it follows a rename -- which is
+    /// why every command that takes one also accepts the version digits alone.
     pub id: String,
     /// Human label: `nginx`, `PHP 7.4`, ...
     pub name: String,
@@ -324,8 +326,9 @@ fn resolve_php(config: &Config, php_dir: &Path) -> Vec<Service> {
         .flatten()
         .flatten()
         .map(|e| e.path())
-        // `current` is the CLI junction, not a version.
-        .filter(|p| p.is_dir() && dir_tag(p).starts_with("php") && dir_tag(p) != "phpcurrent")
+        // `current` is the CLI junction, not a version, and the downloaded
+        // archives sitting beside these folders are files rather than dirs.
+        .filter(|p| p.is_dir() && dir_tag(p).starts_with("php") && dir_tag(p) != "current")
         .collect();
     dirs.sort();
 
@@ -353,7 +356,10 @@ fn dir_tag(dir: &Path) -> String {
     dir.file_name().unwrap_or_default().to_string_lossy().to_ascii_lowercase()
 }
 
-/// `php74` -> `7.4`, `php85` -> `8.5`.
+/// `php-7.4` -> `7.4`, `php85` -> `8.5`.
+///
+/// Reading the digits rather than the punctuation is what let the directories
+/// be renamed from `php85` to `php-8.5` without touching any of this.
 fn version_from_tag(tag: &str) -> String {
     let digits: String = tag.chars().filter(|c| c.is_ascii_digit()).collect();
     match digits.len() {
@@ -364,8 +370,8 @@ fn version_from_tag(tag: &str) -> String {
 }
 
 /// The FastCGI port convention the batch scripts use: `90` + the version digits,
-/// so `php74` listens on 9074. Anything that does not fit in a port number gets
-/// no default and has to be spelled out in `devcrate.toml`.
+/// so `php-7.4` listens on 9074. Anything that does not fit in a port number
+/// gets no default and has to be spelled out in `devcrate.toml`.
 fn port_from_tag(tag: &str) -> Option<u16> {
     let digits: String = tag.chars().filter(|c| c.is_ascii_digit()).collect();
     if digits.is_empty() {
@@ -386,18 +392,26 @@ mod tests {
 
     #[test]
     fn versions_come_from_directory_names() {
-        assert_eq!(version_from_tag("php74"), "7.4");
-        assert_eq!(version_from_tag("php85"), "8.5");
-        assert_eq!(version_from_tag("php810"), "8.10");
+        assert_eq!(version_from_tag("php-7.4"), "7.4");
+        assert_eq!(version_from_tag("php-8.5"), "8.5");
+        assert_eq!(version_from_tag("php-8.10"), "8.10");
+    }
+
+    /// The folders were called `php85` before they were called `php-8.5`, and
+    /// nothing stops someone unpacking a stack that still uses the old names.
+    #[test]
+    fn the_previous_directory_naming_still_reads() {
+        assert_eq!(version_from_tag("php74"), version_from_tag("php-7.4"));
+        assert_eq!(port_from_tag("php85"), port_from_tag("php-8.5"));
     }
 
     #[test]
     fn fastcgi_ports_follow_the_batch_script_convention() {
-        assert_eq!(port_from_tag("php74"), Some(9074));
-        assert_eq!(port_from_tag("php82"), Some(9082));
-        assert_eq!(port_from_tag("php85"), Some(9085));
+        assert_eq!(port_from_tag("php-7.4"), Some(9074));
+        assert_eq!(port_from_tag("php-8.2"), Some(9082));
+        assert_eq!(port_from_tag("php-8.5"), Some(9085));
         // 90 + 810 overflows a port number, so there is no sensible default.
-        assert_eq!(port_from_tag("php810"), None);
+        assert_eq!(port_from_tag("php-8.10"), None);
         assert_eq!(port_from_tag("php"), None);
     }
 }

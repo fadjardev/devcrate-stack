@@ -66,10 +66,22 @@ visible rather than mysterious.
 | `devcrate restart [service]` | **works** — stop, then start |
 | `devcrate php use <version>` | **works** — repoints `php\current` |
 | `devcrate site add <host>` | **works** — web root, conf, junction, reload |
+| `devcrate site set-php <host> <version>` | **works** — repoints an existing vhost |
 | `devcrate site remove <host>` | **works** — removes the conf, keeps the project |
 | `devcrate install <runtime>` | not built — see [installation.md](installation.md) |
 
 `--root` is accepted on every command.
+
+Wherever a PHP version is named — `php use`, `site add --php`, `site set-php`,
+and the service argument to `start` / `stop` / `restart` — it is matched on its
+digits, so `8.5`, `85`, `php-8.5`, and the older `php85` all mean the same
+version.
+
+Colour is used only as a second channel for the state column and is turned off
+automatically when the output is not a terminal, so `devcrate status > report.txt`
+contains no escape sequences. `NO_COLOR` disables it outright and
+`CLICOLOR_FORCE` keeps it on through a pipe. Nothing is wrapped or truncated to
+a guessed width: when the terminal will not report one, long lines stay long.
 
 ### `devcrate status`
 
@@ -77,16 +89,19 @@ visible rather than mysterious.
 Devcrate  C:\devcrate
   root from  executable location
   config     built-in defaults (no devcrate.toml)
-  CLI PHP    php85  (via php\current)
+  CLI PHP    php-8.5  (via php\current)
 
-  SERVICE   STATE    PORTS           PIDS     PATH
-  nginx     up       80 443          9184 +2  nginx-1.31.1\nginx.exe
-  PHP 7.4   up       9074            4212 +4  php\php74\php-cgi.exe
-  PHP 8.2   stopped  (9082)          -        php\php82\php-cgi.exe
-  MariaDB   up       3306            7768     mariadb\bin\mariadbd.exe
-  RabbitMQ  absent   (5672) (15672)  -        rabbitmq\sbin\rabbitmq-server.bat
+  SERVICE   STATE      PORTS           UPTIME  PIDS     PATH
+  nginx     up         80 443          3h 21m  9184 +2  nginx-1.31.1\nginx.exe
+  PHP 7.4   up         9074            3h 21m  4212 +4  php\php-7.4\php-cgi.exe
+  PHP 8.2   port busy  9082            -       -        php\php-8.2\php-cgi.exe
+  PHP 8.5   stopped    (9085)          -       -        php\php-8.5\php-cgi.exe
+  MariaDB   up         3306            3h 21m  7768     mariadb\bin\mariadbd.exe
+  RabbitMQ  absent     (5672) (15672)  -       -        rabbitmq\sbin\rabbitmq-server.bat
 
   (port) = not answering
+
+  port 9082 is held by Docker Desktop Backend.exe (pid 21440)
 
   7 vhosts: ic-stokdigital.test, hris.qhomedata.test, ...
 ```
@@ -106,7 +121,19 @@ running processes:
 PATH column. Matching on the path rather than the image name is what keeps a
 system-wide XAMPP `nginx.exe` from being reported as this stack's. It is also
 what tells the PHP versions apart: each FastCGI worker runs from its own
-`php\phpNN\php-cgi.exe`.
+`php\php-X.Y\php-cgi.exe`.
+
+**UPTIME** is the age of the process in the PID column, in the two largest units
+that apply (`45s`, `12m 30s`, `3h 21m`, `2d 05h`). It is the leader's age rather
+than the pool's, because `PHP_FCGI_MAX_REQUESTS=500` recycles workers underneath
+it — a worker's age would jitter for reasons that have nothing to do with the
+service.
+
+**Port holders.** When a port answers but nothing of ours is behind it, the
+kernel's TCP table (`GetExtendedTcpTable`) is consulted for the owning PID and
+its image name is printed under the table. That is the difference between
+knowing `devcrate start` will fail and knowing what to close. No elevation is
+needed; the listener table is readable by any process.
 
 Two consequences worth knowing:
 
@@ -134,7 +161,7 @@ will note it.
 
 ```
 devcrate start           REM the whole stack
-devcrate start php85     REM one service
+devcrate start php-8.5     REM one service
 devcrate restart nginx   REM stop, then start
 ```
 
@@ -175,8 +202,12 @@ answering — when none of *our* processes are behind it — is reported and ski
 rather than started into a bind failure:
 
 ```
-  nginx  FAILED: port 80 is held by another process; not started
+  PHP 7.4  FAILED: port 9074 is held by powershell.exe (pid 6316); not started
 ```
+
+The holder is named from the kernel's TCP table. Where that lookup comes up
+empty — a process that exited between the probe and the lookup — the message
+falls back to "held by another process".
 
 A service already running is reported as `already running` and left alone, so
 `devcrate start` is safe to run twice.
@@ -199,6 +230,7 @@ Exit code 0 when every targeted service ended up listening, 1 otherwise.
 ```
 devcrate stop            REM the whole stack
 devcrate stop nginx      REM one service, by the id in `devcrate status`
+devcrate stop php-8.5    REM ...which may also be spelled 8.5 or 85
 devcrate stop php        REM every PHP version at once
 ```
 
@@ -248,11 +280,11 @@ running afterwards.
 ```
 devcrate php use 8.5
 devcrate php use 85       REM the same thing
-devcrate php use php85    REM also the same thing
+devcrate php use php-8.5    REM also the same thing
 ```
 
 ```
-CLI PHP -> PHP 8.5 (php\php85)
+CLI PHP -> PHP 8.5 (php\php-8.5)
   PHP 8.5.8 (cli) (built: Jul  1 2026 04:02:00) (ZTS Visual C++ 2022 x64)
 ```
 
@@ -268,8 +300,8 @@ installation it pointed at is never at risk; if `php\current` turns out to be a
 real directory rather than a junction, the command refuses instead of deleting
 anything.
 
-Unlike `phpuse.bat`, the version can be spelled three ways — matching is on the
-digits, so `8.5`, `85`, and `php85` are equivalent.
+The version is matched on its digits, so `8.5`, `85`, `php-8.5`, and the older
+`php85` folder naming are all equivalent. `phpuse.bat` now does the same.
 
 ### `devcrate site add` / `site remove`
 
@@ -295,7 +327,7 @@ The conf is the one `new-vhost.bat` writes, with the same prefix-relative
 Differences from `new-vhost.bat`:
 
 - **The PHP version comes from what is installed**, not from a port map
-  hard-coded in the script. `--php` takes any of `8.5` / `85` / `php85`, and
+  hard-coded in the script. `--php` takes any of `8.5` / `85` / `php-8.5`, and
   omitting it uses whatever `php\current` points at.
 - **It will not silently overwrite.** An existing conf for that host is an
   error until you pass `--force`.
@@ -317,16 +349,49 @@ Reloading right after a change is graceful: nginx keeps the old workers alive
 until their connections finish, so a request made in the same instant can still
 be served by the previous configuration. A second request gets the new one.
 
+### `devcrate site set-php`
+
+```
+devcrate site set-php myapp.test 7.4
+```
+
+```
+  nginx-1.31.1\conf\sites\myapp.test.conf : fastcgi 9085 -> 9074
+  reloaded nginx
+
+https://myapp.test -> PHP 7.4 (fastcgi 9074)
+The FastCGI worker for PHP 7.4 has to be running: `devcrate start php-7.4`.
+```
+
+This is the only command that **edits** a conf rather than writing or deleting
+one, so it edits as little as it can: the `fastcgi_pass` port, and the generated
+`# PHP :` header comment so it does not go stale. Every other line comes through
+byte for byte — including anything added by hand since the file was generated,
+which is exactly what regenerating the file from a template would throw away.
+
+Two things it deliberately will not do:
+
+- A `fastcgi_pass` that points anywhere other than `127.0.0.1:` is left alone.
+  Aiming a vhost at another host or a different backend is a deliberate choice,
+  not a port to swap.
+- A conf with no `fastcgi_pass` at all is reported as an error rather than
+  written back unchanged, so a typo in the hostname does not look like success.
+
+The configuration is tested with `nginx -t` before the reload, as with
+`site add`. Changing the version does **not** start that version's FastCGI
+worker — the output says which one you need.
+
 ## `devcrate.toml`
 
 Optional, and every key in it is optional. A stack built by the batch scripts has
 no `devcrate.toml` at all, so anything missing is discovered from the layout on
-disk: the `nginx-*` directory, and one PHP entry per `php\php*` folder
-(`php\current` is skipped — it is the CLI junction, not a version).
+disk: the `nginx-*` directory, and one PHP entry per `php\php-*` folder
+(`php\current` is skipped — it is the CLI junction, not a version, and the
+downloaded archives beside them are files rather than directories).
 
 Discovered PHP entries follow the convention the batch scripts use: version `7.4`
-from the folder name `php74`, and FastCGI port `90` + the version digits, so
-`php74` listens on 9074.
+from the folder name `php-7.4`, and FastCGI port `90` + the version digits, so
+`php-7.4` listens on 9074.
 
 `devcrate config show` prints the fully resolved configuration in this format, so
 you can pin what is currently being discovered:
@@ -352,7 +417,7 @@ management_port = 15672
 
 [[php]]
 version = "8.5"
-dir = "php/php85"
+dir = "php/php-8.5"
 fastcgi_port = 9085
 ```
 
@@ -374,12 +439,14 @@ ignored, so a typo is an error instead of a setting that silently does nothing.
 
 - **Never writes `devcrate.toml`.** `config show` prints to stdout and leaves
   redirecting it to you.
-- **Never parses or rewrites an nginx config.** `site list` does a shallow scan
-  for the two directives it wrote (`root`, `fastcgi_pass`) and ignores the rest,
-  so a hand-edited conf is reported as it stands. `site add` writes a whole file
-  or refuses; it never edits one in place, and `site remove` deletes only a file
-  it would have written itself. Changing an existing site's PHP version is
-  therefore still a manual edit — that belongs to the vhost editor in
+- **Never parses an nginx config.** `site list` does a shallow scan for the two
+  directives it wrote (`root`, `fastcgi_pass`) and ignores the rest, so a
+  hand-edited conf is reported as it stands. `site add` writes a whole file or
+  refuses, `site remove` deletes only a file it would have written itself, and
+  `site set-php` rewrites one line and copies the rest through unchanged. No
+  command reformats a conf or regenerates one from a template. Editing anything
+  *other* than the PHP version — the web root, the certificate, an added
+  `location` block — is still a manual edit; a general vhost editor belongs to
   [roadmap](roadmap.md) item 1.
 - **Never touches your project code.** `site remove` leaves `projects\<host>\`
   exactly where it is.

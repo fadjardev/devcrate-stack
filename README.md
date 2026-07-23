@@ -55,7 +55,7 @@ C:\devcrate\                # ← the stack root (any folder works)
 ├─ docs\                    # full documentation (setup, architecture, ...)
 ├─ CHANGELOG.md             # release history
 ├─ nginx-1.31.1\conf\       # nginx.conf + sites\*.conf  (tracked)
-├─ php\php74|php82|php85\    # each version's php.ini is tracked; binaries are not
+├─ php\php-7.4|php-8.2|php-8.5\  # each version's php.ini is tracked; binaries are not
 ├─ php\current              # junction → the active CLI PHP version (generated)
 └─ projects\                # your app code — NOT tracked
 ```
@@ -67,7 +67,7 @@ Binaries aren't in the repo — download and extract them into place:
 1. **Visual C++ Redistributable x64** (required, or PHP exits silently) —
    <https://aka.ms/vs/17/release/vc_redist.x64.exe>
 2. **PHP** (Thread-Safe x64 ZIPs) from <https://windows.php.net/download/> →
-   extract to `php\php74\`, `php\php82\`, `php\php85\`.
+   extract to `php\php-7.4\`, `php\php-8.2\`, `php\php-8.5\`.
 3. **Nginx 1.31.1** → extract so `nginx-1.31.1\nginx.exe` sits beside the tracked `conf\`.
 4. **MariaDB 12.3** → `mariadb\`, **RabbitMQ 4.3.2 + Erlang** → `rabbitmq\` / `erlang\`.
 5. **mkcert** → save as `mkcert.exe`, then generate the local TLS certs into
@@ -87,18 +87,21 @@ C:\devcrate\start.bat
 
 ```bat
 phpuse            REM show active + installed versions
-phpuse 85         REM switch global CLI PHP to 8.5
-phpuse 82         REM ...or 8.2, 74, etc.
+phpuse 8.5        REM switch global CLI PHP to 8.5
+phpuse 7.4        REM ...or 8.2, 7.4, etc.
 ```
 
-First-time setup on a new machine: run `phpuse 85` once (it creates the junction),
+Each version lives in its own `php\php-<X.Y>\` folder, and the version can be
+spelled `8.5`, `85`, or `php-8.5` — everything matches on the digits.
+
+First-time setup on a new machine: run `phpuse 8.5` once (it creates the junction),
 then add `<stack-root>\php\current` and `<stack-root>` to your **user** `PATH`
 (e.g. `C:\devcrate\php\current` and `C:\devcrate`) and open a new terminal.
 
 ## Adding a project vhost
 
 ```bat
-new-vhost.bat myapp.test php85
+new-vhost.bat myapp.test 8.5
 ```
 
 It scaffolds `projects\myapp.test\public\`, writes `conf/sites/myapp.test.conf`
@@ -133,12 +136,13 @@ Details, constraints, and build order: [docs/roadmap.md](docs/roadmap.md).
 **Started:** the Rust crate exists under [`devcrate/`](devcrate) with stack-root
 resolution, the `devcrate.toml` model, and the subcommand surface.
 Every batch script above now has a subcommand equivalent: `devcrate start` /
-`stop` / `restart`, `php use`, and `site add` / `site remove`, plus `status`,
-`config show`, `php list`, and `site list` for reporting. They act only on the
-processes belonging to their own stack root, preflight ports before binding
-them, and test the nginx configuration before reloading it — none of which the
-scripts can do. The scripts keep working; installing runtimes is still manual.
-See [docs/cli.md](docs/cli.md).
+`stop` / `restart`, `php use`, and `site add` / `set-php` / `site remove`, plus
+`status`, `config show`, `php list`, and `site list` for reporting. They act only
+on the processes belonging to their own stack root, name the process holding a
+port they wanted, and test the nginx configuration before reloading it — none of
+which the scripts can do. The scripts keep working; installing runtimes is still
+manual, and nothing supervises the services after `start` exits. See
+[docs/cli.md](docs/cli.md).
 
 ## License
 

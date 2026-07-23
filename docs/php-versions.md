@@ -10,9 +10,9 @@ The stack runs three PHP versions at once. There are two independent notions of
 
 | Version | Folder | FastCGI port | Windows build |
 | --- | --- | --- | --- |
-| PHP 7.4.33 | `php\php74\` | 9074 | vc15 x64 TS |
-| PHP 8.2.31 | `php\php82\` | 9082 | vs16 x64 TS |
-| PHP 8.5.x | `php\php85\` | 9085 | vs17 x64 TS |
+| PHP 7.4.33 | `php\php-7.4\` | 9074 | vc15 x64 TS |
+| PHP 8.2.31 | `php\php-8.2\` | 9082 | vs16 x64 TS |
+| PHP 8.5.x | `php\php-8.5\` | 9085 | vs17 x64 TS |
 
 ## CLI version switching (`phpuse`)
 
@@ -23,10 +23,14 @@ terminal needed.
 
 ```bat
 phpuse            REM show active version + list installed versions
-phpuse 85         REM switch global CLI PHP to 8.5
-phpuse 82         REM switch to 8.2
-phpuse 74         REM switch to 7.4
+phpuse 8.5        REM switch global CLI PHP to 8.5
+phpuse 8.2        REM switch to 8.2
+phpuse 7.4        REM switch to 7.4
 ```
+
+The version is matched on its digits, so `8.5`, `85`, and `php-8.5` all name the
+same folder. `devcrate php use 8.5` does the same thing and accepts the same
+spellings — see [cli.md](cli.md).
 
 `C:\devcrate` is also on `PATH`, so `phpuse` and the other `.bat` helpers are callable
 from anywhere.
@@ -37,7 +41,7 @@ from anywhere.
 requested `php\<ver>` folder:
 
 ```
-C:\devcrate\php\current   --junction-->   C:\devcrate\php\php85
+C:\devcrate\php\current   --junction-->   C:\devcrate\php\php-8.5
         ^ on PATH                            ^ actual binaries
 ```
 
@@ -49,7 +53,7 @@ the change immediately.
 On a fresh machine, run the switcher once — it creates the junction itself:
 
 ```bat
-C:\devcrate\phpuse.bat 85
+C:\devcrate\phpuse.bat 8.5
 ```
 
 Then add both of these to your **user** PATH (not system), using your actual
@@ -60,7 +64,7 @@ C:\devcrate\php\current
 C:\devcrate
 ```
 
-(Equivalent manual form: `mklink /J <stack-root>\php\current <stack-root>\php\php85`.
+(Equivalent manual form: `mklink /J <stack-root>\php\current <stack-root>\php\php-8.5`.
 Junctions do not require Administrator.) These PATH entries and the junction
 target are the only absolute, machine-specific paths in the whole setup — both
 live outside the repo.
@@ -71,7 +75,7 @@ Each version has its own `php.ini` at `php\<ver>\php.ini`, and these are the onl
 PHP files tracked in the repo. Confirm a build is reading the right one:
 
 ```bat
-C:\devcrate\php\php85\php-cgi.exe -i | findstr "Loaded Configuration"
+C:\devcrate\php\php-8.5\php-cgi.exe -i | findstr "Loaded Configuration"
 ```
 
 Extensions enabled for app work include: `curl`, `mbstring`, `openssl`,
@@ -80,7 +84,7 @@ Extensions enabled for app work include: `curl`, `mbstring`, `openssl`,
 has loaded with:
 
 ```bat
-C:\devcrate\php\php85\php.exe -m
+C:\devcrate\php\php-8.5\php.exe -m
 ```
 
 Common shared settings (timezone `Asia/Jakarta`, `upload_max_filesize=64M`) are
@@ -92,9 +96,9 @@ Check `composer.json` -> `require` -> `php`:
 
 | composer requirement | Use |
 | --- | --- |
-| `>=8.2`, `>=8.1` | `php82` (or `php85` if the app is 8.5-compatible) |
-| `>=7.4` | `php74` |
-| none / no composer | `php74` is fine |
+| `>=8.2`, `>=8.1` | `php-8.2` (or `php-8.5` if the app is 8.5-compatible) |
+| `>=7.4` | `php-7.4` |
+| none / no composer | `php-7.4` is fine |
 
 Picking the wrong version yields a `Composer detected issues in your platform`
 fatal error on first load.
@@ -102,15 +106,19 @@ fatal error on first load.
 ## Adding a new PHP version
 
 1. Download the Thread-Safe x64 ZIP from https://windows.php.net/download/ and
-   extract to `C:\devcrate\php\php<NN>\` (e.g. `php84`).
+   extract to `C:\devcrate\php\php-<X.Y>\` (e.g. `php-8.4`). The `php-` prefix and
+   the dotted version are what the tooling looks for.
 2. Install the matching VC++ runtime (see
    [installation.md](installation.md#1-visual-c-redistributable-do-this-first)).
-3. Create `php<NN>\php.ini` (copy an existing one and adjust) and enable the same
+3. Create `php-<X.Y>\php.ini` (copy an existing one and adjust) and enable the same
    extensions.
 4. To serve it over the web, add a FastCGI listener in `start.bat` on port
-   `90<NN>` and a matching `stop.bat` is already generic (`taskkill php-cgi.exe`).
-5. To use it on the CLI, `phpuse <NN>` works automatically once `php<NN>\php.exe`
-   exists.
+   `90` + the version digits (`php-8.4` -> 9084); `stop.bat` is already generic
+   (`taskkill php-cgi.exe`).
+5. Nothing else needs editing. `phpuse`, `new-vhost.bat`, and every `devcrate`
+   subcommand discover installed versions by listing `php\php-*` and derive both
+   the display name and the FastCGI port from the folder name — so a new version
+   appears in `devcrate php list` and `devcrate start` as soon as it is unpacked.
 
 ## Known limitation: zip on PHP 7.4
 

@@ -29,7 +29,7 @@ After `start.bat`, confirm:
 - [ ] `date.timezone` shows `Asia/Jakarta` in phpinfo
 - [ ] `upload_max_filesize` shows `64M` in phpinfo
 - [ ] RabbitMQ mgmt UI reachable at `http://127.0.0.1:15672` (guest/guest)
-- [ ] `C:\devcrate\php\php82\php.exe C:\devcrate\tools\rabbitmq-smoketest\test.php` ->
+- [ ] `C:\devcrate\php\php-8.2\php.exe C:\devcrate\tools\rabbitmq-smoketest\test.php` ->
       `RESULT: OK`
 
 ## Log locations
@@ -37,9 +37,9 @@ After `start.bat`, confirm:
 ```
 Nginx errors      C:\devcrate\nginx-1.31.1\logs\error.log
 Nginx per-site    C:\devcrate\nginx-1.31.1\logs\<domain>.error.log
-PHP errors        C:\devcrate\php\php74\php_errors.log
-                  C:\devcrate\php\php82\php_errors.log
-                  C:\devcrate\php\php85\php_errors.log
+PHP errors        C:\devcrate\php\php-7.4\php_errors.log
+                  C:\devcrate\php\php-8.2\php_errors.log
+                  C:\devcrate\php\php-8.5\php_errors.log
 MariaDB           C:\devcrate\mariadb\mariadb_error.log
 RabbitMQ          C:\devcrate\rabbitmq\data\log\rabbit@<HOSTNAME>.log
 ```
@@ -72,7 +72,7 @@ https://aka.ms/vs/17/release/vc_redist.x64.exe
 | 8.2.31 (vs16) | VC++ 2019 / 2022 x64 |
 | 8.5.x (vs17) | VC++ 2022 x64 |
 
-Then re-test: `C:\devcrate\php\php85\php-cgi.exe -v`.
+Then re-test: `C:\devcrate\php\php-8.5\php-cgi.exe -v`.
 
 ## `php` is not recognized on the CLI
 
@@ -80,7 +80,7 @@ The `php\current` junction or the PATH entry is missing. Recreate the junction
 by running the switcher once:
 
 ```bat
-C:\devcrate\phpuse.bat 85
+C:\devcrate\phpuse.bat 8.5
 ```
 
 Add `C:\devcrate\php\current` and `C:\devcrate` (your actual stack root) to your
@@ -131,10 +131,10 @@ fails, kill any lingering `erl.exe` / `epmd.exe` manually and check
 1. Download the dependency pack from
    `https://windows.php.net/downloads/php-sdk/deps/vc15/x64/` - grab `zlib-*.zip`
    (and `bzip2-*.zip`, `zstd-*.zip` if needed).
-2. Place the `.dll` files into `C:\devcrate\php\php74\` (the root, not `ext\`).
+2. Place the `.dll` files into `C:\devcrate\php\php-7.4\` (the root, not `ext\`).
 3. Get `php_zip-*-7.4-nts-vc15-x64.zip` from the windows.php.net extras and put
-   `php_zip.dll` into `C:\devcrate\php\php74\ext\`.
-4. Uncomment `extension=zip` in `C:\devcrate\php\php74\php.ini`.
+   `php_zip.dll` into `C:\devcrate\php\php-7.4\ext\`.
+4. Uncomment `extension=zip` in `C:\devcrate\php\php-7.4\php.ini`.
 5. Restart the stack.
 
 PHP 8.2 and 8.5 bundle `zip` already.

@@ -86,7 +86,7 @@ hand ([installation.md](installation.md)). Devcrate should do that itself.
 
 - **Install** - pick a version, download with a progress bar, verify the
   checksum/signature the vendor publishes, extract into the standard layout
-  (`php\php85\`, `nginx-1.31.1\`, `mariadb\`, ...), and generate the
+  (`php\php-8.5\`, `nginx-1.31.1\`, `mariadb\`, ...), and generate the
   first-run config (a `php.ini` seeded from `php.ini-development` with the
   extension set Devcrate expects; `my.ini`; the FastCGI port).
 - **Multiple versions side by side** for PHP specifically - installing 8.5
@@ -280,16 +280,25 @@ system-wide, everything inside the stack root.
 
    Note what this does *not* deliver. `start` spawns and exits, so nothing
    watches the children afterwards - the crash detection item 1 asks for needs a
-   resident process that owns them, which arrives with the TUI. And `site add`
-   writes a whole conf or refuses; *editing* an existing site's PHP version is
-   the vhost editor's job, also item 1.
-3. The ratatui dashboard on top of that core (item 1).
-4. The runtime installer, starting with PHP - it has the most versions and the
+   resident process that owns them, which arrives with the TUI.
+3. Close the gaps item 1's dashboard needs from the core, so the TUI is a front
+   end rather than a second implementation. **Done** - see [cli.md](cli.md).
+   `devcrate status` reports each service's uptime; a busy port is attributed to
+   the process holding it, by name and PID, from the kernel's TCP table; and
+   `devcrate site set-php` changes an existing vhost's PHP version by rewriting
+   one line, leaving hand-edits in the same file untouched. The output is also
+   terminal-aware now - colour only when something can render it, and no width
+   assumed when the terminal will not report one.
+
+   What is still missing for item 1 is the part that cannot be built without a
+   resident process: crash detection, and the log viewer.
+4. The ratatui dashboard on top of that core (item 1).
+5. The runtime installer, starting with PHP - it has the most versions and the
    most benefit - then Nginx, Composer, MariaDB, and RabbitMQ/Erlang (item 2).
-5. The full site workflow on top of `site add`: hosts-file management and
+6. The full site workflow on top of `site add`: hosts-file management and
    mkcert issuance/renewal (item 4). The mkcert half depends on the installer
-   from step 4, since mkcert becomes a managed tool.
-6. Node.js and Bun (item 5) - the installer and the `current`-junction switcher
+   from step 5, since mkcert becomes a managed tool.
+7. Node.js and Bun (item 5) - the installer and the `current`-junction switcher
    are the same machinery as PHP, so this is mostly a new runtime definition;
    dev-server supervision and the HMR proxy come after.
 

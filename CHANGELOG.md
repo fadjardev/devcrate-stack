@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **PHP folders are named `php-7.4` / `php-8.2` / `php-8.5`** instead of
+  `php74` / `php82` / `php85`, and any version installed later follows the same
+  `php-<X.Y>` pattern. The dotted form matches how the version is written
+  everywhere else, and is unambiguous for a two-digit minor (`php-8.10` versus
+  `php810`).
+  - Nothing has to be typed the new way. Every command that takes a version
+    matches on its digits, so `8.5`, `85`, `php-8.5`, and the old `php85` are
+    interchangeable - in `phpuse.bat`, `new-vhost.bat`, `devcrate php use`,
+    `devcrate site add --php`, and the service argument to `devcrate start` /
+    `stop` / `restart`.
+  - `phpuse.bat` and `new-vhost.bat` now resolve the version against the
+    `php\php-*` folders that actually exist rather than a list baked into the
+    script, so a newly unpacked version works without editing either of them.
+    `new-vhost.bat` derives the FastCGI port the same way `start.bat` assigns
+    it (`90` + the digits) in place of its hard-coded three-entry port map.
+  - Existing vhost confs are unaffected: they name a port, not a folder.
 - **The stack is now location-independent** - it runs from any folder (the
   *stack root*), not just `E:\dev`:
   - `start.bat`, `stop.bat`, `phpuse.bat`, and `new-vhost.bat` resolve the
@@ -22,7 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `error_log = "php_errors.log"`; `start.bat` launches each `php-cgi.exe`
     with its own folder as working directory so relative paths resolve there.
   - Documentation now uses `C:\devcrate` as a stand-in example root and
-    describes the stack-root convention; first-time CLI setup is `phpuse 85`
+    describes the stack-root convention; first-time CLI setup is `phpuse 8.5`
     (which creates the `php\current` junction) instead of a manual `mklink`.
   - The only machine-specific absolute paths left are outside the repo: user
     `PATH` entries and the `php\current` junction target.
@@ -33,12 +49,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the roadmap's sequencing item 1. It is **read-only**: it reports on the stack
   and changes nothing.
   - `devcrate status` (`--json` for scripts) - per service: installed or not,
-    running or not, which ports answer, and the PIDs. Distinguishes a service
-    that is *running* from a port held by *something else*, by matching the
-    running process's executable path against the stack root rather than its
-    image name. PIDs are listed supervisor first - the process whose parent is
-    not itself a match - so the `php-cgi.exe` that forked the FastCGI pool, the
-    nginx master, and RabbitMQ's `erl.exe` lead their groups.
+    running or not, which ports answer, how long it has been up, and the PIDs.
+    Distinguishes a service that is *running* from a port held by *something
+    else*, by matching the running process's executable path against the stack
+    root rather than its image name. PIDs are listed supervisor first - the
+    process whose parent is not itself a match - so the `php-cgi.exe` that
+    forked the FastCGI pool, the nginx master, and RabbitMQ's `erl.exe` lead
+    their groups, and the uptime shown is the leader's rather than a recycled
+    worker's. A port held by something that is not ours is attributed to it by
+    name and PID, read from the kernel's TCP table (`GetExtendedTcpTable`); the
+    same name appears in `devcrate start`'s preflight failure, so "port 9074 is
+    taken" says by what.
   - `devcrate config show` / `config path` - prints the resolved configuration
     as TOML, so the values currently discovered from the folder layout can be
     pinned into a `devcrate.toml`.
@@ -69,8 +90,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     php` stops every PHP version; `epmd` is cleared once the broker is down.
   - `devcrate php use <version>` - what `phpuse.bat` does: repoint the
     `php\current` junction that sits on `PATH`. The version can be spelled
-    `8.5`, `85`, or `php85`. Refuses if `php\current` is a real directory rather
-    than a junction, instead of deleting it.
+    `8.5`, `85`, or `php-8.5`. Refuses if `php\current` is a real directory
+    rather than a junction, instead of deleting it.
   - `devcrate site add <host> [--php 8.5]` / `site remove <host>` - what
     `new-vhost.bat` does: scaffold `projects\<host>\public` with an `index.php`
     stub, write the vhost conf with the same prefix-relative paths, self-heal
@@ -81,6 +102,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     reload for every vhost with no indication why. Third-level domains are told
     they need their own wildcard certificate. `site remove` deletes only the
     conf; the project folder and the certificate are left alone.
+  - `devcrate site set-php <host> <version>` - point an existing vhost at
+    another PHP version. The only command that edits a conf rather than writing
+    or deleting one, so it edits as little as it can: the `fastcgi_pass` port
+    and the generated `# PHP :` header comment. Every other line is copied
+    through byte for byte, including anything added by hand since the file was
+    generated. A `fastcgi_pass` aimed anywhere other than `127.0.0.1:` is left
+    alone, and a conf with none at all is an error rather than a silent no-op.
+    `nginx -t` runs before the reload.
+  - **Terminal-aware output.** Colour is emitted only when stdout is a terminal
+    that can render it - `NO_COLOR` turns it off, `CLICOLOR_FORCE` keeps it on
+    through a pipe, and a Windows console has its ANSI interpreter enabled
+    first - so `devcrate status > report.txt` contains no escape sequences. The
+    terminal width is measured rather than assumed: where it cannot be
+    determined, nothing is wrapped or truncated to a guess.
   - `install` is still declared but exits 3, pointing at `docs/installation.md`.
     The hosts-file entry remains manual, as with `new-vhost.bat`.
   - Stack root resolved from `--root`, then `DEVCRATE_HOME`, then the
@@ -88,7 +123,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     upward, so it works from anywhere inside the tree.
   - `devcrate.toml` is optional and so is every key in it; anything missing is
     discovered from the layout (the `nginx-*` directory, one PHP entry per
-    `php\php*` folder, FastCGI port `90` + version digits).
+    `php\php-*` folder, FastCGI port `90` + version digits).
   - Documented in `docs/cli.md`, linked from the README and the docs index.
 - **MIT license** (`LICENSE`), with a License section in the README.
 - **`docs/roadmap.md`** - planned development: a Rust/ratatui TUI shipped as a

@@ -13,10 +13,11 @@ use crate::config::{Service, Stack};
 use crate::exit;
 
 /// Find a PHP version by any of the spellings someone might reasonably type:
-/// `8.5`, `85`, or `php85`.
+/// `8.5`, `85`, or `php-8.5`.
 ///
-/// Matching on the digits alone is what makes those equivalent, and it keeps
-/// working if the directories are ever renamed to `php8.5`.
+/// Matching on the digits alone is what makes those equivalent, and it is why
+/// renaming the directories from `php85` to `php-8.5` needed no change here --
+/// or in anybody's existing scripts.
 pub fn find<'a>(stack: &'a Stack, wanted: &str) -> Result<&'a Service> {
     let wanted_digits = digits(wanted);
     if wanted_digits.is_empty() {
@@ -36,7 +37,11 @@ pub fn find<'a>(stack: &'a Stack, wanted: &str) -> Result<&'a Service> {
         })
 }
 
-fn digits(text: &str) -> String {
+/// The version digits of any spelling: `8.5`, `85`, `php85`, `php-8.5` -> `85`.
+///
+/// This is what makes the directory naming an implementation detail rather than
+/// something anyone has to type exactly.
+pub fn digits(text: &str) -> String {
     text.chars().filter(char::is_ascii_digit).collect()
 }
 

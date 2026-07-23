@@ -22,9 +22,9 @@ implementable as a thin front end rather than a second implementation.
 - [ ] `devcrate` — launch the TUI (today: prints help and exits 2; the TUI is #1)
 - [x] `devcrate start [service]` / `devcrate stop [service]` / `devcrate restart`
 - [x] `devcrate status` (with `--json` for machine-readable output)
-- [x] `devcrate php use 8.5` — accepts `8.5`, `85`, or `php85`
+- [x] `devcrate php use 8.5` — accepts `8.5`, `85`, `php-8.5`, or the older `php85`
 - [ ] `devcrate install php 8.5` (surface reserved for #2) — declared, exits 3
-- [x] `devcrate site add myapp.test --php 8.5` — plus `site remove`
+- [x] `devcrate site add myapp.test --php 8.5` — plus `site set-php` and `site remove`
 - [x] `devcrate --version`, `--help`, and per-subcommand help
 
 ### Path and config handling
@@ -38,10 +38,17 @@ implementable as a thin front end rather than a second implementation.
 - [x] No hard-coded `E:\dev` anywhere in the codebase
 
 ### Shell and terminal behaviour
-- [ ] Detect ANSI / truecolor support and degrade cleanly where it is missing
-- [ ] Never assume a fixed terminal width
+- [x] Detect ANSI support and degrade cleanly where it is missing. `NO_COLOR`
+      wins outright, `CLICOLOR_FORCE` forces it through a pipe, `TERM=dumb` and
+      a non-terminal stdout disable it, and a Windows console gets
+      `ENABLE_VIRTUAL_TERMINAL_PROCESSING` set before anything is emitted.
+      Truecolor is not detected because nothing here uses it — the palette is
+      four basic SGR codes, which every one of the target terminals renders.
+- [x] Never assume a fixed terminal width. It is read from `COLUMNS` first, then
+      the console screen buffer; when neither answers, nothing is wrapped or
+      truncated rather than falling back to 80.
 - [ ] Restore the terminal (alternate screen, cooked mode) on exit *and* on panic
-      — nothing to restore until the TUI exists
+      — nothing to restore until the TUI exists. Neither mode is entered today.
 - [x] Correct exit codes, so `devcrate start && …` behaves in a script
       (0 ok, 1 error, 2 usage, 3 not implemented)
 - [x] Standard handles are not leaked to spawned services, so `devcrate start`
@@ -90,5 +97,5 @@ if the binary is missing or a build breaks.
 - [x] The stack runs from a directory other than `E:\dev` with no source changes
 - [x] `start`, `stop`, `status`, `php use`, and `site add` are at parity with the
       corresponding batch scripts — and ahead of them on process scoping, port
-      preflight, config testing, and overwrite protection. The hosts-file entry
-      stays manual in both (see #4).
+      preflight, naming the process that holds a port, config testing, and
+      overwrite protection. The hosts-file entry stays manual in both (see #4).

@@ -23,19 +23,19 @@ if exist "%ROOT%\mariadb\bin\mariadbd.exe" (
 ) else ( echo   SKIPPED - %ROOT%\mariadb\bin\mariadbd.exe not found )
 
 echo [2/6] PHP 7.4  (port 9074) ...
-if exist "%ROOT%\php\php74\php-cgi.exe" (
-    start /B /D "%ROOT%\php\php74" "PHP74-CGI" "%ROOT%\php\php74\php-cgi.exe" -b 127.0.0.1:9074
-) else ( echo   SKIPPED - %ROOT%\php\php74\php-cgi.exe not found )
+if exist "%ROOT%\php\php-7.4\php-cgi.exe" (
+    start /B /D "%ROOT%\php\php-7.4" "PHP74-CGI" "%ROOT%\php\php-7.4\php-cgi.exe" -b 127.0.0.1:9074
+) else ( echo   SKIPPED - %ROOT%\php\php-7.4\php-cgi.exe not found )
 
 echo [3/6] PHP 8.2  (port 9082) ...
-if exist "%ROOT%\php\php82\php-cgi.exe" (
-    start /B /D "%ROOT%\php\php82" "PHP82-CGI" "%ROOT%\php\php82\php-cgi.exe" -b 127.0.0.1:9082
-) else ( echo   SKIPPED - %ROOT%\php\php82\php-cgi.exe not found )
+if exist "%ROOT%\php\php-8.2\php-cgi.exe" (
+    start /B /D "%ROOT%\php\php-8.2" "PHP82-CGI" "%ROOT%\php\php-8.2\php-cgi.exe" -b 127.0.0.1:9082
+) else ( echo   SKIPPED - %ROOT%\php\php-8.2\php-cgi.exe not found )
 
 echo [4/6] PHP 8.5  (port 9085) ...
-if exist "%ROOT%\php\php85\php-cgi.exe" (
-    start /B /D "%ROOT%\php\php85" "PHP85-CGI" "%ROOT%\php\php85\php-cgi.exe" -b 127.0.0.1:9085
-) else ( echo   SKIPPED - %ROOT%\php\php85\php-cgi.exe not found ^(download PHP 8.5 to enable^) )
+if exist "%ROOT%\php\php-8.5\php-cgi.exe" (
+    start /B /D "%ROOT%\php\php-8.5" "PHP85-CGI" "%ROOT%\php\php-8.5\php-cgi.exe" -b 127.0.0.1:9085
+) else ( echo   SKIPPED - %ROOT%\php\php-8.5\php-cgi.exe not found ^(download PHP 8.5 to enable^) )
 
 echo [5/6] RabbitMQ 4.3.2  (ports 5672 / 15672) ...
 if exist "%ROOT%\rabbitmq\sbin\rabbitmq-server.bat" (

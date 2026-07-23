@@ -84,7 +84,7 @@ A standalone publish -> consume round-trip lives at
 `C:\devcrate\tools\rabbitmq-smoketest\`. With the broker running:
 
 ```cmd
-C:\devcrate\php\php82\php.exe C:\devcrate\tools\rabbitmq-smoketest\test.php
+C:\devcrate\php\php-8.2\php.exe C:\devcrate\tools\rabbitmq-smoketest\test.php
 ```
 
 Expected output ends with `RESULT: OK - round trip succeeded`.

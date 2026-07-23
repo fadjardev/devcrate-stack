@@ -89,7 +89,7 @@ pub enum PhpCommand {
 
 #[derive(Debug, Args)]
 pub struct PhpUseArgs {
-    /// Version to switch to: 8.5, 85, and php85 all mean the same thing.
+    /// Version to switch to: 8.5, 85, and php-8.5 all mean the same thing.
     pub version: String,
 }
 
@@ -99,6 +99,8 @@ pub enum SiteCommand {
     List,
     /// Add a vhost: web root, conf, nginx reload.
     Add(SiteAddArgs),
+    /// Point an existing vhost at another PHP version.
+    SetPhp(SiteSetPhpArgs),
     /// Remove a vhost's conf. The project folder is left alone.
     Remove(SiteRemoveArgs),
 }
@@ -116,6 +118,14 @@ pub struct SiteAddArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct SiteSetPhpArgs {
+    /// Hostname of an existing vhost.
+    pub host: String,
+    /// Version to serve it with: 8.5, 85, and php-8.5 all mean the same thing.
+    pub version: String,
+}
+
+#[derive(Debug, Args)]
 pub struct SiteRemoveArgs {
     /// Hostname to remove.
     pub host: String,
@@ -123,7 +133,8 @@ pub struct SiteRemoveArgs {
 
 #[derive(Debug, Args)]
 pub struct ServiceArgs {
-    /// Service id from `devcrate status` (nginx, php85, mariadb, rabbitmq).
+    /// Service id from `devcrate status` (nginx, php-8.5, mariadb, rabbitmq),
+    /// or `php` for every PHP version. A version may be spelled 8.5 or 85.
     /// Omit for the whole stack.
     pub service: Option<String>,
 }
