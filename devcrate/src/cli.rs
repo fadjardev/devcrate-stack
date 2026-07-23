@@ -48,13 +48,13 @@ pub enum Command {
     #[command(subcommand)]
     Site(SiteCommand),
 
-    /// Start the stack, or one service. (Not built yet -- use start.bat.)
+    /// Start the stack, or one service, in dependency order.
     Start(ServiceArgs),
 
-    /// Stop the stack, or one service. (Not built yet -- use stop.bat.)
+    /// Stop the stack, or one service, in the safe shutdown order.
     Stop(ServiceArgs),
 
-    /// Restart the stack, or one service. (Not built yet.)
+    /// Stop, then start again.
     Restart(ServiceArgs),
 
     /// Download and install a runtime. (Not built yet -- see docs/installation.md.)
@@ -83,13 +83,13 @@ pub enum ConfigCommand {
 pub enum PhpCommand {
     /// List installed PHP versions and the one the CLI resolves to.
     List,
-    /// Switch the CLI PHP version. (Not built yet -- use phpuse.)
+    /// Switch the CLI PHP version by repointing the php\current junction.
     Use(PhpUseArgs),
 }
 
 #[derive(Debug, Args)]
 pub struct PhpUseArgs {
-    /// Version to switch to, e.g. 8.5 or 85.
+    /// Version to switch to: 8.5, 85, and php85 all mean the same thing.
     pub version: String,
 }
 
@@ -97,9 +97,9 @@ pub struct PhpUseArgs {
 pub enum SiteCommand {
     /// List the configured vhosts.
     List,
-    /// Add a vhost. (Not built yet -- use new-vhost.bat.)
+    /// Add a vhost: web root, conf, nginx reload.
     Add(SiteAddArgs),
-    /// Remove a vhost. (Not built yet.)
+    /// Remove a vhost's conf. The project folder is left alone.
     Remove(SiteRemoveArgs),
 }
 
@@ -107,9 +107,12 @@ pub enum SiteCommand {
 pub struct SiteAddArgs {
     /// Hostname, e.g. myapp.test.
     pub host: String,
-    /// PHP version to serve it with, e.g. 8.5.
+    /// PHP version to serve it with, e.g. 8.5. Defaults to the CLI version.
     #[arg(long)]
     pub php: Option<String>,
+    /// Overwrite the conf if one already exists for this host.
+    #[arg(long)]
+    pub force: bool,
 }
 
 #[derive(Debug, Args)]

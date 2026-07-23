@@ -1,11 +1,13 @@
 //! devcrate -- manage a portable, multi-PHP development stack for Windows.
 //!
-//! This first cut is read-only. Everything that changes the stack is still done
-//! by the batch scripts in the stack root; those commands are declared here so
-//! the surface is fixed, and they say which script to run instead.
+//! Every batch script in the stack root now has an equivalent subcommand. What
+//! is left is `install`, which is declared here so the surface is fixed and
+//! says where to read instead.
 
 mod cli;
 mod config;
+mod control;
+mod php;
 mod probe;
 mod root;
 mod site;
@@ -64,25 +66,20 @@ fn run(cli: Cli) -> Result<u8> {
             php_list(&stack);
             Ok(exit::OK)
         }
-        Command::Php(PhpCommand::Use(args)) => {
-            Ok(todo_command(&format!("php use {}", args.version), "phpuse.bat"))
-        }
+        Command::Php(PhpCommand::Use(args)) => php::switch(&stack, &args.version),
 
         Command::Site(SiteCommand::List) => {
             site_list(&stack);
             Ok(exit::OK)
         }
         Command::Site(SiteCommand::Add(args)) => {
-            Ok(todo_command(&format!("site add {}", args.host), "new-vhost.bat"))
+            site::add(&stack, &args.host, args.php.as_deref(), args.force)
         }
-        Command::Site(SiteCommand::Remove(args)) => Ok(todo_command(
-            &format!("site remove {}", args.host),
-            "manual removal: delete the conf under nginx conf\\sites, then reload nginx",
-        )),
+        Command::Site(SiteCommand::Remove(args)) => site::remove(&stack, &args.host),
 
-        Command::Start(_) => Ok(todo_command("start", "start.bat")),
-        Command::Stop(_) => Ok(todo_command("stop", "stop.bat")),
-        Command::Restart(_) => Ok(todo_command("restart", "stop.bat, then start.bat")),
+        Command::Start(args) => control::start(&stack, args.service.as_deref()),
+        Command::Stop(args) => control::stop(&stack, args.service.as_deref()),
+        Command::Restart(args) => control::restart(&stack, args.service.as_deref()),
         Command::Install(args) => {
             Ok(todo_command(&format!("install {}", args.runtime), "docs/installation.md"))
         }

@@ -51,7 +51,7 @@ C:\devcrate\                # ← the stack root (any folder works)
 ├─ start.bat / stop.bat     # bring the whole stack up / down
 ├─ new-vhost.bat            # scaffold a new nginx vhost + hosts entry
 ├─ phpuse.bat               # switch the global CLI PHP version
-├─ devcrate\                # Rust sources for the devcrate CLI (read-only so far)
+├─ devcrate\                # Rust sources for the devcrate CLI
 ├─ docs\                    # full documentation (setup, architecture, ...)
 ├─ CHANGELOG.md             # release history
 ├─ nginx-1.31.1\conf\       # nginx.conf + sites\*.conf  (tracked)
@@ -131,10 +131,14 @@ Devcrate is a prototype. The batch scripts are the starting point, not the desti
 Details, constraints, and build order: [docs/roadmap.md](docs/roadmap.md).
 
 **Started:** the Rust crate exists under [`devcrate/`](devcrate) with stack-root
-resolution, the `devcrate.toml` model, and the subcommand surface. It is
-read-only so far — `devcrate status`, `config show`, `php list`, and `site list`
-report on the stack; everything that changes it is still the batch scripts. See
-[docs/cli.md](docs/cli.md).
+resolution, the `devcrate.toml` model, and the subcommand surface.
+Every batch script above now has a subcommand equivalent: `devcrate start` /
+`stop` / `restart`, `php use`, and `site add` / `site remove`, plus `status`,
+`config show`, `php list`, and `site list` for reporting. They act only on the
+processes belonging to their own stack root, preflight ports before binding
+them, and test the nginx configuration before reloading it — none of which the
+scripts can do. The scripts keep working; installing runtimes is still manual.
+See [docs/cli.md](docs/cli.md).
 
 ## License
 

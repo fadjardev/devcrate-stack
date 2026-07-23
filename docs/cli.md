@@ -4,10 +4,13 @@ The Rust program under [`devcrate/`](../devcrate) is the first step of
 [roadmap](roadmap.md) sequencing item 1: the crate skeleton, the `devcrate.toml`
 config model, stack-root resolution, and the CLI subcommand surface.
 
-**It is read-only today.** Nothing in it starts, stops, or writes anything —
-every command that would change the stack is declared so the shape is settled,
-but exits with a message pointing at the batch script that does the job now. The
-batch scripts remain the way you run the stack.
+**Everything the batch scripts do is now here**, except installing runtimes:
+`start`, `stop`, `restart`, `php use`, `site add`/`remove`, and the reporting
+commands. `install` is declared so the shape is settled, but exits 3 and points
+at [installation.md](installation.md).
+
+The batch scripts stay in the repo and keep working; nothing about them has
+changed.
 
 ## Building it
 
@@ -20,9 +23,10 @@ The binary lands at `devcrate\target\release\devcrate.exe`. `target\` is
 gitignored; the sources and `Cargo.lock` are tracked.
 
 Requires a Rust toolchain (built against 1.97, edition 2024). Dependencies:
-`clap`, `serde` + `toml`, `serde_json`, `sysinfo`, `anyhow`. The `ratatui` /
-`crossterm` / `tokio` set from the roadmap is not pulled in yet — there is no TUI
-and nothing async to drive.
+`clap`, `serde` + `toml`, `serde_json`, `sysinfo`, `anyhow`, and `windows-sys`
+for the one Win32 call `start` needs. The `ratatui` / `crossterm` / `tokio` set
+from the roadmap is not pulled in yet — there is no TUI and nothing async to
+drive.
 
 ## Finding the stack root
 
@@ -57,12 +61,12 @@ visible rather than mysterious.
 | `devcrate config path` | **works** — where `devcrate.toml` is read from |
 | `devcrate php list` | **works** — installed versions, FastCGI ports, active CLI version |
 | `devcrate site list` | **works** — vhosts with their `root` and FastCGI port |
-| `devcrate start [service]` | not built — use `start.bat` |
-| `devcrate stop [service]` | not built — use `stop.bat` |
-| `devcrate restart [service]` | not built |
-| `devcrate php use <version>` | not built — use `phpuse` |
-| `devcrate site add <host>` | not built — use `new-vhost.bat` |
-| `devcrate site remove <host>` | not built |
+| `devcrate start [service]` | **works** — preflights ports, starts in dependency order |
+| `devcrate stop [service]` | **works** — graceful shutdown in the safe order |
+| `devcrate restart [service]` | **works** — stop, then start |
+| `devcrate php use <version>` | **works** — repoints `php\current` |
+| `devcrate site add <host>` | **works** — web root, conf, junction, reload |
+| `devcrate site remove <host>` | **works** — removes the conf, keeps the project |
 | `devcrate install <runtime>` | not built — see [installation.md](installation.md) |
 
 `--root` is accepted on every command.
@@ -107,18 +111,211 @@ what tells the PHP versions apart: each FastCGI worker runs from its own
 Two consequences worth knowing:
 
 - `PHP_FCGI_CHILDREN=4` means each PHP version shows several PIDs. The column
-  shows the lowest PID and `+N` for the rest.
+  shows the **supervisor** and `+N` for the rest — the process whose parent is
+  not itself one of the matches, so the `php-cgi.exe` that forked the pool
+  rather than one of its workers, and the nginx master rather than a worker.
+  Sorting by PID would pick whichever was numbered lowest, which on Windows is
+  a worker as often as not.
 - RabbitMQ runs as an Erlang node, so its process is `erl.exe` out of the
-  stack's `erlang\` directory, not anything under `rabbitmq\`. `epmd.exe` is
-  excluded from the match: the port mapper outlives the broker (which is why
-  `stop.bat` kills it separately), so counting it would report a stopped
-  RabbitMQ as running.
+  stack's `erlang\` directory, not anything under `rabbitmq\`. Two more show up
+  under it — `inet_gethost.exe` and `win32sysinfo.exe`, port programs the VM
+  opens and closes with itself, so they are counted but never lead.
+  `epmd.exe` is excluded from the match entirely: the port mapper outlives the
+  broker (which is why `stop.bat` kills it separately), so counting it would
+  report a stopped RabbitMQ as running.
 
 The port probe opens and immediately drops a real TCP connection — the only check
 that needs no privileges. A server that logs aborted connections (MariaDB does)
 will note it.
 
 `--json` emits the same information structured, for scripts.
+
+### `devcrate start`
+
+```
+devcrate start           REM the whole stack
+devcrate start php85     REM one service
+devcrate restart nginx   REM stop, then start
+```
+
+```
+Starting the Devcrate stack in C:\devcrate
+
+  MariaDB   listening in 1.5s
+  PHP 7.4   listening in 0.5s
+  PHP 8.2   listening in 0.5s
+  PHP 8.5   listening in 0.5s
+  RabbitMQ  listening in 7.5s
+  nginx     listening in 0.3s
+
+Started.
+```
+
+Startup order is the reverse of shutdown — MariaDB, the PHP pools, RabbitMQ,
+nginx last — so nginx only starts once the backends it proxies to are answering.
+`start.bat` approximates this with a flat `timeout /t 2` before nginx; this waits
+for each port to actually answer, and reports how long it took.
+
+Each service is launched the way `start.bat` launches it, including the details
+that are easy to lose:
+
+- PHP workers run with their own directory as the working directory, because
+  `php.ini` for 7.4 and 8.2 uses a relative `extension_dir` and `error_log`.
+  `PHP_FCGI_CHILDREN=4` and `PHP_FCGI_MAX_REQUESTS=500` are set the same way.
+- The `nginx-1.31.1\projects` junction is recreated if missing, before nginx
+  starts. See [troubleshooting.md](troubleshooting.md) for why it has to be a
+  junction.
+- RabbitMQ gets `ERLANG_HOME`, `RABBITMQ_BASE`, and `erlang\bin` on `PATH`, and
+  is launched `-detached` with **no console** rather than a redirected one —
+  OTP's terminal driver aborts with `nouser` if it is handed a console that is
+  not a tty.
+
+**Preflight.** Before launching anything, a service whose port is already
+answering — when none of *our* processes are behind it — is reported and skipped
+rather than started into a bind failure:
+
+```
+  nginx  FAILED: port 80 is held by another process; not started
+```
+
+A service already running is reported as `already running` and left alone, so
+`devcrate start` is safe to run twice.
+
+If a process starts and then disappears, that is reported as
+`exited immediately` — for PHP that is nearly always the missing Visual C++
+Redistributable.
+
+**One thing this fixes that `start.bat` cannot.** `devcrate start > log.txt`, or
+piping it anywhere, returns as soon as the stack is up. The batch script appears
+to hang forever in that situation: `start /B` hands the child every inheritable
+handle, including the redirected stdout, so the pipe stays open for as long as
+MariaDB or the Erlang node runs. `devcrate` clears the inherit flag on its own
+standard handles before launching anything, so nothing downstream holds them.
+
+Exit code 0 when every targeted service ended up listening, 1 otherwise.
+
+### `devcrate stop`
+
+```
+devcrate stop            REM the whole stack
+devcrate stop nginx      REM one service, by the id in `devcrate status`
+devcrate stop php        REM every PHP version at once
+```
+
+```
+Stopping the Devcrate stack in C:\devcrate
+
+  nginx     stopped
+  PHP 7.4   terminated (5 process(es))
+  PHP 8.2   terminated (5 process(es))
+  PHP 8.5   terminated (5 process(es))
+  RabbitMQ  stopped, 1 helper process(es) cleared
+  MariaDB   stopped
+
+Stopped.
+```
+
+The order is `stop.bat`'s and for the same reasons: nginx first so no new
+request reaches a backend that is about to vanish, then the PHP pools, then
+RabbitMQ, then MariaDB last because it has the most to flush.
+
+Each service is asked to shut itself down first — `nginx -s quit`,
+`rabbitmqctl stop`, `mariadb-admin shutdown`, with the same `ERLANG_HOME` /
+`RABBITMQ_BASE` environment `stop.bat` sets. Only what is still running
+afterwards is terminated. A FastCGI pool has no shutdown command, so it is
+terminated outright, exactly as the script does it.
+
+Two differences from `stop.bat`:
+
+- **It only stops this stack.** `taskkill /F /IM php-cgi.exe` kills every
+  `php-cgi.exe` on the machine; this matches on the executable path, so a second
+  stack or a system-wide MariaDB is left alone. Same for `erl.exe`, `epmd.exe`,
+  and `mariadbd.exe`.
+- **It waits only as long as it needs to.** The script pays a flat
+  `timeout /t 4` after nginx whether or not nginx has gone. This polls, so a
+  clean stack goes down in about a second; the per-service ceilings (10s for
+  nginx, 30s for MariaDB and RabbitMQ) are only reached when something is stuck.
+
+`epmd.exe` is cleared once the broker is confirmed down — it is excluded from
+the running/stopped decision precisely because it outlives RabbitMQ, so
+something has to clean it up. That is the "helper process(es) cleared" note.
+
+Exit code 0 when every targeted service ended up stopped, 1 if any is still
+running afterwards.
+
+### `devcrate php use`
+
+```
+devcrate php use 8.5
+devcrate php use 85       REM the same thing
+devcrate php use php85    REM also the same thing
+```
+
+```
+CLI PHP -> PHP 8.5 (php\php85)
+  PHP 8.5.8 (cli) (built: Jul  1 2026 04:02:00) (ZTS Visual C++ 2022 x64)
+```
+
+What `phpuse.bat` does: repoint the `php\current` junction, which is what sits
+on `PATH`, so `php`, `composer`, and `laravel` resolve to the chosen build. The
+FastCGI workers are untouched — each vhost names its own port, so switching the
+CLI version never changes what a site is served with.
+
+It checks for `php.exe`, not `php-cgi.exe`: a version can serve FastCGI fine
+while being useless on the command line. The existing junction is removed with a
+call that deletes the reparse point rather than following it, so the PHP
+installation it pointed at is never at risk; if `php\current` turns out to be a
+real directory rather than a junction, the command refuses instead of deleting
+anything.
+
+Unlike `phpuse.bat`, the version can be spelled three ways — matching is on the
+digits, so `8.5`, `85`, and `php85` are equivalent.
+
+### `devcrate site add` / `site remove`
+
+```
+devcrate site add myapp.test --php 8.5
+devcrate site add myapp.test              REM defaults to the current CLI version
+devcrate site remove myapp.test
+```
+
+```
+  created  projects\myapp.test\public
+  created  projects\myapp.test\public\index.php
+  wrote    nginx-1.31.1\conf\sites\myapp.test.conf
+  reloaded nginx
+
+https://myapp.test -> PHP 8.5 (fastcgi 9085)
+```
+
+The conf is the one `new-vhost.bat` writes, with the same prefix-relative
+`root projects/<host>/public`, conf-relative `certs/`, and prefix-relative
+`logs/`. The `projects` junction is recreated if missing, as the script does.
+
+Differences from `new-vhost.bat`:
+
+- **The PHP version comes from what is installed**, not from a port map
+  hard-coded in the script. `--php` takes any of `8.5` / `85` / `php85`, and
+  omitting it uses whatever `php\current` points at.
+- **It will not silently overwrite.** An existing conf for that host is an
+  error until you pass `--force`.
+- **The configuration is tested before the reload.** nginx loads every file in
+  `sites\` as one document, so one bad conf fails the reload for *all* vhosts
+  with nothing to say why. `nginx -t` runs first, and its message — file and
+  line — is what you get instead.
+- **A third-level domain is called out.** `api.mygroup.test` is not covered by
+  the `*.test` wildcard, so the output tells you to issue `*.mygroup.test`
+  rather than leaving you to find out from a browser warning.
+
+The hosts-file entry is still yours to add, as with the script; automating it
+needs elevation and is [roadmap](roadmap.md) item 4.
+
+`site remove` deletes **only** the conf and reloads. The project folder under
+`projects\` is never touched, and neither is the certificate.
+
+Reloading right after a change is graceful: nginx keeps the old workers alive
+until their connections finish, so a request made in the same instant can still
+be served by the previous configuration. A second request gets the new one.
 
 ## `devcrate.toml`
 
@@ -175,11 +372,23 @@ ignored, so a typo is an error instead of a setting that silently does nothing.
 
 ## What this deliberately does not do
 
-- No writes of any kind, including to `devcrate.toml`. `config show` prints to
-  stdout and leaves redirecting it to you.
-- No nginx config parsing. `site list` does a shallow scan for the two directives
-  `new-vhost.bat` writes (`root`, `fastcgi_pass`) and leaves everything else
-  alone, so a hand-edited conf is reported, never rewritten.
-- No process supervision. Status is a point-in-time snapshot; the roadmap's
-  crash detection needs the tool to own the child processes, which comes with
-  `devcrate start`.
+- **Never writes `devcrate.toml`.** `config show` prints to stdout and leaves
+  redirecting it to you.
+- **Never parses or rewrites an nginx config.** `site list` does a shallow scan
+  for the two directives it wrote (`root`, `fastcgi_pass`) and ignores the rest,
+  so a hand-edited conf is reported as it stands. `site add` writes a whole file
+  or refuses; it never edits one in place, and `site remove` deletes only a file
+  it would have written itself. Changing an existing site's PHP version is
+  therefore still a manual edit — that belongs to the vhost editor in
+  [roadmap](roadmap.md) item 1.
+- **Never touches your project code.** `site remove` leaves `projects\<host>\`
+  exactly where it is.
+- **Never edits the hosts file or issues a certificate.** Both need elevation or
+  a managed mkcert, which are roadmap items 4 and 2.
+- **No process supervision.** `start` launches and walks away; `status` and
+  `stop` find their targets by scanning, not by remembering what was launched.
+  So a service that dies five minutes later is reported as `stopped`, never as
+  *crashed* — nothing is watching. Real crash detection needs a process that
+  stays resident and owns the children, which is the TUI's job
+  ([roadmap](roadmap.md) item 1), not something `start` can do on its own by
+  spawning and exiting.

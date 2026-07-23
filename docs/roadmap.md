@@ -271,10 +271,18 @@ system-wide, everything inside the stack root.
    and `site list`. Every command that would change the stack is declared but
    exits 3, naming the batch script that does the job today.
 2. Port the existing scripts behind those subcommands: `start`, `stop`,
-   `php use`, `site add`. At this point the batch files still work and can be
-   retired one at a time. `start` is the one that changes the tool's shape -
-   it has to own the child processes for the crash detection item 1 wants,
-   which the read-only status snapshot cannot do.
+   `php use`, `site add`. **Done** - see [cli.md](cli.md). Every batch script in
+   the stack root now has an equivalent subcommand: `start` / `stop` /
+   `restart`, `php use`, and `site add` / `site remove`. They act only on the
+   processes belonging to their own stack root, `start` preflights the ports it
+   is about to bind, and `site add` tests the configuration before reloading.
+   The scripts stay in the repo and keep working.
+
+   Note what this does *not* deliver. `start` spawns and exits, so nothing
+   watches the children afterwards - the crash detection item 1 asks for needs a
+   resident process that owns them, which arrives with the TUI. And `site add`
+   writes a whole conf or refuses; *editing* an existing site's PHP version is
+   the vhost editor's job, also item 1.
 3. The ratatui dashboard on top of that core (item 1).
 4. The runtime installer, starting with PHP - it has the most versions and the
    most benefit - then Nginx, Composer, MariaDB, and RabbitMQ/Erlang (item 2).

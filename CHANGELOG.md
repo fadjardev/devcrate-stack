@@ -36,16 +36,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     running or not, which ports answer, and the PIDs. Distinguishes a service
     that is *running* from a port held by *something else*, by matching the
     running process's executable path against the stack root rather than its
-    image name.
+    image name. PIDs are listed supervisor first - the process whose parent is
+    not itself a match - so the `php-cgi.exe` that forked the FastCGI pool, the
+    nginx master, and RabbitMQ's `erl.exe` lead their groups.
   - `devcrate config show` / `config path` - prints the resolved configuration
     as TOML, so the values currently discovered from the folder layout can be
     pinned into a `devcrate.toml`.
   - `devcrate php list` - installed versions, their FastCGI ports, and which
     one `php\current` resolves to. `devcrate site list` - the vhosts with their
     `root` and FastCGI port.
-  - `start`, `stop`, `restart`, `php use`, `site add`/`remove`, and `install`
-    are declared so the command surface is settled, but exit 3 and name the
-    batch script that does the job today.
+  - `devcrate start [service]` / `restart` - starts in dependency order
+    (MariaDB, PHP, RabbitMQ, nginx last), waiting for each port to actually
+    answer instead of `start.bat`'s flat two-second pause, and reporting how
+    long each took. Preflights every port first: one already answering without
+    a process of ours behind it is reported and skipped rather than started
+    into a bind failure. An already-running service is left alone, so it is
+    safe to run twice. Keeps the details that matter - each PHP worker's own
+    directory as its working directory (relative `extension_dir` /
+    `error_log`), `PHP_FCGI_CHILDREN` / `PHP_FCGI_MAX_REQUESTS`, the
+    `nginx-1.31.1\projects` junction self-heal, and RabbitMQ's `ERLANG_HOME` /
+    `RABBITMQ_BASE`. Unlike `start.bat`, `devcrate start > log.txt` returns as
+    soon as the stack is up: the script's `start /B` leaks the redirected
+    stdout handle to every child, so the pipe stays open until MariaDB or the
+    Erlang node exits.
+  - `devcrate stop [service]` - the first command that acts on the stack. Same
+    shutdown order as `stop.bat` (nginx, PHP, RabbitMQ, MariaDB) and the same
+    graceful commands (`nginx -s quit`, `rabbitmqctl stop`,
+    `mariadb-admin shutdown`), but it stops **only this stack**: processes are
+    matched by executable path, where `taskkill /F /IM php-cgi.exe` would kill
+    every `php-cgi.exe` on the machine. It also polls instead of waiting a flat
+    four seconds, so a clean stack goes down in about a second. `devcrate stop
+    php` stops every PHP version; `epmd` is cleared once the broker is down.
+  - `devcrate php use <version>` - what `phpuse.bat` does: repoint the
+    `php\current` junction that sits on `PATH`. The version can be spelled
+    `8.5`, `85`, or `php85`. Refuses if `php\current` is a real directory rather
+    than a junction, instead of deleting it.
+  - `devcrate site add <host> [--php 8.5]` / `site remove <host>` - what
+    `new-vhost.bat` does: scaffold `projects\<host>\public` with an `index.php`
+    stub, write the vhost conf with the same prefix-relative paths, self-heal
+    the `projects` junction, and reload nginx. The PHP version comes from what
+    is actually installed rather than a hard-coded port map, and defaults to the
+    CLI version. It will not overwrite an existing conf without `--force`, and
+    it runs `nginx -t` before reloading - one broken conf otherwise fails the
+    reload for every vhost with no indication why. Third-level domains are told
+    they need their own wildcard certificate. `site remove` deletes only the
+    conf; the project folder and the certificate are left alone.
+  - `install` is still declared but exits 3, pointing at `docs/installation.md`.
+    The hosts-file entry remains manual, as with `new-vhost.bat`.
   - Stack root resolved from `--root`, then `DEVCRATE_HOME`, then the
     executable's folder, then the working directory - the last two searching
     upward, so it works from anywhere inside the tree.
