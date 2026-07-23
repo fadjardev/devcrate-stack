@@ -25,6 +25,20 @@ cargo build --release
 The binary lands at `devcrate\target\release\devcrate.exe`. `target\` is
 gitignored; the sources and `Cargo.lock` are tracked.
 
+**Put it on `PATH`** by copying it to the stack root, which is already there for
+the `.bat` helpers:
+
+```bat
+copy /Y devcrate\target\release\devcrate.exe C:\devcrate\devcrate.exe
+```
+
+Then `devcrate` works from any directory. Nothing else is needed: the stack root
+is found from the executable's own location, so a `devcrate.exe` sitting *in*
+the root resolves it immediately, with no `--root` and no `DEVCRATE_HOME`.
+
+`/devcrate.exe` is gitignored — it is build output, not source. Repeat the copy
+after each `cargo build --release`.
+
 Requires a Rust toolchain (built against 1.97, edition 2024). Dependencies:
 `clap`, `serde` + `toml`, `serde_json`, `sysinfo`, `anyhow`, `ratatui` (with
 only the crossterm backend), and `windows-sys` for the two Win32 calls that have

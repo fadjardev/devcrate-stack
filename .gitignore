@@ -41,6 +41,10 @@ erl_crash.dump
 
 # --- Rust: keep the crate sources + Cargo.lock, drop build output ---
 /devcrate/target/
+# The built binary, copied to the stack root so `devcrate` resolves on PATH
+# (the stack root is already there for the .bat helpers). Build output, not
+# source: rebuild it with `cargo build --release` in devcrate\.
+/devcrate.exe
 
 # --- Claude Code local settings (machine-specific) ---
 .claude/settings.local.json
