@@ -60,8 +60,52 @@ impl Site {
     }
 }
 
+/// How the reload that follows a conf change went. Not an error on its own: the
+/// conf is written either way, and a stopped nginx will read it on next start.
+#[derive(Debug)]
+pub enum Reload {
+    Done,
+    NginxNotRunning,
+    Failed(String),
+}
+
+impl Reload {
+    fn of(stack: &Stack) -> Reload {
+        match control::reload_nginx(stack) {
+            Ok(true) => Reload::Done,
+            Ok(false) => Reload::NginxNotRunning,
+            Err(err) => Reload::Failed(format!("{err:#}")),
+        }
+    }
+
+    pub fn note(&self) -> String {
+        match self {
+            Reload::Done => "reloaded nginx".into(),
+            Reload::NginxNotRunning => {
+                "nginx is not running; it will pick this up on next start".into()
+            }
+            Reload::Failed(why) => format!("FAILED to reload nginx: {why}"),
+        }
+    }
+}
+
+/// A vhost that now exists.
+#[derive(Debug)]
+pub struct Created {
+    pub host: String,
+    pub php_name: String,
+    pub port: u16,
+    pub conf: String,
+    pub public: String,
+    pub public_existed: bool,
+    pub reload: Reload,
+    /// The domain a new wildcard certificate would have to cover, when the
+    /// `*.test` one does not reach this host.
+    pub needs_wildcard: Option<String>,
+}
+
 /// Create a vhost: web root, conf, junction, reload. What `new-vhost.bat` does.
-pub fn add(stack: &Stack, host: &str, want_php: Option<&str>, force: bool) -> Result<u8> {
+pub fn create(stack: &Stack, host: &str, want_php: Option<&str>, force: bool) -> Result<Created> {
     let host = check_host(host)?;
 
     // Resolve the PHP version through the same matcher `php use` uses, so
@@ -86,19 +130,16 @@ pub fn add(stack: &Stack, host: &str, want_php: Option<&str>, force: bool) -> Re
     }
 
     let public = stack.root.join("projects").join(host).join("public");
-    if public.is_dir() {
-        println!("  exists   {}", stack.rel(&public));
-    } else {
+    let public_existed = public.is_dir();
+    if !public_existed {
         std::fs::create_dir_all(&public)
             .with_context(|| format!("creating {}", public.display()))?;
-        println!("  created  {}", stack.rel(&public));
     }
 
     let index = public.join("index.php");
     if !index.exists() {
         std::fs::write(&index, "<?php phpinfo();\n")
             .with_context(|| format!("writing {}", index.display()))?;
-        println!("  created  {}", stack.rel(&index));
     }
 
     let sites_dir = stack.sites_dir();
@@ -106,36 +147,53 @@ pub fn add(stack: &Stack, host: &str, want_php: Option<&str>, force: bool) -> Re
         .with_context(|| format!("creating {}", sites_dir.display()))?;
     std::fs::write(&conf, conf_text(host, &service.name, &service.id, port))
         .with_context(|| format!("writing {}", conf.display()))?;
-    println!("  wrote    {}", stack.rel(&conf));
 
     // The conf's `root projects/<host>/public` resolves through this.
     control::ensure_projects_junction(stack)?;
 
-    match control::reload_nginx(stack) {
-        Ok(true) => println!("  reloaded nginx"),
-        Ok(false) => println!("  nginx is not running; it will pick this up on next start"),
-        Err(err) => {
-            // The conf is written either way, so this is worth reporting
-            // loudly rather than swallowing -- most likely a syntax error in
-            // some other conf, which blocks the reload of all of them.
-            println!("  FAILED to reload nginx: {err:#}");
-            println!("  the vhost is written; fix the error and run `devcrate restart nginx`");
-            return Ok(exit::ERROR);
-        }
+    Ok(Created {
+        host: host.to_string(),
+        php_name: service.name.clone(),
+        port,
+        conf: stack.rel(&conf),
+        public: stack.rel(&public),
+        public_existed,
+        reload: Reload::of(stack),
+        needs_wildcard: (host.matches('.').count() > 1)
+            .then(|| parent_domain(host).to_string()),
+    })
+}
+
+pub fn add(stack: &Stack, host: &str, want_php: Option<&str>, force: bool) -> Result<u8> {
+    let made = create(stack, host, want_php, force)?;
+
+    let verb = if made.public_existed { "exists  " } else { "created " };
+    println!("  {verb} {}", made.public);
+    println!("  wrote    {}", made.conf);
+
+    if let Reload::Failed(why) = &made.reload {
+        // The conf is written either way, so this is worth reporting loudly
+        // rather than swallowing -- most likely a syntax error in some other
+        // conf, which blocks the reload of all of them.
+        println!("  FAILED to reload nginx: {why}");
+        println!("  the vhost is written; fix the error and run `devcrate restart nginx`");
+        return Ok(exit::ERROR);
     }
+    println!("  {}", made.reload.note());
 
     println!();
-    println!("https://{host} -> {} (fastcgi {port})", service.name);
+    println!("https://{} -> {} (fastcgi {})", made.host, made.php_name, made.port);
     println!();
     println!("Two manual steps remain, as with new-vhost.bat:");
     println!("  1. Add this line to C:\\Windows\\System32\\drivers\\etc\\hosts as Administrator:");
-    println!("       127.0.0.1   {host}");
-    if host.matches('.').count() > 1 {
-        println!("  2. {host} is a third-level domain, so the *.test wildcard does not");
-        println!("     cover it. Issue a cert for *.{} with mkcert and update the", parent_domain(host));
-        println!("     ssl_certificate lines in the generated conf.");
-    } else {
-        println!("  2. Nothing else -- the existing *.test wildcard certificate covers it.");
+    println!("       127.0.0.1   {}", made.host);
+    match &made.needs_wildcard {
+        Some(domain) => {
+            println!("  2. {} is a third-level domain, so the *.test wildcard does not", made.host);
+            println!("     cover it. Issue a cert for *.{domain} with mkcert and update the");
+            println!("     ssl_certificate lines in the generated conf.");
+        }
+        None => println!("  2. Nothing else -- the existing *.test wildcard certificate covers it."),
     }
     Ok(exit::OK)
 }
@@ -149,7 +207,21 @@ pub fn add(stack: &Stack, host: &str, want_php: Option<&str>, force: bool) -> Re
 /// through byte for byte. Rewriting the whole file from a template would be
 /// simpler and would silently discard exactly the customisation someone cared
 /// enough to make by hand.
-pub fn set_php(stack: &Stack, host: &str, wanted: &str) -> Result<u8> {
+#[derive(Debug)]
+pub struct Repointed {
+    pub host: String,
+    pub php_name: String,
+    /// Service id, for telling the reader which worker has to be running.
+    pub php_id: String,
+    pub port: u16,
+    pub was: Option<u16>,
+    pub conf: String,
+    pub reload: Reload,
+    /// True when the vhost already pointed there and nothing was written.
+    pub unchanged: bool,
+}
+
+pub fn repoint_site(stack: &Stack, host: &str, wanted: &str) -> Result<Repointed> {
     let host = check_host(host)?;
     let conf = stack.sites_dir().join(format!("{host}.conf"));
     if !conf.is_file() {
@@ -166,14 +238,23 @@ pub fn set_php(stack: &Stack, host: &str, wanted: &str) -> Result<u8> {
         .copied()
         .ok_or_else(|| anyhow!("{} has no FastCGI port configured", service.id))?;
 
-    let text = std::fs::read_to_string(&conf)
-        .with_context(|| format!("reading {}", conf.display()))?;
-    let before = Site::read(&conf).fastcgi_port;
-    if before == Some(port) {
-        println!("{host} already serves through {} (fastcgi {port})", service.name);
-        return Ok(exit::OK);
+    let was = Site::read(&conf).fastcgi_port;
+    let mut done = Repointed {
+        host: host.to_string(),
+        php_name: service.name.clone(),
+        php_id: service.id.clone(),
+        port,
+        was,
+        conf: stack.rel(&conf),
+        reload: Reload::NginxNotRunning,
+        unchanged: was == Some(port),
+    };
+    if done.unchanged {
+        return Ok(done);
     }
 
+    let text = std::fs::read_to_string(&conf)
+        .with_context(|| format!("reading {}", conf.display()))?;
     let (edited, changed) = repoint(&text, &service.name, &service.id, port);
     if changed == 0 {
         return Err(anyhow!(
@@ -183,24 +264,38 @@ pub fn set_php(stack: &Stack, host: &str, wanted: &str) -> Result<u8> {
     }
 
     std::fs::write(&conf, edited).with_context(|| format!("writing {}", conf.display()))?;
-    match before {
-        Some(old) => println!("  {} : fastcgi {old} -> {port}", stack.rel(&conf)),
-        None => println!("  {} : fastcgi -> {port}", stack.rel(&conf)),
+    done.reload = Reload::of(stack);
+    Ok(done)
+}
+
+pub fn set_php(stack: &Stack, host: &str, wanted: &str) -> Result<u8> {
+    let done = repoint_site(stack, host, wanted)?;
+    if done.unchanged {
+        println!(
+            "{} already serves through {} (fastcgi {})",
+            done.host, done.php_name, done.port
+        );
+        return Ok(exit::OK);
     }
 
-    match control::reload_nginx(stack) {
-        Ok(true) => println!("  reloaded nginx"),
-        Ok(false) => println!("  nginx is not running; it will pick this up on next start"),
-        Err(err) => {
-            println!("  FAILED to reload nginx: {err:#}");
-            println!("  the change is written; fix the error and run `devcrate restart nginx`");
-            return Ok(exit::ERROR);
-        }
+    match done.was {
+        Some(old) => println!("  {} : fastcgi {old} -> {}", done.conf, done.port),
+        None => println!("  {} : fastcgi -> {}", done.conf, done.port),
     }
+
+    if let Reload::Failed(why) = &done.reload {
+        println!("  FAILED to reload nginx: {why}");
+        println!("  the change is written; fix the error and run `devcrate restart nginx`");
+        return Ok(exit::ERROR);
+    }
+    println!("  {}", done.reload.note());
 
     println!();
-    println!("https://{host} -> {} (fastcgi {port})", service.name);
-    println!("The FastCGI worker for {} has to be running: `devcrate start {}`.", service.name, service.id);
+    println!("https://{} -> {} (fastcgi {})", done.host, done.php_name, done.port);
+    println!(
+        "The FastCGI worker for {} has to be running: `devcrate start {}`.",
+        done.php_name, done.php_id
+    );
     Ok(exit::OK)
 }
 
@@ -242,8 +337,15 @@ fn repoint(text: &str, php_name: &str, php_id: &str, port: u16) -> (String, usiz
     (text, changed)
 }
 
+#[derive(Debug)]
+pub struct Deleted {
+    pub host: String,
+    pub conf: String,
+    pub reload: Reload,
+}
+
 /// Delete a vhost's conf and reload. The project folder is never touched.
-pub fn remove(stack: &Stack, host: &str) -> Result<u8> {
+pub fn delete(stack: &Stack, host: &str) -> Result<Deleted> {
     let host = check_host(host)?;
     let conf = stack.sites_dir().join(format!("{host}.conf"));
     if !conf.is_file() {
@@ -251,17 +353,23 @@ pub fn remove(stack: &Stack, host: &str) -> Result<u8> {
     }
 
     std::fs::remove_file(&conf).with_context(|| format!("removing {}", conf.display()))?;
-    println!("  removed  {}", stack.rel(&conf));
+    Ok(Deleted {
+        host: host.to_string(),
+        conf: stack.rel(&conf),
+        reload: Reload::of(stack),
+    })
+}
 
-    match control::reload_nginx(stack) {
-        Ok(true) => println!("  reloaded nginx"),
-        Ok(false) => println!("  nginx is not running"),
-        Err(err) => println!("  FAILED to reload nginx: {err:#}"),
-    }
-
+pub fn remove(stack: &Stack, host: &str) -> Result<u8> {
+    let gone = delete(stack, host)?;
+    println!("  removed  {}", gone.conf);
+    println!("  {}", gone.reload.note());
     println!();
-    println!("The project folder under projects\\{host} was left alone.");
-    println!("Remove the `127.0.0.1  {host}` line from your hosts file if you are done with it.");
+    println!("The project folder under projects\\{} was left alone.", gone.host);
+    println!(
+        "Remove the `127.0.0.1  {}` line from your hosts file if you are done with it.",
+        gone.host
+    );
     Ok(exit::OK)
 }
 

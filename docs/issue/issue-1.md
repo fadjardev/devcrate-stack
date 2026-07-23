@@ -9,31 +9,31 @@ with no runtime dependency.
 
 Roadmap item 1 of 3 — see [docs/roadmap.md](docs/roadmap.md).
 
-**Status: not started.** No box below is ticked, and `devcrate` with no arguments
-still prints help — `ratatui` and `crossterm` are not dependencies yet. Some of
-the *core* each box needs does already exist in the CLI from #3, and per this
-issue's own technical note the TUI is meant to be a front end over it rather than
-a second implementation:
+**Status: built.** `devcrate` with no arguments opens the dashboard; the
+reference is [docs/tui.md](docs/tui.md). It is a front end over the core from #3
+as this issue's technical note requires — every action it offers is a call into
+`control`, `php`, or `site`, and each of those was split into a function that
+returns a structured result with the printing left outside, so nothing is
+implemented twice and nothing the dashboard calls can write over the screen.
 
-| Scope item | Core available today |
+Two scope items below are deliberately left undone; both are marked and
+explained where they appear.
+
+| Scope item | Where it lives |
 | --- | --- |
-| Dashboard: status, PID, port | `devcrate status` |
-| Dashboard: uptime | `devcrate status` — the leader's age, in the table and in `--json` |
-| Dashboard: refresh off the UI thread | **no** — the scan is synchronous, which is the TUI's problem to solve |
-| Start / stop / restart, shutdown order | `devcrate start` / `stop` / `restart` |
-| Report a crashed child | **no** — nothing is resident to notice |
-| Log viewer | no |
-| Vhost list | `devcrate site list` |
-| Vhost create | `devcrate site add` (cert reuse only; mkcert issuance is #2/#4) |
-| Vhost edit: change PHP version | `devcrate site set-php` — rewrites the `fastcgi_pass` line only |
-| PHP switcher: show active | `devcrate php list` |
-| PHP switcher: repoint junction | `devcrate php use` |
-| Preflight: detect port conflicts | `devcrate start` refuses a port held by another process |
-| Preflight: name the holder | `probe::listeners()` — `GetExtendedTcpTable`, used by both `status` and `start` |
-
-What is left in that table is what genuinely cannot exist until something stays
-resident: crash detection, the log viewer, and moving the scan off the drawing
-thread. Everything else the TUI needs is now a function call away.
+| Dashboard: status, PID, port | Services pane, from `status::report` |
+| Dashboard: uptime | Services pane — the leader's age, so a recycled worker does not reset it |
+| Dashboard: refresh off the UI thread | the scanner thread, every 2s, nudged after each action |
+| Start / stop / restart, shutdown order | `s`/`x`/`t` and `S`/`X`/`T` → `control::run_start` / `run_stop` |
+| Report a crashed child | Services pane — `up` → `stopped` with nobody asking |
+| Log viewer | Logs pane — discovered files, follow, scrollback |
+| Vhost list | Sites pane |
+| Vhost create | `n` → `site::create` (cert reuse only; mkcert issuance is #2/#4) |
+| Vhost edit: change PHP version | `p` → `site::repoint_site` |
+| PHP switcher: show active | header, and the picker marks it |
+| PHP switcher: repoint junction | `u` → `php::use_version` |
+| Preflight: detect port conflicts | `control::start_service` refuses a port held by another process |
+| Preflight: name the holder | `probe::listeners()` — `GetExtendedTcpTable`, shown under the table |
 
 ## Motivation
 
@@ -45,34 +45,44 @@ stack's actual state visible and controllable from one screen.
 ## Scope
 
 ### Dashboard
-- [ ] Live status per service — Nginx, each PHP FastCGI listener, MariaDB, RabbitMQ
-- [ ] Show running/stopped, PID, bound port, and uptime for each
-- [ ] Refresh without blocking the UI thread
+- [x] Live status per service — Nginx, each PHP FastCGI listener, MariaDB, RabbitMQ
+- [x] Show running/stopped, PID, bound port, and uptime for each
+- [x] Refresh without blocking the UI thread — a scanner thread on a 2s timer,
+      nudged by each action so the table catches up immediately. It has to be
+      off-thread: probing a dead port costs the full 250 ms connect timeout.
 
 ### Service control
-- [ ] Start / stop / restart per service and for the whole stack
-- [ ] Preserve the current graceful-shutdown order: nginx `-s quit` -> PHP ->
-      RabbitMQ (`rabbitmqctl stop`) -> MariaDB (`mariadb-admin shutdown`)
-- [ ] Report a crashed child process instead of showing it as "up"
+- [x] Start / stop / restart per service and for the whole stack
+- [x] Preserve the current graceful-shutdown order: nginx `-s quit` -> PHP ->
+      RabbitMQ (`rabbitmqctl stop`) -> MariaDB (`mariadb-admin shutdown`) —
+      unchanged, because it calls the same `control` functions the subcommands do
+- [x] Report a crashed child process instead of showing it as "up". By comparing
+      each scan with the last: `up` -> `stopped` that nobody asked for is
+      `crashed`. A service *you* stopped is not, and nor is one going down
+      inside an action that is still running.
 
 ### Log viewer
-- [ ] Tail `nginx-1.31.1\logs\*.log`, the MariaDB error log, and the RabbitMQ node log
-- [ ] Filter by site / log file
-- [ ] Follow mode with scrollback
+- [x] Tail `nginx-1.31.1\logs\*.log`, the MariaDB error log, and the RabbitMQ node log
+- [x] Filter by site / log file — the file list is discovered, not fixed, so a
+      vhost added this session appears once it has been requested
+- [x] Follow mode with scrollback. Scrolling up turns follow off, so the view
+      does not move under you while you read.
 
 ### Vhost manager
-- [ ] List `conf/sites/*.conf` with each site's hostname, PHP version, and web root
-- [ ] Create a site — scaffold the web root, write the vhost, issue the mkcert
-      certificate, print (or patch) the hosts entry — i.e. what `new-vhost.bat` does
-- [ ] Change an existing site's PHP version (rewrite `fastcgi_pass`) and reload nginx
+- [x] List `conf/sites/*.conf` with each site's hostname, PHP version, and web root
+- [x] Create a site — scaffold the web root, write the vhost, print the hosts
+      entry. **Not** the mkcert certificate: that needs mkcert as a managed tool,
+      which is #2. The `*.test` wildcard is reused and a third-level domain is
+      called out, exactly as `new-vhost.bat` does.
+- [x] Change an existing site's PHP version (rewrite `fastcgi_pass`) and reload nginx
 
 ### PHP switcher
-- [ ] Repoint the `php\current` junction, as `phpuse.bat` does
-- [ ] Show which version the CLI currently resolves to
+- [x] Repoint the `php\current` junction, as `phpuse.bat` does
+- [x] Show which version the CLI currently resolves to
 
 ### Preflight
-- [ ] Detect port conflicts before starting (80, 443, 3306, 5672, 15672, each `90xx`)
-- [ ] Name the process holding a busy port
+- [x] Detect port conflicts before starting (80, 443, 3306, 5672, 15672, each `90xx`)
+- [x] Name the process holding a busy port
 
 ## Design constraints
 
@@ -108,8 +118,24 @@ build order, #3's plumbing lands first, then this.
 
 ## Definition of done
 
-- `devcrate` with no arguments launches the TUI
-- Every workflow currently covered by `start.bat`, `stop.bat`, `new-vhost.bat`, and
-  `phpuse.bat` is reachable from it
-- The batch scripts still work and are documented as the fallback until each
-  equivalent ships
+- [x] `devcrate` with no arguments launches the TUI
+- [x] Every workflow currently covered by `start.bat`, `stop.bat`,
+      `new-vhost.bat`, and `phpuse.bat` is reachable from it
+- [x] The batch scripts still work and are documented as the fallback until each
+      equivalent ships — none has been retired
+
+## Design constraints, as met
+
+- **Controller, not a new source of truth.** No conf is regenerated or
+  reformatted. `site set-php` rewrites one `fastcgi_pass` line and copies the
+  rest of the file through byte for byte; a hand-added `location` block survives
+  a version change. Deleting a site removes only the conf.
+- **Real process supervision.** By observation between scans rather than by
+  owning the children — see the note in [roadmap.md](docs/roadmap.md) item 1 on
+  why owning them would be the worse trade for a development stack. A service
+  that dies while the dashboard is closed still reads `stopped` when it reopens,
+  which is all anything can honestly claim about it.
+- **No hard-coded `E:\dev`.** Unchanged; the dashboard takes the same resolved
+  `Stack` as every subcommand.
+- **Restore the terminal on exit *and* on panic.** Done, with the panic hook
+  restoring before the original hook prints.

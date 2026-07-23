@@ -9,9 +9,9 @@ stack for you.
 
 | # | Item | Status |
 | --- | --- | --- |
-| 1 | Rust TUI (`ratatui`), shipped as a single executable | planned |
+| 1 | Rust TUI (`ratatui`), shipped as a single executable | done — see [tui.md](tui.md) |
 | 2 | Built-in runtime downloader / installer with version selection | planned |
-| 3 | Runs from any terminal, scriptable as well as interactive | in progress |
+| 3 | Runs from any terminal, scriptable as well as interactive | done — see [cli.md](cli.md) |
 | 4 | Open an existing project: vhost + hosts entry + mkcert TLS, in one step | planned |
 | 5 | Node.js and Bun as managed runtimes | planned |
 
@@ -23,6 +23,11 @@ Replace the batch-file workflow with one interactive terminal UI, written in
 Rust using [ratatui](https://ratatui.rs/) and
 [crossterm](https://docs.rs/crossterm/), compiled to a single
 `devcrate.exe` with no runtime dependency.
+
+**Built.** `devcrate` with no arguments opens it; the reference is
+[tui.md](tui.md). Everything below is in it except the two exclusions noted at
+the end of this section. `tokio` and `tracing` were not needed - three threads
+and structured results cover it.
 
 **What it should do**
 
@@ -60,6 +65,22 @@ Rust using [ratatui](https://ratatui.rs/) and
 
 **Rough crate list:** `ratatui`, `crossterm`, `tokio`, `serde` + `toml`,
 `sysinfo` (process/port inspection), `tracing`.
+
+**What it does not do**, and why:
+
+- **Edit anything in a vhost other than its PHP version.** `site set-php`
+  rewrites one line and copies the rest through; a general editor for the web
+  root, the certificate, or an added `location` block is a different job, and
+  the design constraint above ("a hand-edited config never gets clobbered") is
+  easier to keep by not writing one yet.
+- **Issue certificates when creating a site.** That needs mkcert as a managed
+  tool, which is item 2, so the wildcard is reused exactly as `new-vhost.bat`
+  does and a third-level domain is called out instead.
+- **Notice a crash it did not witness.** Supervision is by comparing one scan
+  with the last, not by owning the process: a service that dies while the
+  dashboard is closed reads `stopped` when it next opens. Owning the children
+  would mean the dashboard could never be closed without taking the stack with
+  it, which is a worse trade for a development stack.
 
 ---
 
@@ -292,7 +313,19 @@ system-wide, everything inside the stack root.
 
    What is still missing for item 1 is the part that cannot be built without a
    resident process: crash detection, and the log viewer.
-4. The ratatui dashboard on top of that core (item 1).
+4. The ratatui dashboard on top of that core (item 1). **Done** - see
+   [tui.md](tui.md). `devcrate` with no arguments opens it: a live service
+   table, start/stop/restart per service and for the stack, a vhost manager, the
+   PHP switcher, and a log tail. Scanning and actions run on background threads,
+   so nothing blocks the redraw, and the terminal is restored on exit *and* on
+   panic.
+
+   Being resident is what earns its keep: it holds the previous scan, so a
+   service that goes from `up` to `stopped` with nobody asking it to is reported
+   as **crashed** rather than merely stopped. No subcommand can say that.
+
+   Still not done from item 1's list: editing anything in a vhost other than its
+   PHP version, and issuing certificates - both belong to items 2 and 4.
 5. The runtime installer, starting with PHP - it has the most versions and the
    most benefit - then Nginx, Composer, MariaDB, and RabbitMQ/Erlang (item 2).
 6. The full site workflow on top of `site add`: hosts-file management and

@@ -1,8 +1,9 @@
 //! devcrate -- manage a portable, multi-PHP development stack for Windows.
 //!
-//! Every batch script in the stack root now has an equivalent subcommand. What
-//! is left is `install`, which is declared here so the surface is fixed and
-//! says where to read instead.
+//! Two front ends over one core: the subcommands below, and the dashboard in
+//! [`tui`] that runs when none is given. Every batch script in the stack root
+//! has an equivalent in both. What is left is `install`, which is declared here
+//! so the surface is fixed and says where to read instead.
 
 mod cli;
 mod config;
@@ -13,6 +14,7 @@ mod root;
 mod site;
 mod status;
 mod term;
+mod tui;
 
 use std::process::ExitCode;
 
@@ -43,7 +45,11 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<u8> {
     let stack = Stack::open(root::resolve(cli.root)?)?;
 
-    match cli.command {
+    let Some(command) = cli.command else {
+        return tui::run(stack);
+    };
+
+    match command {
         Command::Status(args) => {
             let report = status::report(&stack);
             if args.json {

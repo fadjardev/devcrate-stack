@@ -19,7 +19,7 @@ implementable as a thin front end rather than a second implementation.
 ## Scope
 
 ### Command surface
-- [ ] `devcrate` — launch the TUI (today: prints help and exits 2; the TUI is #1)
+- [x] `devcrate` — launch the TUI (#1, now built; see [docs/tui.md](docs/tui.md))
 - [x] `devcrate start [service]` / `devcrate stop [service]` / `devcrate restart`
 - [x] `devcrate status` (with `--json` for machine-readable output)
 - [x] `devcrate php use 8.5` — accepts `8.5`, `85`, `php-8.5`, or the older `php85`
@@ -47,8 +47,11 @@ implementable as a thin front end rather than a second implementation.
 - [x] Never assume a fixed terminal width. It is read from `COLUMNS` first, then
       the console screen buffer; when neither answers, nothing is wrapped or
       truncated rather than falling back to 80.
-- [ ] Restore the terminal (alternate screen, cooked mode) on exit *and* on panic
-      — nothing to restore until the TUI exists. Neither mode is entered today.
+- [x] Restore the terminal (alternate screen, cooked mode) on exit *and* on panic.
+      The panic hook restores *before* the original hook prints, so a crash
+      leaves a readable message and a working shell rather than a terminal with
+      no echo. There is also a `Drop` guard, for the paths that leave between
+      entering the screen and the normal exit.
 - [x] Correct exit codes, so `devcrate start && …` behaves in a script
       (0 ok, 1 error, 2 usage, 3 not implemented)
 - [x] Standard handles are not leaked to spawned services, so `devcrate start`

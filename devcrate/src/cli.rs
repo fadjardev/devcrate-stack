@@ -5,6 +5,10 @@
 //! truth about what does and does not work yet. Commands that are not built
 //! print the script that does the job today and exit with
 //! [`exit::NOT_IMPLEMENTED`](crate::exit::NOT_IMPLEMENTED).
+//!
+//! No subcommand means the dashboard. Every subcommand is reachable from it,
+//! and every action it offers is one of these calls -- the interactive and
+//! scriptable halves are the same program over the same core.
 
 use std::path::PathBuf;
 
@@ -17,18 +21,19 @@ use clap::{Args, Parser, Subcommand};
     about = "A portable, multi-PHP development stack for Windows",
     long_about = "Manage a Devcrate stack: nginx, PHP FastCGI workers, MariaDB, and RabbitMQ \
                   running out of a single stack-root folder.\n\n\
+                  Run with no subcommand for the interactive dashboard.\n\n\
                   The stack root is taken from --root, then DEVCRATE_HOME, then the folder \
                   holding this executable, then the working directory (searching upward from \
-                  each).",
-    arg_required_else_help = true
+                  each)."
 )]
 pub struct Cli {
     /// Stack root to operate on (overrides DEVCRATE_HOME and auto-detection).
     #[arg(long, global = true, value_name = "PATH")]
     pub root: Option<PathBuf>,
 
+    /// Omitted: launch the dashboard.
     #[command(subcommand)]
-    pub command: Command,
+    pub command: Option<Command>,
 }
 
 #[derive(Debug, Subcommand)]

@@ -76,30 +76,55 @@ pub enum Stopped {
 }
 
 impl Stopped {
-    fn is_failure(&self) -> bool {
+    pub fn is_failure(&self) -> bool {
         matches!(self, Stopped::Failed(_))
     }
+}
+
+/// One service's share of a `start` or `stop`, ready to be rendered by whoever
+/// asked for it.
+///
+/// The action functions return these rather than printing, because the same
+/// call has to serve a command line writing to stdout and a dashboard that
+/// must not have anything written underneath it.
+#[derive(Debug)]
+pub struct Step<T> {
+    pub id: String,
+    pub name: String,
+    pub outcome: T,
+    /// Helper processes cleared afterwards -- `epmd`, in practice.
+    pub helpers: usize,
+}
+
+/// Stop the whole stack, or the one service named, and report what happened to
+/// each. Ordering is the shutdown order; the caller sees them in the order they
+/// were acted on.
+pub fn run_stop(stack: &Stack, only: Option<&str>) -> Result<Vec<Step<Stopped>>> {
+    let targets = select(stack, only, SHUTDOWN)?;
+    Ok(targets
+        .iter()
+        .map(|service| {
+            let outcome = stop_service(stack, service);
+            // Only once the service itself is down: epmd is the thing RabbitMQ
+            // registers with, so clearing it first would be pulling the rug out.
+            let helpers = if outcome.is_failure() { 0 } else { reap_helpers(service) };
+            Step { id: service.id.clone(), name: service.name.clone(), outcome, helpers }
+        })
+        .collect())
 }
 
 /// Stop the whole stack, or the one service named.
 pub fn stop(stack: &Stack, only: Option<&str>) -> Result<u8> {
     let targets = select(stack, only, SHUTDOWN)?;
-
     println!("Stopping {} in {}", subject(&targets, only), stack.root.display());
     println!();
 
     let width = targets.iter().map(|s| s.name.chars().count()).max().unwrap_or(0);
-    let mut failed = 0;
+    let steps = run_stop(stack, only)?;
+    let failed = steps.iter().filter(|step| step.outcome.is_failure()).count();
 
-    for service in &targets {
-        let outcome = stop_service(stack, service);
-        if outcome.is_failure() {
-            failed += 1;
-        }
-        // Only once the service itself is down: epmd is the thing RabbitMQ
-        // registers with, so clearing it first would be pulling the rug out.
-        let helpers = if outcome.is_failure() { 0 } else { reap_helpers(service) };
-        println!("  {:<width$}  {}", service.name, describe(&outcome, helpers));
+    for step in &steps {
+        println!("  {:<width$}  {}", step.name, describe(&step.outcome, step.helpers));
     }
 
     println!();
@@ -337,7 +362,7 @@ pub enum Started {
 }
 
 impl Started {
-    fn is_failure(&self) -> bool {
+    pub fn is_failure(&self) -> bool {
         matches!(
             self,
             Started::Silent(_) | Started::Exited | Started::PortBusy { .. } | Started::Failed(_)
@@ -390,23 +415,35 @@ fn seal_stdio() {
 #[cfg(not(windows))]
 fn seal_stdio() {}
 
+/// Start the whole stack, or the one service named, and report what happened to
+/// each. In startup order.
+pub fn run_start(stack: &Stack, only: Option<&str>) -> Result<Vec<Step<Started>>> {
+    let targets = select(stack, only, STARTUP)?;
+    seal_stdio();
+    Ok(targets
+        .iter()
+        .map(|service| Step {
+            id: service.id.clone(),
+            name: service.name.clone(),
+            outcome: start_service(stack, service),
+            helpers: 0,
+        })
+        .collect())
+}
+
 /// Start the whole stack, or the one service named.
 pub fn start(stack: &Stack, only: Option<&str>) -> Result<u8> {
     let targets = select(stack, only, STARTUP)?;
-    seal_stdio();
-
+    let kinds: Vec<ServiceKind> = targets.iter().map(|s| s.kind).collect();
     println!("Starting {} in {}", subject(&targets, only), stack.root.display());
     println!();
 
     let width = targets.iter().map(|s| s.name.chars().count()).max().unwrap_or(0);
-    let mut failed = 0;
+    let steps = run_start(stack, only)?;
+    let failed = steps.iter().filter(|step| step.outcome.is_failure()).count();
 
-    for service in &targets {
-        let outcome = start_service(stack, service);
-        if outcome.is_failure() {
-            failed += 1;
-        }
-        println!("  {:<width$}  {}", service.name, describe_start(service, &outcome));
+    for (step, kind) in steps.iter().zip(kinds) {
+        println!("  {:<width$}  {}", step.name, describe_start(kind, &step.outcome));
     }
 
     println!();
@@ -615,7 +652,7 @@ pub fn reload_nginx(stack: &Stack) -> Result<bool> {
     Ok(true)
 }
 
-fn describe_start(service: &Service, outcome: &Started) -> String {
+pub fn describe_start(service_kind: ServiceKind, outcome: &Started) -> String {
     match outcome {
         Started::AlreadyRunning => "already running".into(),
         Started::NotInstalled(path) => format!("skipped, not installed ({path})"),
@@ -623,7 +660,7 @@ fn describe_start(service: &Service, outcome: &Started) -> String {
         Started::Silent(grace) => {
             format!("FAILED: running, but no port answered within {}s", grace.as_secs())
         }
-        Started::Exited if service.kind == ServiceKind::Php => {
+        Started::Exited if service_kind == ServiceKind::Php => {
             "FAILED: exited immediately (usually the missing Visual C++ Redistributable \
              -- see docs/troubleshooting.md)"
                 .into()
@@ -664,7 +701,7 @@ fn ancestor(path: &Path, levels: usize) -> Result<PathBuf> {
         .ok_or_else(|| anyhow!("{} has no ancestor {levels} levels up", path.display()))
 }
 
-fn describe(outcome: &Stopped, helpers: usize) -> String {
+pub fn describe(outcome: &Stopped, helpers: usize) -> String {
     let main = match outcome {
         Stopped::NotRunning => "not running".to_string(),
         Stopped::Graceful => "stopped".to_string(),

@@ -45,7 +45,19 @@ pub fn digits(text: &str) -> String {
     text.chars().filter(char::is_ascii_digit).collect()
 }
 
-pub fn switch(stack: &Stack, wanted: &str) -> Result<u8> {
+/// What a completed switch has to say for itself.
+pub struct Switched {
+    /// Display name of the version now on `PATH`, e.g. `PHP 8.5`.
+    pub name: String,
+    /// Root-relative directory the junction now points at.
+    pub dir: String,
+    /// First line of `php -v`, run through the junction -- proof it resolves.
+    pub banner: Option<String>,
+}
+
+/// Repoint `php\current`, and report where it landed. The printing lives in
+/// [`switch`]; this is what the dashboard calls.
+pub fn use_version(stack: &Stack, wanted: &str) -> Result<Switched> {
     let service = find(stack, wanted)?;
     let dir = service
         .install_marker
@@ -79,8 +91,17 @@ pub fn switch(stack: &Stack, wanted: &str) -> Result<u8> {
         return Err(anyhow!("could not create {}: {message}", stack.rel(&current)));
     }
 
-    println!("CLI PHP -> {} ({})", service.name, stack.rel(dir));
-    match version_banner(&current.join("php.exe")) {
+    Ok(Switched {
+        name: service.name.clone(),
+        dir: stack.rel(dir),
+        banner: version_banner(&current.join("php.exe")),
+    })
+}
+
+pub fn switch(stack: &Stack, wanted: &str) -> Result<u8> {
+    let switched = use_version(stack, wanted)?;
+    println!("CLI PHP -> {} ({})", switched.name, switched.dir);
+    match switched.banner {
         Some(banner) => println!("  {banner}"),
         None => println!("  (php -v produced no output)"),
     }

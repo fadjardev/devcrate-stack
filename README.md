@@ -30,6 +30,7 @@ Everything lives in [`docs/`](docs/index.md) ([index](docs/index.md)):
 | [RabbitMQ](docs/rabbitmq.md) | Broker usage, management UI, PHP client, smoke test. |
 | [Troubleshooting](docs/troubleshooting.md) | Common failures, known limitations, verification checklist. |
 | [The `devcrate` binary](docs/cli.md) | The Rust CLI: building it, stack-root resolution, `devcrate.toml`, which subcommands work today. |
+| [The dashboard](docs/tui.md) | The interactive terminal UI: panes, keys, crash detection, how it stays responsive. |
 | [Roadmap](docs/roadmap.md) | Planned development: the Rust/ratatui TUI, runtime installer, CLI, one-step project setup, Node/Bun. |
 
 See [CHANGELOG.md](CHANGELOG.md) for release history.
@@ -133,16 +134,26 @@ Devcrate is a prototype. The batch scripts are the starting point, not the desti
 
 Details, constraints, and build order: [docs/roadmap.md](docs/roadmap.md).
 
-**Started:** the Rust crate exists under [`devcrate/`](devcrate) with stack-root
-resolution, the `devcrate.toml` model, and the subcommand surface.
-Every batch script above now has a subcommand equivalent: `devcrate start` /
-`stop` / `restart`, `php use`, and `site add` / `set-php` / `site remove`, plus
-`status`, `config show`, `php list`, and `site list` for reporting. They act only
-on the processes belonging to their own stack root, name the process holding a
-port they wanted, and test the nginx configuration before reloading it — none of
-which the scripts can do. The scripts keep working; installing runtimes is still
-manual, and nothing supervises the services after `start` exits. See
-[docs/cli.md](docs/cli.md).
+**Where it is:** items 1 and 3 are built. The Rust crate under
+[`devcrate/`](devcrate) is one executable with two front ends over one core —
+run `devcrate` for the ratatui dashboard, or a subcommand for scriptable output:
+
+```bat
+devcrate                          REM the dashboard
+devcrate status --json            REM ...or one thing, for a script
+devcrate start / stop / restart
+devcrate php use 8.5
+devcrate site add / set-php / remove
+```
+
+Every batch script above has an equivalent in both. They act only on the
+processes belonging to their own stack root, name the process holding a port
+they wanted, and test the nginx configuration before reloading it — none of
+which the scripts can do. The dashboard adds the one thing a command cannot: it
+stays resident, so a service that dies on its own reads `crashed` rather than
+`stopped`. The scripts keep working. Installing runtimes (item 2), the hosts
+file and mkcert (item 4) are still manual. See [docs/cli.md](docs/cli.md) and
+[docs/tui.md](docs/tui.md).
 
 ## License
 

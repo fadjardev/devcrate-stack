@@ -45,6 +45,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The dashboard** - `devcrate` with no arguments opens an interactive terminal
+  UI built with [ratatui](https://ratatui.rs/), completing roadmap item 1. Three
+  panes: the live service table, the vhosts, and a log tail.
+  - **A crashed service is reported as crashed, not stopped.** This is the whole
+    reason the dashboard exists: a command runs once and can only describe the
+    present, so `devcrate status` has no way to tell a service that was never
+    started from one that died thirty seconds ago. The dashboard stays resident
+    and holds the previous scan, so a transition from `up` to `stopped` that
+    nobody asked for is reported as `crashed`. A service the *user* stopped is
+    not, and neither is one taken down by an action in flight.
+  - Start / stop / restart per service (`s` / `x` / `t`) and for the whole stack
+    (`S` / `X` / `T`), in the same dependency order, with the same graceful
+    commands and the same path-scoped process matching as the subcommands. Only
+    one action runs at a time; quitting mid-action asks first.
+  - Vhosts: create, change PHP version, delete (with a confirmation that says
+    the project folder and certificate are kept). The PHP switcher repoints
+    `php\current`.
+  - Log viewer: the file list is discovered rather than fixed, error logs sort
+    ahead of access logs, and only the last 256 kB of a file is read so a
+    month-old nginx access log opens instantly. Follow mode, scrollback,
+    `Home`/`End`.
+  - Three background threads - a scanner on a two-second timer, an actor that
+    runs one action at a time, and a log tailer - so the drawing thread never
+    blocks. It has to be this way: a TCP probe of a *dead* port costs the full
+    250 ms timeout, around two seconds with the stack down, which is far too
+    long to spend inside a redraw.
+  - The alternate screen and raw mode are restored on every exit path including
+    a panic, where the hook restores the terminal before printing. With stdout
+    redirected the dashboard refuses to start and points at `status --json`
+    rather than writing escape sequences into a file.
+  - Documented in `docs/tui.md`.
+- **One core behind both front ends.** Every action is now a function returning
+  a structured result, with the printing outside it - `control::run_start`
+  beside `control::start`, `site::create` beside `site::add`. The subcommand
+  prints and the dashboard renders; neither reimplements the other, and nothing
+  the dashboard calls can write to the terminal underneath it.
 - **The `devcrate` binary** (`devcrate/`) - a Rust CLI, and the first step of
   the roadmap's sequencing item 1. It is **read-only**: it reports on the stack
   and changes nothing.

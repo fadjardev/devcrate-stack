@@ -1,13 +1,16 @@
 # The `devcrate` binary
 
-The Rust program under [`devcrate/`](../devcrate) is the first step of
-[roadmap](roadmap.md) sequencing item 1: the crate skeleton, the `devcrate.toml`
-config model, stack-root resolution, and the CLI subcommand surface.
+The Rust program under [`devcrate/`](../devcrate) is the whole of the tool: an
+interactive dashboard and a set of non-interactive subcommands, in one
+executable, over one core.
 
-**Everything the batch scripts do is now here**, except installing runtimes:
-`start`, `stop`, `restart`, `php use`, `site add`/`remove`, and the reporting
-commands. `install` is declared so the shape is settled, but exits 3 and points
-at [installation.md](installation.md).
+- **`devcrate`** with no arguments opens the dashboard — see [tui.md](tui.md).
+- **`devcrate <command>`** does one thing and exits. That is this document.
+
+**Everything the batch scripts do is available in both**, except installing
+runtimes: `start`, `stop`, `restart`, `php use`, `site add` / `set-php` /
+`remove`, and the reporting commands. `install` is declared so the shape is
+settled, but exits 3 and points at [installation.md](installation.md).
 
 The batch scripts stay in the repo and keep working; nothing about them has
 changed.
@@ -23,10 +26,18 @@ The binary lands at `devcrate\target\release\devcrate.exe`. `target\` is
 gitignored; the sources and `Cargo.lock` are tracked.
 
 Requires a Rust toolchain (built against 1.97, edition 2024). Dependencies:
-`clap`, `serde` + `toml`, `serde_json`, `sysinfo`, `anyhow`, and `windows-sys`
-for the one Win32 call `start` needs. The `ratatui` / `crossterm` / `tokio` set
-from the roadmap is not pulled in yet — there is no TUI and nothing async to
-drive.
+`clap`, `serde` + `toml`, `serde_json`, `sysinfo`, `anyhow`, `ratatui` (with
+only the crossterm backend), and `windows-sys` for the two Win32 calls that have
+no portable equivalent. No async runtime: the dashboard's three background
+threads are threads, which is all the concurrency there is to manage here.
+
+## One core, two front ends
+
+Each action exists once, as a function returning a structured result, with the
+printing kept outside it — `control::run_start` beside `control::start`,
+`site::create` beside `site::add`, and so on. The subcommand prints; the
+dashboard renders. Neither reimplements the other, which is the constraint
+[roadmap](roadmap.md) item 1 sets for the TUI.
 
 ## Finding the stack root
 
@@ -56,6 +67,7 @@ visible rather than mysterious.
 
 | Command | Status |
 | --- | --- |
+| `devcrate` (no subcommand) | **works** — the dashboard, see [tui.md](tui.md) |
 | `devcrate status [--json]` | **works** — installed / running / port holders |
 | `devcrate config show` | **works** — prints the resolved config as TOML |
 | `devcrate config path` | **works** — where `devcrate.toml` is read from |
@@ -452,10 +464,10 @@ ignored, so a typo is an error instead of a setting that silently does nothing.
   exactly where it is.
 - **Never edits the hosts file or issues a certificate.** Both need elevation or
   a managed mkcert, which are roadmap items 4 and 2.
-- **No process supervision.** `start` launches and walks away; `status` and
-  `stop` find their targets by scanning, not by remembering what was launched.
-  So a service that dies five minutes later is reported as `stopped`, never as
-  *crashed* — nothing is watching. Real crash detection needs a process that
-  stays resident and owns the children, which is the TUI's job
-  ([roadmap](roadmap.md) item 1), not something `start` can do on its own by
-  spawning and exiting.
+- **No supervision from a subcommand.** `start` launches and walks away;
+  `status` and `stop` find their targets by scanning, not by remembering what
+  was launched. So a service that dies five minutes later is reported by
+  `devcrate status` as `stopped`, never as *crashed* — a command that runs once
+  can only describe the present. Noticing the change needs something resident,
+  which is what the [dashboard](tui.md) is: leave it open and the same service
+  reads `crashed`.

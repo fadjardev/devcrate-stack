@@ -294,7 +294,7 @@ fn format_ports(ports: &[PortStatus]) -> String {
 
 /// Two units, largest first: enough to tell "just restarted" from "up since
 /// Monday" at a glance, without a column that jitters every second.
-fn format_uptime(secs: Option<u64>) -> String {
+pub fn format_uptime(secs: Option<u64>) -> String {
     let Some(secs) = secs else {
         return "-".into();
     };

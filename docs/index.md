@@ -19,8 +19,9 @@ install walkthrough.
 | [database.md](database.md) | MariaDB usage: connecting, creating databases, imports, and per-framework DB config. |
 | [rabbitmq.md](rabbitmq.md) | RabbitMQ + Erlang: connecting, the management UI, the PHP client, and the smoke test. |
 | [troubleshooting.md](troubleshooting.md) | Common failures, known limitations, the verification checklist, and log locations. |
-| [cli.md](cli.md) | The `devcrate` binary: building it, stack-root resolution, `devcrate.toml`, and which subcommands work today. |
-| [roadmap.md](roadmap.md) | Planned development: the Rust/ratatui TUI, the built-in runtime installer, and the cross-terminal CLI. |
+| [cli.md](cli.md) | The `devcrate` binary: building it, stack-root resolution, `devcrate.toml`, and the subcommands. |
+| [tui.md](tui.md) | The dashboard `devcrate` opens with no arguments: panes, keys, crash detection. |
+| [roadmap.md](roadmap.md) | Planned development: what is built, and what is left — the runtime installer, the one-step project setup, Node and Bun. |
 
 ## The stack at a glance
 
