@@ -11,8 +11,10 @@ executable, over one core.
 `restart`, `php use`, `site add` / `set-php` / `remove`, and the reporting
 commands. `install` goes further than any script does: `devcrate install php
 8.4` downloads the release from windows.php.net, verifies its sha256 against
-the vendor's own feed, and installs it; `--from` does the same from an archive
-already on disk. Other runtimes are not installable yet.
+the vendor's own feed, and installs it, and `devcrate install nginx 1.31.3`
+does the equivalent from nginx.org; `--from` does the same from an archive
+already on disk. MariaDB, RabbitMQ, Erlang, and Composer are not installable
+yet.
 
 The batch scripts stay in the repo and keep working; nothing about them has
 changed.
@@ -106,7 +108,9 @@ visible rather than mysterious.
 | `devcrate site remove <host>` | **works** — removes the conf, keeps the project |
 | `devcrate install php <version>` | **works** — downloads, verifies sha256, installs |
 | `devcrate install php` (no version) | **works** — lists the versions windows.php.net offers |
-| `devcrate install php --from <zip>` | **works** — the same install from an archive on disk |
+| `devcrate install nginx <version>` | **works** — downloads and installs a build into the prefix |
+| `devcrate install nginx` (no version) | **works** — lists the builds nginx.org offers |
+| `devcrate install <runtime> --from <zip>` | **works** — the same install from an archive on disk |
 | `devcrate install <other runtime>` | not built — see [installation.md](installation.md) |
 
 `--root` is accepted on every command.
@@ -509,8 +513,17 @@ devcrate install php                              REM list what can be downloade
 devcrate install php 8.4                          REM download, verify, install
 devcrate install php 8.4 --force                  REM replace an existing 8.4
 devcrate install php --from C:\downloads\php-8.4.23-Win32-vs17-x64.zip
-devcrate install php --from <zip> --version 8.4   REM the file has been renamed
+devcrate install php 8.4 --from <zip>             REM the file has been renamed
+
+devcrate install nginx                            REM list what can be downloaded
+devcrate install nginx 1.31.3                     REM download and install
+devcrate install nginx 1.30                       REM ...or name the series
+devcrate install nginx --from C:\downloads\nginx-1.31.3.zip
 ```
+
+The version is a positional argument, not a flag: `devcrate install php 8.4
+--from <zip>` names the version *and* the archive. (`--version` is not accepted
+here — it is clap's own flag on `devcrate` itself.)
 
 ```
   fetching the release list from windows.php.net
@@ -530,10 +543,19 @@ PHP 8.4.23 installed as php-8.4 (fastcgi 9084)
   start its worker       devcrate start php-8.4
 ```
 
-**Only PHP.** Naming a runtime that is planned but not built (`nginx`,
-`mariadb`, `rabbitmq`, `erlang`, `composer`) says so and points at
+**PHP and nginx.** Naming a runtime that is planned but not built (`mariadb`,
+`rabbitmq`, `erlang`, `composer`) says so and points at
 [installation.md](installation.md); naming one that does not exist at all reads
 differently, so a typo is not mistaken for a missing feature.
+
+The two share everything between the archive and the folder — the extraction
+guard, the staging directory, the swap — and differ in what happens at each
+end, because they are versioned for opposite reasons. Read
+[`devcrate nginx`](#devcrate-nginx) for why the layouts mirror each other; the
+consequence for installing is that PHP configures the *version* it just
+unpacked, and nginx prepares the *prefix* the build is about to sit in.
+
+#### PHP
 
 **The catalogue is the vendor's own `releases.json`** on windows.php.net, which
 lists the current release of every branch — EOL branches included, so 7.4 is
@@ -557,7 +579,8 @@ transfer, which is what makes a once-downloaded release installable offline.
 `90` + digits convention. Only the major and minor reach the folder name,
 because that is what the stack knows a version by; the patch level goes in the
 receipt. A renamed archive that carries no version is an error rather than a
-guess, and `--version` overrides it in any of the usual spellings.
+guess, and naming the version on the command line overrides it in any of the
+usual spellings.
 
 **A non-thread-safe build is refused.** The stack runs `php-cgi.exe` as a
 long-lived FastCGI listener with `PHP_FCGI_CHILDREN`, which needs the TS build
@@ -577,15 +600,124 @@ zip. The template comments the same key more than once with different values
 Any of the twelve the template has no line for is reported rather than silently
 skipped.
 
+**A missing Visual C++ runtime is a warning, not a failure.** `vcruntime140.dll`
+in the system directory is checked for, because its absence is the single most
+common cause of `php-cgi.exe` exiting with no output at all. It is a
+good-enough signal rather than an inventory — it cannot report *which* version
+is installed, only that nothing is.
+
+#### nginx
+
+```
+  fetching the download page from nginx.org
+  downloading  100%  2.7 MB / 2.7 MB
+  sha256 934a8fedd91646a4d7c51079ac9b71397d1caf7a6aeb81ccfd361250c04ace2c
+  (nginx publishes no checksum; the transfer was checked
+   against its declared length over TLS to nginx.org)
+  checking the build
+  preparing the prefix
+  moving it into place
+
+  32 files into nginx\nginx-1.31.3
+  created nginx\logs
+  created nginx\temp
+  created nginx\projects
+  nginx\current -> nginx\nginx-1.31.3
+
+nginx 1.31.3 installed as nginx-1.31.3
+  start it   devcrate start nginx
+  check it   devcrate nginx list
+```
+
+**The catalogue is the download page**, parsed, because nginx publishes no
+machine-readable index of releases — no JSON, no plain-text listing. The parse
+is kept to the two things the page has always done: put an `<h4>` above each
+group, and link the Windows build as `/download/nginx-<version>.zip`. No tags
+are matched and no nesting is tracked, so the source tarballs and PGP
+signatures beside each zip are simply not that href. A page it finds *nothing*
+in is an error rather than an empty list — a format change has to read as a
+format change, not as "nginx has no releases".
+
+`devcrate install nginx` with no version prints that list, labelled by the line
+each release is on and with what is already installed marked:
+
+```
+  1.31.3  mainline
+  1.30.4  stable
+  1.28.3  legacy   installed
+```
+
+**A version may be named as a series.** `1.30` installs the current stable
+release, by the same dotted-prefix rule [`devcrate nginx use`](#devcrate-nginx)
+applies to the versions already in the prefix — and it is unambiguous here for a
+reason particular to the page: it lists exactly one release per series. `1.3` is
+therefore its own series and reaches neither 1.30 nor 1.31.
+
+**The download is *not* checksum-verified, unlike PHP's**, and the output says
+so rather than implying otherwise. nginx signs its releases with PGP and
+publishes no hash, so there is nothing to compare the bytes against. What is
+checked instead is the `Content-Length` the server declared — which catches the
+failure that actually happens, a transfer cut short — over TLS to nginx.org. The
+sha256 is computed locally, printed, and recorded in the receipt, so it can be
+compared against the vendor's signature by hand if you want that. Verifying the
+PGP signature properly would mean shipping and trusting nginx's signing keys,
+which is a real feature rather than a detail, and it is not built.
+
+**Installing a version does not silently become the version that runs.** A
+prefix with no `current` yet activates the new build — there is nothing to
+disturb, and an inactive lone build would do nothing at all. A prefix that
+already names an active version is left alone, and the output says which
+version still holds it and how to switch:
+
+```
+nginx 1.30.4 installed as nginx-1.30.4
+  nginx\current still names nginx-1.31.3, so this build is installed
+  but not the one that runs. To switch:
+    devcrate nginx use 1.30.4
+```
+
+Installing the stable release beside the mainline one is an ordinary thing to
+do, and it must not turn into a downgrade nobody asked for.
+
+**The prefix is made startable.** `logs\` and `temp\` are created, and the
+`projects` junction if it is missing. `logs\` is the load-bearing one: nginx
+opens `logs/error.log` before it creates any of the paths in its configuration,
+so a prefix without that directory fails at startup with a `CreateFile()` error
+and no server.
+
+**`conf\nginx.conf` is deliberately not generated.** It is tracked in the
+repository, it belongs to the stack rather than to any build, and seeding it
+from the vendor's default would produce a working nginx that includes no
+`sites\` and serves none of your vhosts — a failure that looks like success. A
+missing one is a warning naming the likely cause (an incomplete checkout)
+instead.
+
+**The new build is asked to parse your configuration.** `nginx -t` runs against
+the prefix and its verdict is reported, but only when it fails, and it never
+fails the install. On a fresh stack it *will* fail — `ssl_certificate` names a
+file mkcert has not issued yet — which is why it is advisory. What it catches is
+the case worth catching at install time rather than at the next `devcrate
+start`: a newer nginx that no longer accepts a directive your existing vhosts
+use.
+
+**A pre-restructure stack is refused**, before the network call, with the
+sequence that fixes it. Where the versioned folder *is* the prefix, installing
+a second build would nest one version inside another and leave the stack's
+certificates and logs under a build that is no longer the only one — exactly
+the tangle [`nginx migrate`](#devcrate-nginx) exists to undo.
+
+#### Both runtimes
+
 **Nothing half-installed is ever visible.** The archive is unpacked into
-`php\.devcrate-staging-php-<X.Y>` and only renamed into place once it has been
-checked and configured. The leading dot is load-bearing: versions are discovered
-by scanning `php\` for directories whose name starts with `php`, so a directory
-called `php-8.4` appears in `status`, `php list`, and the dashboard the instant
-it exists. Any failure clears the staging directory. Replacing a version with
-`--force` moves the old one aside rather than deleting it, and puts it back if
-the rename fails, so a failed install cannot leave the version missing
-altogether.
+`.devcrate-staging-<folder>` beside where it will land — `php\` for PHP, the
+prefix for nginx — and only renamed into place once it has been checked and
+configured. The leading dot is load-bearing for both: versions are discovered by
+scanning `php\` for directories starting with `php` and the prefix for ones
+starting with `nginx`, so a directory called `php-8.4` or `nginx-1.31.3` appears
+in `status`, the version lists, and the dashboard the instant it exists. Any
+failure clears the staging directory. Replacing a version with `--force` moves
+the old one aside rather than deleting it, and puts it back if the rename fails,
+so a failed install cannot leave the version missing altogether.
 
 **Extraction cannot write outside the destination.** A zip entry carries its own
 path, and that path came from a file downloaded off a vendor site, so it is
@@ -595,30 +727,42 @@ obvious reason, a `..` that survived into a document root would produce a PHP
 that answers nothing but "No input file specified" — see
 [troubleshooting.md](troubleshooting.md).
 
-**A missing Visual C++ runtime is a warning, not a failure.** `vcruntime140.dll`
-in the system directory is checked for, because its absence is the single most
-common cause of `php-cgi.exe` exiting with no output at all. It is a
-good-enough signal rather than an inventory — it cannot report *which* version
-is installed, only that nothing is.
+The extractor also strips the archive's own wrapper directory when every entry
+is under one, which is what nginx's zip needs (`nginx-1.31.3/…`) and PHP's does
+not (files at the top level). A single file *beside* the candidate wrapper means
+there is no wrapper, because stripping would silently drop that file.
+
+**Downloads are cached and reused.** They land in `_downloads\` (gitignored)
+under a `.part` name and are renamed only once the transfer has passed whatever
+check the vendor makes possible, so a file there under its final name is one
+that completed. A repeat install of the same release reuses it and skips the
+network — which is what makes a once-downloaded release installable offline. For
+PHP the cached file is re-hashed against the feed and discarded if it no longer
+matches; for nginx there is nothing to re-check it against.
 
 Each install leaves a `.devcrate-install.toml` receipt in the version directory
-recording the runtime, version, release, thread-safety, and the archive it came
-from — including its sha256, computed locally, so a `--from` install gets one
-too. It is informational: nothing reads it back, because the stack discovers
-versions from the folder name. That is what keeps unpacking a folder by hand a
-complete way to install a version.
+recording the runtime, version, release, and the archive it came from —
+including its sha256, computed locally, so a `--from` install gets one too, plus
+thread-safety for PHP. It is informational: nothing reads it back, because the
+stack discovers versions from the folder name. That is what keeps unpacking a
+folder by hand a complete way to install a version.
 
 **Not delivered here**, and worth knowing before relying on it:
 
 - **A `--from` archive is hashed but not judged.** Its sha256 goes in the
   receipt; it is not compared against the vendor's feed, because the archive
   may legitimately be a release the feed no longer lists. Only downloads are
-  verified.
+  checked, and for nginx not even they carry a published hash.
+- **No PGP verification.** nginx's `.asc` signatures are not fetched or checked;
+  see above for what is checked instead.
 - **No uninstall.** Removing a version is still `rmdir`, and nothing warns that
-  a vhost still points at its FastCGI port.
-- **`nginx`, `mariadb`, `rabbitmq`, `erlang`, and `composer` are named but not
-  installable.** The extraction layer already strips a wrapper directory, which
-  is what nginx's zip needs, but nothing else about them is built.
+  a vhost still points at its FastCGI port, or that the nginx build being
+  removed is the one `current` names.
+- **No offline version listing.** A cached archive installs with no network, but
+  both catalogues are fetched every time a list is printed or a version
+  resolved.
+- **`mariadb`, `rabbitmq`, `erlang`, and `composer` are named but not
+  installable.**
 
 ## `devcrate.toml`
 

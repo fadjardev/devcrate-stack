@@ -90,6 +90,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`devcrate install nginx <version>` downloads and installs an nginx build**
+  into the prefix, beside any already there. `devcrate install nginx` with no
+  version lists what nginx.org offers, labelled mainline / stable / legacy and
+  with what is already installed marked. A version may be named in full
+  (`1.31.3`) or as a series (`1.30`), by the same dotted-prefix rule
+  `devcrate nginx use` uses - nginx.org lists one release per series, so the
+  short form saves knowing today's patch level.
+  - **The catalogue is nginx's download page**, parsed, because nginx publishes
+    no machine-readable index of releases. It is kept to the two things the page
+    has always done: an `<h4>` above each group, and the Windows build linked as
+    `/download/nginx-<version>.zip`. A page it finds nothing in is an error
+    rather than an empty list, so a format change reads as a format change.
+  - **The checksum story is weaker than PHP's, and says so.** nginx signs its
+    releases with PGP and publishes no hash, so there is nothing to verify the
+    transfer against. What is checked instead is the declared `Content-Length`
+    over TLS to nginx.org, which catches the failure that actually happens - a
+    transfer cut short. The sha256 is computed locally, printed, and recorded in
+    the receipt. The output does not claim the download was verified.
+  - **Installing a version does not silently become the version that runs.**
+    A prefix with no `current` yet activates the new build, since an inactive
+    lone build would do nothing at all; a prefix that already names an active
+    version is left alone and reported, with the `nginx use` line to take it.
+    Installing the older stable release beside the mainline one is an ordinary
+    thing to do, and it must not be a downgrade nobody asked for.
+  - **The prefix is made startable**: `logs\` and `temp\` are created, and the
+    `projects` junction if it is missing. `logs\` is the load-bearing one - nginx
+    opens `logs/error.log` before it creates any path in its configuration, so a
+    prefix without that directory fails at startup with no server.
+    `conf\nginx.conf` is deliberately *not* generated: it is tracked in the
+    repository and belongs to the stack, and seeding it from the vendor's
+    default would produce a working nginx that includes no `sites\` and serves
+    none of your vhosts. A missing one is a warning naming the cause.
+  - **The new build is asked to parse the stack's configuration** (`nginx -t`)
+    and its verdict reported. Advisory, never fatal: on a stack with no
+    certificates yet it fails on `ssl_certificate` for reasons that have nothing
+    to do with the install. What it catches is the reason worth catching early -
+    a newer nginx that no longer accepts a directive the existing vhosts use.
+  - **A stack still in the pre-restructure layout is refused**, before the
+    network call, with the `nginx migrate` sequence that fixes it. Installing a
+    second build where the versioned folder *is* the prefix would nest one
+    version inside another.
+  - `--from <zip>` installs from an archive already on disk, the same as for
+    PHP, with the version read from the vendor's file name (`nginx-1.31.3.zip`).
+  - Not delivered: uninstall, and mariadb, rabbitmq, erlang, and composer.
 - **`devcrate install php <version>` downloads, verifies, and installs a PHP
   release** - the second half of roadmap item 2 for PHP, completing it end to
   end. `devcrate install php` with no version lists what windows.php.net
@@ -126,8 +170,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **The version names the folder**, read from the vendor's own file name -
     `php-8.4.3-Win32-vs17-x64.zip` becomes `php\php-8.4\` on FastCGI port 9084,
     by the same `90` + digits convention everything else uses. A renamed archive
-    with no readable version is an error rather than a guess; `--version`
-    overrides it, in any of the usual spellings.
+    with no readable version is an error rather than a guess; naming the version
+    on the command line overrides it, in any of the usual spellings.
   - **A non-thread-safe build is refused**, read from the unpacked files
     (`php8ts.dll`) rather than the file name - the name is a poor signal in both
     directions, since the NTS download is the one marked `nts` and the TS one

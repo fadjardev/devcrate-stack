@@ -3,7 +3,8 @@
 //! The whole surface was declared here before most of it was built, so the
 //! shape was settled once and `devcrate --help` told the truth about what did
 //! and did not work yet. By now every declared command is implemented; what
-//! remains unbuilt (installing runtimes other than PHP) says so when named.
+//! remains unbuilt (installing MariaDB, RabbitMQ, Erlang, or Composer) says so
+//! when named.
 //!
 //! No subcommand means the dashboard. Every subcommand is reachable from it,
 //! and every action it offers is one of these calls -- the interactive and
@@ -174,12 +175,12 @@ pub struct ServiceArgs {
 
 #[derive(Debug, Args)]
 pub struct InstallArgs {
-    /// Runtime to install. Only `php` is built; nginx, mariadb, rabbitmq,
-    /// erlang, and composer are named but not installable yet.
+    /// Runtime to install: `php` or `nginx`. mariadb, rabbitmq, erlang, and
+    /// composer are named but not installable yet.
     pub runtime: String,
-    /// Version to install: 8.4, 84, and php-8.4 all work. Omitted without
-    /// --from: list the versions available for download. Omitted with --from:
-    /// read from the archive's file name.
+    /// Version to install: 8.4, 84, and php-8.4 for PHP; 1.31.3 or the series
+    /// 1.31 for nginx. Omitted without --from: list the versions available for
+    /// download. Omitted with --from: read from the archive's file name.
     pub version: Option<String>,
     /// Install from an archive already on disk instead of downloading one.
     #[arg(long, value_name = "PATH")]

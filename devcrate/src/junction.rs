@@ -62,3 +62,34 @@ pub fn remove(link: &Path) -> Result<()> {
 pub fn target(link: &Path) -> Option<PathBuf> {
     std::fs::read_link(link).ok().or_else(|| crate::root::clean(link).ok())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::root::tests::tree;
+
+    /// Everything that asks "is *this* the active version" -- the `*` in
+    /// `nginx list` and `php list`, whether an install may take `current`,
+    /// whether `migrate` still has a junction to create -- compares this
+    /// against a path built from the prefix. So the two have to be the same
+    /// string, which is a property of `read_link` rather than of anything here:
+    /// the reparse point stores a verbatim path (`\??\C:\...`) and `read_link`
+    /// hands back an ordinary one. Worth a test precisely because nothing in
+    /// the code makes it true.
+    #[test]
+    fn a_junctions_target_compares_equal_to_the_path_it_was_made_from() {
+        let base = tree("junction-target", &["nginx-1.31.1/nginx.exe"]);
+        let version = crate::root::clean(&base.join("nginx-1.31.1")).unwrap();
+        let link = base.join("current");
+
+        create(&link, &version).unwrap();
+        assert_eq!(target(&link).as_deref(), Some(version.as_path()));
+
+        // Repointing replaces rather than nests, and removing the link leaves
+        // what it pointed at alone.
+        remove(&link).unwrap();
+        assert_eq!(target(&link), None);
+        assert!(version.join("nginx.exe").is_file());
+    }
+}

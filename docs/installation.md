@@ -58,7 +58,8 @@ each build starts:
 > edit. An archive already on disk installs with `--from <zip>` — the same
 > pipeline, no network. See [cli.md](cli.md#devcrate-install). The three
 > versions in the table above predate it and were unpacked by hand, which
-> remains a complete way to install one.
+> remains a complete way to install one. Nginx is installable the same way —
+> see §3 below.
 
 ```bat
 C:\devcrate\php\php-7.4\php-cgi.exe -v
@@ -82,6 +83,23 @@ C:\devcrate\nginx\
 │  └─ nginx.exe
 └─ current            ← junction -> nginx-1.31.1
 ```
+
+> **Once the `devcrate` binary is built** ([cli.md](cli.md)), this step is not
+> yours to do either:
+>
+> ```bat
+> devcrate install nginx          &REM list what nginx.org offers
+> devcrate install nginx 1.31.3   &REM download and install
+> devcrate install nginx 1.30     &REM ...or name the series
+> ```
+>
+> It downloads the Windows zip, unpacks it into `nginx\nginx-1.31.3\`, creates
+> `logs\`, `temp\`, and the `projects` junction, points `current` at the new
+> build if nothing else holds it, and asks the new binary to parse your
+> configuration. An archive already on disk installs with `--from <zip>`. Unlike
+> PHP, the download is **not** checksum-verified — nginx publishes only PGP
+> signatures — so see [cli.md](cli.md#nginx) for exactly what is checked. The
+> manual steps below remain a complete way to install a build.
 
 Download nginx for Windows and extract it so that `nginx.exe` lands at
 `C:\devcrate\nginx\nginx-<version>\nginx.exe` (the zip already wraps everything

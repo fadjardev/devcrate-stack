@@ -75,7 +75,16 @@ Each of these cost real effort to find.
   are derived from the folder name, so unpacking `php-8.4\` is the whole of
   installing a version. Everything matches on the digits alone, which makes
   `8.5`, `85`, `php-8.5`, and the older `php85` interchangeable everywhere a
-  version is named.
+  version is named. **nginx versions match differently** — on the dotted prefix,
+  since `digits("1.31")` and `digits("1.3.1")` collide. One rule, in
+  `nginx::answers_to`, used by both `nginx use` and `install nginx`.
+- **What the vendor publishes decides what can be verified.** PHP's
+  `releases.json` carries a sha256 per zip, so a download is verified against
+  it. nginx publishes only PGP signatures, so its download is checked against
+  the declared `Content-Length` over TLS and nothing more — and the command
+  *says* so. `download::Download::sha256` is an `Option` to keep that
+  difference in the type rather than in someone's memory. Never round
+  "downloaded over TLS" up to "verified".
 - **One core, two front ends.** Each action is a function returning a structured
   result (`control::run_start`, `site::create`, `php::use_version`) with the
   printing in a thin CLI wrapper. The dashboard must never call anything that

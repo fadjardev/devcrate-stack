@@ -2,9 +2,9 @@
 //!
 //! Two front ends over one core: the subcommands below, and the dashboard in
 //! [`tui`] that runs when none is given. Every batch script in the stack root
-//! has an equivalent in both, and `install` downloads, verifies, and installs
-//! a PHP version end to end. What is left of installing is every runtime that
-//! is not PHP.
+//! has an equivalent in both, and `install` downloads and installs PHP and
+//! nginx end to end. What is left of installing is MariaDB, RabbitMQ, Erlang,
+//! and Composer.
 
 mod cli;
 mod config;

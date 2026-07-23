@@ -133,9 +133,11 @@ escape sequences into a file.
 
 ## What it deliberately does not do
 
-- **Install runtimes.** `devcrate install php 8.4` works as a subcommand
-  ([cli.md](cli.md#devcrate-install)), but the dashboard has no screen for it
-  yet — no version picker, no download progress pane.
+- **Install runtimes.** `devcrate install php 8.4` and `devcrate install nginx
+  1.31.3` work as subcommands ([cli.md](cli.md#devcrate-install)), but the
+  dashboard has no screen for either — no version picker, no download progress
+  pane. The core is ready for one: every step returns a structured result and
+  reports progress through a callback rather than printing.
 - **Edit the hosts file or issue certificates.** Both need elevation or a managed
   mkcert — roadmap items 4 and 2.
 - **Edit anything in a vhost except its PHP version.** The web root, the

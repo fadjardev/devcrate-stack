@@ -10,7 +10,7 @@ stack for you.
 | # | Item | Status |
 | --- | --- | --- |
 | 1 | Rust TUI (`ratatui`), shipped as a single executable | done — see [tui.md](tui.md) |
-| 2 | Built-in runtime downloader / installer with version selection | in progress — installing works, downloading does not |
+| 2 | Built-in runtime downloader / installer with version selection | in progress — PHP and nginx done end to end; MariaDB, RabbitMQ, Erlang, Composer to come |
 | 3 | Runs from any terminal, scriptable as well as interactive | done — see [cli.md](cli.md) |
 | 4 | Open an existing project: vhost + hosts entry + mkcert TLS, in one step | planned |
 | 5 | Node.js and Bun as managed runtimes | planned |
@@ -116,7 +116,35 @@ release of every branch, EOL ones included, so everything this stack runs is
 on it. Superseded patch releases are deliberately not offered — they still
 install with `--from`.
 
-**Still to build:** uninstall, and every runtime other than PHP.
+**Built for nginx too.** `devcrate install nginx 1.31.3` downloads the Windows
+zip from nginx.org and installs it into the prefix as one more versioned build;
+`devcrate install nginx` lists what is offered, labelled mainline / stable /
+legacy, and a series such as `1.30` names the current release on it.
+
+Two things about it are worth knowing rather than assuming, because they are
+where nginx differs from PHP and neither difference is hidden in the output:
+
+- **The catalogue is HTML, parsed.** nginx publishes no machine-readable index
+  of releases at all, so the download page is read for its `<h4>` headings and
+  its `/download/nginx-<version>.zip` links, and a page it finds nothing in is
+  an error rather than an empty list.
+- **The download is not checksum-verified.** nginx signs releases with PGP and
+  publishes no hash, so the verify-before-extract constraint below is met only
+  in the weaker form available: TLS to the vendor's own host, and the declared
+  `Content-Length`. The sha256 is computed locally, printed, and recorded in the
+  receipt. Doing this properly means shipping and trusting nginx's signing keys
+  — a real feature, and not built. This is stated in the command's own output
+  rather than left for someone to discover.
+
+The rest follows from the layout already being right: a build lands in
+`nginx\nginx-<version>\`, the prefix gets the `logs\` and `temp\` directories
+and the `projects` junction it needs to start, and `current` is taken only if
+no other version already holds it — installing the stable release beside the
+mainline one must not become a downgrade nobody asked for. The new binary is
+asked to parse the stack's configuration (`nginx -t`) and the verdict reported,
+advisory rather than fatal.
+
+**Still to build:** uninstall, and MariaDB, RabbitMQ, Erlang, and Composer.
 
 **What it should do**
 
@@ -126,7 +154,7 @@ install with `--from`.
   | Runtime | Source |
   | --- | --- |
   | PHP | **built** — `releases.json` on `windows.php.net/downloads/releases/`, which carries every branch and its sha256; `/archives/` turned out not to be needed |
-  | Nginx | `nginx.org/en/download.html` (Windows zips) |
+  | Nginx | **built** — `nginx.org/en/download.html`, parsed, because there is no machine-readable index; no checksums published, only PGP |
   | MariaDB | MariaDB downloads REST API |
   | RabbitMQ | GitHub releases (`rabbitmq/rabbitmq-server`) |
   | Erlang/OTP | GitHub releases (`erlang/otp`) - Windows installer / portable |
@@ -369,12 +397,21 @@ system-wide, everything inside the stack root.
    through the identical pipeline. The version it produces is discovered by
    `status`, `php list`, and the dashboard with no config written.
 
-   Not delivered: uninstall, and every runtime other than PHP. Nginx is next,
-   and the layout question that gated it is now settled and built: one stable
-   `nginx\` prefix, versioned build directories inside it, and a
-   `nginx\current` junction naming the active one, with `devcrate nginx
-   migrate` moving older stacks across. An installed nginx now has an obvious
-   place to land, which is what the installer was waiting for.
+   **Nginx followed**, into the layout that had been built to receive it: one
+   stable `nginx\` prefix, versioned build directories inside it, and a
+   `nginx\current` junction naming the active one. `devcrate install nginx
+   1.31.3` downloads from nginx.org, unpacks into `nginx\nginx-1.31.3\`, makes
+   the prefix startable, and takes `current` only if no other version holds it.
+   That the layout was settled first is why the installer itself is small: it
+   had somewhere obvious to put a build.
+
+   Two honest gaps, both in the command's own output: nginx's catalogue is an
+   HTML page rather than a feed, and nginx publishes no checksums, so the
+   download is checked against its declared length over TLS instead of a hash.
+
+   Not delivered: uninstall, and MariaDB, RabbitMQ, Erlang, and Composer.
+   Composer is the natural next one — a single file with an `installer.sig`,
+   so it has a real trust root to pin, unlike nginx.
 6. The full site workflow on top of `site add`: hosts-file management and
    mkcert issuance/renewal (item 4). The mkcert half depends on the installer
    from step 5, since mkcert becomes a managed tool.

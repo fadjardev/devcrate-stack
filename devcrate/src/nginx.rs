@@ -58,14 +58,31 @@ fn version_of(dir: &Path) -> String {
     }
 }
 
-/// Find a version by any reasonable spelling: `1.31.1`, `nginx-1.31.1`, or an
-/// unambiguous prefix such as `1.31`.
+/// Strip the spellings of a version that are not the version: `nginx-1.31.1`
+/// and `nginx_1.31.1` both mean `1.31.1`.
+pub fn spelled(wanted: &str) -> &str {
+    wanted.trim().trim_start_matches("nginx").trim_start_matches(['-', '_'])
+}
+
+/// Does `version` answer to the (already [`spelled`]) `wanted`? Exactly, or as
+/// a whole dotted component prefix of it.
 ///
 /// Prefix matching rather than PHP's digits-only rule, because nginx versions
 /// have three components: `digits("1.31")` and `digits("1.3.1")` are the same
-/// string, and quietly starting the wrong build is worse than an error.
+/// string, and quietly starting the wrong build is worse than an error. The
+/// trailing dot is what keeps the series apart -- `1.3` can never reach
+/// `1.31.something`.
+///
+/// This is the rule wherever an nginx version is named, whether it is one
+/// installed in the prefix or one being chosen from the vendor's download page.
+pub fn answers_to(version: &str, wanted: &str) -> bool {
+    version == wanted || version.starts_with(&format!("{wanted}."))
+}
+
+/// Find a version by any reasonable spelling: `1.31.1`, `nginx-1.31.1`, or an
+/// unambiguous prefix such as `1.31`.
 pub fn find<'a>(available: &'a [Version], wanted: &str) -> Result<&'a Version> {
-    let wanted = wanted.trim().trim_start_matches("nginx").trim_start_matches(['-', '_']);
+    let wanted = spelled(wanted);
     if wanted.is_empty() {
         bail!("no nginx version named");
     }
@@ -74,10 +91,8 @@ pub fn find<'a>(available: &'a [Version], wanted: &str) -> Result<&'a Version> {
         return Ok(exact);
     }
 
-    let matches: Vec<&Version> = available
-        .iter()
-        .filter(|v| v.version.starts_with(&format!("{wanted}.")))
-        .collect();
+    let matches: Vec<&Version> =
+        available.iter().filter(|v| answers_to(&v.version, wanted)).collect();
     match matches.as_slice() {
         [one] => Ok(one),
         [] => Err(anyhow!(
@@ -138,7 +153,9 @@ fn version_banner(nginx_exe: &Path) -> Option<String> {
     text.lines().next().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string)
 }
 
-fn running(dir: &Path) -> Vec<u32> {
+/// PIDs of nginx processes executing from `dir` -- a whole prefix, or one
+/// versioned build inside it.
+pub(crate) fn running(dir: &Path) -> Vec<u32> {
     ProcessTable::scan().matching(dir, &[])
 }
 
