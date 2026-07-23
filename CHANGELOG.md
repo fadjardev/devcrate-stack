@@ -45,10 +45,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`devcrate install php <version>` downloads, verifies, and installs a PHP
+  release** - the second half of roadmap item 2 for PHP, completing it end to
+  end. `devcrate install php` with no version lists what windows.php.net
+  offers, with what is already installed marked.
+  - **The catalogue is the vendor's own `releases.json`**, which lists the
+    current release of every branch - EOL branches included, so 7.4 is on it.
+    Only each branch's current release is offered; superseded patch releases
+    move to the vendor's `archives/` and still install with `--from`. The
+    thread-safe x64 zip is picked by the `ts-`/`-x64` around the compiler tag,
+    never the tag itself, which changes across branches (vc15/vs16/vs17).
+  - **Every download is verified before it installs.** `releases.json`
+    publishes a sha256 per zip; the transfer is hashed as it streams and a
+    mismatch discards it. The file lands in `_downloads\` (gitignored) under a
+    `.part` name and is only renamed once the hash matches, so a file there
+    under its final name is always a verified one - and it is kept, so a
+    repeat install of the same release re-hashes the cached copy and skips the
+    network entirely.
+  - **Refusals come before the transfer**: an already-installed version
+    without `--force`, or a version the feed does not list, fails after the
+    25 kB catalogue fetch, not after the 30 MB archive.
+  - The install receipt now records the source archive's sha256, computed
+    locally, so `--from` installs get one too.
+  - HTTP is `ureq` with `rustls` - blocking like the rest of the binary, with
+    certificate roots baked in rather than read from the machine's store.
+  - Nothing exits 3 any more: every declared command is now built, so the
+    "declared but not implemented" exit code has no remaining users. Scripts
+    that check for it lose nothing.
+  - Not delivered: uninstall, every runtime other than PHP, and an offline
+    version *listing* (a cached archive installs offline; the catalogue still
+    needs the network).
 - **`devcrate install php --from <archive>`** - installs a PHP version from a
-  zip already on disk, the first working part of roadmap item 2. Downloading is
-  *not* built: `devcrate install php` with no `--from` exits 3 and names the
-  flag that works.
+  zip already on disk: the offline fallback, and the same pipeline the
+  download hands its verified file to.
   - **The version names the folder**, read from the vendor's own file name -
     `php-8.4.3-Win32-vs17-x64.zip` becomes `php\php-8.4\` on FastCGI port 9084,
     by the same `90` + digits convention everything else uses. A renamed archive
@@ -88,11 +117,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     (`.devcrate-install.toml`) is left in the version directory, informational
     only - nothing reads it back, which is what keeps unpacking a folder by hand
     a complete way to install a version.
-  - Not delivered: the download itself, the version catalogue, checksum
-    verification, uninstall, and every runtime other than PHP. Naming one of
-    those (`nginx`, `mariadb`, `rabbitmq`, `erlang`, `composer`) says it is not
-    built and points at `docs/installation.md`; naming a runtime that does not
-    exist reads differently, so a typo is not mistaken for a missing feature.
+  - Naming a runtime that is planned but not installable (`nginx`, `mariadb`,
+    `rabbitmq`, `erlang`, `composer`) says it is not built and points at
+    `docs/installation.md`; naming a runtime that does not exist reads
+    differently, so a typo is not mistaken for a missing feature.
   - Documented in `docs/cli.md`.
 - **The dashboard** - `devcrate` with no arguments opens an interactive terminal
   UI built with [ratatui](https://ratatui.rs/), completing roadmap item 1. Three

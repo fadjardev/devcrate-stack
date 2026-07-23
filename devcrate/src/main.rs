@@ -2,9 +2,9 @@
 //!
 //! Two front ends over one core: the subcommands below, and the dashboard in
 //! [`tui`] that runs when none is given. Every batch script in the stack root
-//! has an equivalent in both. What is left is the downloading half of
-//! `install`: a runtime can be installed from an archive already on disk, but
-//! fetching one is still a visit to a vendor site.
+//! has an equivalent in both, and `install` downloads, verifies, and installs
+//! a PHP version end to end. What is left of installing is every runtime that
+//! is not PHP.
 
 mod cli;
 mod config;
@@ -26,11 +26,12 @@ use clap::Parser;
 use crate::cli::{Cli, Command, ConfigCommand, PhpCommand, SiteCommand};
 use crate::config::Stack;
 
-/// Exit codes. 2 is clap's own code for a usage error.
+/// Exit codes. 2 is clap's own code for a usage error. 3 used to mean "not
+/// built yet, a batch script does this today"; nothing exits 3 any more, but
+/// scripts written against it lose nothing by keeping the check.
 pub mod exit {
     pub const OK: u8 = 0;
     pub const ERROR: u8 = 1;
-    pub const NOT_IMPLEMENTED: u8 = 3;
 }
 
 fn main() -> ExitCode {

@@ -68,7 +68,9 @@ Binaries aren't in the repo — download and extract them into place:
 1. **Visual C++ Redistributable x64** (required, or PHP exits silently) —
    <https://aka.ms/vs/17/release/vc_redist.x64.exe>
 2. **PHP** (Thread-Safe x64 ZIPs) from <https://windows.php.net/download/> →
-   extract to `php\php-7.4\`, `php\php-8.2\`, `php\php-8.5\`.
+   extract to `php\php-7.4\`, `php\php-8.2\`, `php\php-8.5\` — or, once the
+   `devcrate` binary is built, `devcrate install php 8.5` downloads, verifies,
+   and installs a version itself.
 3. **Nginx 1.31.1** → extract so `nginx-1.31.1\nginx.exe` sits beside the tracked `conf\`.
 4. **MariaDB 12.3** → `mariadb\`, **RabbitMQ 4.3.2 + Erlang** → `rabbitmq\` / `erlang\`.
 5. **mkcert** → save as `mkcert.exe`, then generate the local TLS certs into
@@ -123,10 +125,10 @@ Devcrate is a prototype. The batch scripts are the starting point, not the desti
 2. 🚧 **Install runtimes from inside the program** — pick a version of PHP, Nginx,
    MariaDB, RabbitMQ, Erlang, or Composer and have Devcrate download, verify, and
    configure it, instead of fetching archives from vendor sites by hand.
-   **Half built**: `devcrate install php --from <zip>` installs a PHP version
-   from an archive you already have — unpacking it, refusing a non-thread-safe
-   build, and generating its `php.ini`. Downloading, verifying, and every other
-   runtime are still to come.
+   **Built for PHP, end to end**: `devcrate install php 8.4` downloads the
+   release from windows.php.net, verifies its sha256 against the vendor's own
+   feed, and installs it — `php.ini` generated, non-thread-safe builds refused.
+   `--from <zip>` does the same offline. The other runtimes are still to come.
 3. ✅ **Run from any terminal** — one binary on `PATH` that works in cmd, PowerShell,
    Windows Terminal, and Git Bash, with scriptable subcommands (`devcrate start`,
    `devcrate php use 8.5`, …) behind the same executable as the TUI.
@@ -156,8 +158,9 @@ processes belonging to their own stack root, name the process holding a port
 they wanted, and test the nginx configuration before reloading it — none of
 which the scripts can do. The dashboard adds the one thing a command cannot: it
 stays resident, so a service that dies on its own reads `crashed` rather than
-`stopped`. The scripts keep working. Installing runtimes (item 2), the hosts
-file and mkcert (item 4) are still manual. See [docs/cli.md](docs/cli.md) and
+`stopped`. The scripts keep working. `devcrate install php 8.4` downloads,
+verifies, and installs a PHP version (item 2); the other runtimes, the hosts
+file, and mkcert (item 4) are still manual. See [docs/cli.md](docs/cli.md) and
 [docs/tui.md](docs/tui.md).
 
 ## License

@@ -1,10 +1,9 @@
 //! The command surface.
 //!
-//! The whole surface is declared here even where the implementation is still a
-//! batch file, so the shape is settled once and `devcrate --help` tells the
-//! truth about what does and does not work yet. Commands that are not built
-//! print the script that does the job today and exit with
-//! [`exit::NOT_IMPLEMENTED`](crate::exit::NOT_IMPLEMENTED).
+//! The whole surface was declared here before most of it was built, so the
+//! shape was settled once and `devcrate --help` told the truth about what did
+//! and did not work yet. By now every declared command is implemented; what
+//! remains unbuilt (installing runtimes other than PHP) says so when named.
 //!
 //! No subcommand means the dashboard. Every subcommand is reachable from it,
 //! and every action it offers is one of these calls -- the interactive and
@@ -62,7 +61,8 @@ pub enum Command {
     /// Stop, then start again.
     Restart(ServiceArgs),
 
-    /// Install a runtime from a local archive. (Downloading is not built yet.)
+    /// Install a runtime: download it from the vendor and verify it, or use
+    /// --from for an archive already on disk.
     Install(InstallArgs),
 }
 
@@ -149,11 +149,11 @@ pub struct InstallArgs {
     /// Runtime to install. Only `php` is built; nginx, mariadb, rabbitmq,
     /// erlang, and composer are named but not installable yet.
     pub runtime: String,
-    /// Version to install. Read from the archive's file name when omitted;
-    /// pass it when the file has been renamed. 8.4, 84, and php-8.4 all work.
+    /// Version to install: 8.4, 84, and php-8.4 all work. Omitted without
+    /// --from: list the versions available for download. Omitted with --from:
+    /// read from the archive's file name.
     pub version: Option<String>,
-    /// Install from an archive already on disk instead of downloading it.
-    /// Required today: the downloader is not built.
+    /// Install from an archive already on disk instead of downloading one.
     #[arg(long, value_name = "PATH")]
     pub from: Option<PathBuf>,
     /// Replace an existing installation of the same version.

@@ -20,13 +20,19 @@ no output. The program knows exactly what it needs — it should just get it.
 
 ### Version catalogue
 
-- [ ] List available versions per runtime, resolved from upstream at runtime rather
-  than from a list baked into the binary
-- [ ] Cache the catalogue so the UI stays responsive offline
+- [x] List available versions per runtime, resolved from upstream at runtime rather
+  than from a list baked into the binary — *PHP only. `devcrate install php` with
+  no version prints the list, with what is already installed marked. The feed is
+  `releases.json`, which carries every branch — EOL included — so `/archives/`
+  turned out not to be needed; only each branch's current release is offered, and
+  older builds install with `--from`.*
+- [ ] Cache the catalogue so the UI stays responsive offline — *not built. The
+  archive cache in `_downloads\` makes a repeat install work offline, but listing
+  versions still needs the network.*
 
 | Runtime    | Source                                                                |
 | ---------- | --------------------------------------------------------------------- |
-| PHP        | `windows.php.net/downloads/releases/` (+ `/archives/` for EOL builds) |
+| PHP        | **built** — `releases.json` on `windows.php.net/downloads/releases/`  |
 | Nginx      | `nginx.org/en/download.html` (Windows zips)                           |
 | MariaDB    | MariaDB downloads REST API                                            |
 | RabbitMQ   | GitHub releases (`rabbitmq/rabbitmq-server`)                          |
@@ -35,14 +41,17 @@ no output. The program knows exactly what it needs — it should just get it.
 
 ### Install
 
-- [ ] Pick a version and download it with a progress bar — *download not built.
-  Extraction reports progress, redrawn in place on a terminal and suppressed
-  when the output is redirected.*
-- [ ] Verify the checksum/signature the vendor publishes **before** extracting —
-  *not built, and blocked on the download: with nothing fetched over TLS there
-  is no authoritative hash to check an archive against. Pinning per-version
-  hashes in the repo was considered and rejected — it does not scale across
-  PHP's release history.*
+- [x] Pick a version and download it with a progress bar — *PHP only.
+  `devcrate install php 8.4` downloads into `_downloads\` (gitignored, and the
+  archive is kept as the offline fallback). Both download and extraction report
+  progress, redrawn in place on a terminal and suppressed when the output is
+  redirected.*
+- [x] Verify the checksum/signature the vendor publishes **before** extracting —
+  *PHP only. `releases.json` publishes a sha256 per zip; the transfer is hashed
+  as it streams, a mismatch discards it, and the file only gets its final name
+  in `_downloads\` after the hash matches. A `--from` archive is hashed into the
+  receipt but not judged — it may legitimately be a release the feed no longer
+  lists.*
 - [x] Extract into the standard layout (`php\php-8.5\`, `nginx-1.31.1\`, `mariadb\`, …)
   — *PHP only. The extractor already strips a wrapper directory, which is what
   nginx's zip needs, but no other runtime is wired up.*
@@ -93,9 +102,10 @@ no output. The program knows exactly what it needs — it should just get it.
   versions. Replacing with `--force` moves the old version aside and puts it
   back if the swap fails.
 - [x] **Leave an install receipt** (`.devcrate-install.toml`) recording the
-  release, thread-safety, and source archive. Informational only — nothing reads
-  it back, because discovery works from the folder name, which is what keeps
-  unpacking a folder by hand a complete way to install a version.
+  release, thread-safety, source archive, and its sha256 (computed locally, so
+  a `--from` install gets one too). Informational only — nothing reads it back,
+  because discovery works from the folder name, which is what keeps unpacking a
+  folder by hand a complete way to install a version.
 
 ## Constraints
 
@@ -120,9 +130,10 @@ no output. The program knows exactly what it needs — it should just get it.
 - Where do checksums come from for runtimes that do not publish them in a machine-
   readable form? **Pinning known-good hashes in the repo is rejected** — it does
   not scale across PHP's release history and goes stale the day a version ships.
-  The intended answer is to fetch the vendor's published hash over the same TLS
-  connection as the archive, and pin only where there is a real trust root to pin
-  (Composer's `installer.sig`). What each vendor actually publishes, in what
+  **Settled for PHP**: `releases.json` publishes a sha256 per zip, fetched over
+  the same TLS origin as the archive itself, which is exactly the intended
+  answer. Pin only where there is a real trust root to pin (Composer's
+  `installer.sig`). What the other vendors actually publish, in what
   machine-readable form, still needs checking one by one before it is written
   down as fact.
 - GitHub API rate limits for the unauthenticated release lookups (RabbitMQ, Erlang).
@@ -149,11 +160,12 @@ roadmap's build order. Suggested implementation order within this issue: PHP fir
 - `devcrate install php 8.5` produces a working, configured PHP 8.5 that `start`
   serves on port 9085 — with no manual download step
 
-  *Half met.* `devcrate install php --from <zip>` produces exactly that, and the
-  version it installs is served on the right port with nothing else edited. The
-  `--from` is the gap: the archive still comes from windows.php.net by hand.
+  *Met.* The command downloads the release, verifies its sha256 against the
+  vendor's feed, and installs it; the version is served on the right port with
+  nothing else edited.
 - A fresh clone can reach a running stack without visiting any vendor website
 
-  *Not met, and this is the one that needs the downloader.* A fresh clone still
-  needs six vendor sites. What has changed is that once an archive is in hand,
-  installing it is one command instead of an unzip plus a `php.ini` to get right.
+  *Not met — PHP no longer needs a vendor site, but nginx, MariaDB,
+  RabbitMQ/Erlang, mkcert, and the VC++ redistributable still do.* This is the
+  measure the remaining runtimes are built against, and the nginx layout
+  question above is what gates the next one.

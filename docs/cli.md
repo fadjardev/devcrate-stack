@@ -9,10 +9,10 @@ executable, over one core.
 
 **Everything the batch scripts do is available in both**: `start`, `stop`,
 `restart`, `php use`, `site add` / `set-php` / `remove`, and the reporting
-commands. `install` goes further than any script does — it installs a PHP
-version from an archive — but only from one already on disk. Fetching the
-archive is not built, so `devcrate install php` on its own exits 3 and says
-which half is missing.
+commands. `install` goes further than any script does: `devcrate install php
+8.4` downloads the release from windows.php.net, verifies its sha256 against
+the vendor's own feed, and installs it; `--from` does the same from an archive
+already on disk. Other runtimes are not installable yet.
 
 The batch scripts stay in the repo and keep working; nothing about them has
 changed.
@@ -45,9 +45,12 @@ Requires a Rust toolchain (built against 1.96 and 1.97, edition 2024).
 Dependencies: `clap`, `serde` + `toml`, `serde_json`, `sysinfo`, `anyhow`,
 `ratatui` (with only the crossterm backend), `zip` (deflate only — the
 bzip2/zstd/AES features pull in C libraries for formats no vendor here ships),
-and `windows-sys` for the Win32 calls that have no portable equivalent. No
-async runtime: the dashboard's three background threads are threads, which is
-all the concurrency there is to manage here.
+`ureq` with `rustls` for the downloads (blocking, like everything else here;
+the baked-in webpki roots mean no dependence on the machine's certificate
+store), `sha2` for verifying them, and `windows-sys` for the Win32 calls that
+have no portable equivalent. No async runtime: the dashboard's three
+background threads are threads, which is all the concurrency there is to
+manage here.
 
 ## One core, two front ends
 
@@ -98,8 +101,9 @@ visible rather than mysterious.
 | `devcrate site add <host>` | **works** — web root, conf, junction, reload |
 | `devcrate site set-php <host> <version>` | **works** — repoints an existing vhost |
 | `devcrate site remove <host>` | **works** — removes the conf, keeps the project |
-| `devcrate install php --from <zip>` | **works** — unpacks, checks, configures, installs |
-| `devcrate install php` (no `--from`) | not built — downloading is [roadmap](roadmap.md) item 2 |
+| `devcrate install php <version>` | **works** — downloads, verifies sha256, installs |
+| `devcrate install php` (no version) | **works** — lists the versions windows.php.net offers |
+| `devcrate install php --from <zip>` | **works** — the same install from an archive on disk |
 | `devcrate install <other runtime>` | not built — see [installation.md](installation.md) |
 
 `--root` is accepted on every command.
@@ -416,32 +420,52 @@ worker — the output says which one you need.
 ### `devcrate install`
 
 ```
-devcrate install php --from C:\downloads\php-8.4.3-Win32-vs17-x64.zip
+devcrate install php                              REM list what can be downloaded
+devcrate install php 8.4                          REM download, verify, install
+devcrate install php 8.4 --force                  REM replace an existing 8.4
+devcrate install php --from C:\downloads\php-8.4.23-Win32-vs17-x64.zip
 devcrate install php --from <zip> --version 8.4   REM the file has been renamed
-devcrate install php --from <zip> --force         REM replace an existing 8.4
 ```
 
 ```
+  fetching the release list from windows.php.net
+  downloading  100%  33.2 MB / 33.2 MB
+  sha256 verified against the release list
   extracting   100%
   checking the build
   generating php.ini
   moving it into place
 
-  1204 files into php\php-8.4
-  php.ini generated from php.ini-development, 12 extensions enabled
+  77 files into php\php-8.4
+  php.ini generated from php.ini-development, 11 extensions enabled
 
-PHP 8.4.3 installed as php-8.4 (fastcgi 9084)
+PHP 8.4.23 installed as php-8.4 (fastcgi 9084)
   serve a site with it   devcrate site add myapp.test --php 8.4
   make it the CLI PHP    devcrate php use 8.4
   start its worker       devcrate start php-8.4
 ```
 
-**Only PHP, and only from a local archive.** Downloading is the other half of
-[roadmap](roadmap.md) item 2 and is not built: `devcrate install php` with no
-`--from` exits 3 and names the flag that works. Naming a runtime that is planned
-but not built (`nginx`, `mariadb`, `rabbitmq`, `erlang`, `composer`) says so and
-points at [installation.md](installation.md); naming one that does not exist at
-all reads differently, so a typo is not mistaken for a missing feature.
+**Only PHP.** Naming a runtime that is planned but not built (`nginx`,
+`mariadb`, `rabbitmq`, `erlang`, `composer`) says so and points at
+[installation.md](installation.md); naming one that does not exist at all reads
+differently, so a typo is not mistaken for a missing feature.
+
+**The catalogue is the vendor's own `releases.json`** on windows.php.net, which
+lists the current release of every branch — EOL branches included, so 7.4 is
+still on it. With no version named, `devcrate install php` prints that list
+(with what is already installed marked) and stops. Only each branch's current
+release is offered: superseded patch releases move to the vendor's `archives/`
+and install with `--from` instead. The thread-safe x64 zip is selected by the
+`ts-` and `-x64` around the compiler tag, never by the tag itself, which
+changes across branches (`vc15`, `vs16`, `vs17`).
+
+**Every download is verified before it installs.** `releases.json` publishes a
+sha256 for each zip; the transfer is hashed as it streams and a mismatch
+discards it. The download lands in `_downloads\` (gitignored) under a `.part`
+name and is only renamed to the real one after the hash matches — so a file
+sitting in `_downloads\` under its final name is always a verified one. It is
+also kept: the next install of the same release re-hashes it and skips the
+transfer, which is what makes a once-downloaded release installable offline.
 
 **The version names the folder.** It is read from the vendor's own file name —
 `php-8.4.3-Win32-vs17-x64.zip` gives `php-8.4`, listening on 9084 by the usual
@@ -494,17 +518,17 @@ is installed, only that nothing is.
 
 Each install leaves a `.devcrate-install.toml` receipt in the version directory
 recording the runtime, version, release, thread-safety, and the archive it came
-from. It is informational: nothing reads it back, because the stack discovers
+from — including its sha256, computed locally, so a `--from` install gets one
+too. It is informational: nothing reads it back, because the stack discovers
 versions from the folder name. That is what keeps unpacking a folder by hand a
 complete way to install a version.
 
 **Not delivered here**, and worth knowing before relying on it:
 
-- **No checksum is recorded or verified.** With no downloader there is nothing
-  authoritative to check an archive against, and pinning per-version hashes in
-  the repo does not scale across PHP's release history. Verification arrives
-  with the downloader, which is where the vendor's published hash can be
-  fetched over the same TLS connection.
+- **A `--from` archive is hashed but not judged.** Its sha256 goes in the
+  receipt; it is not compared against the vendor's feed, because the archive
+  may legitimately be a release the feed no longer lists. Only downloads are
+  verified.
 - **No uninstall.** Removing a version is still `rmdir`, and nothing warns that
   a vhost still points at its FastCGI port.
 - **`nginx`, `mariadb`, `rabbitmq`, `erlang`, and `composer` are named but not
@@ -561,7 +585,7 @@ ignored, so a typo is an error instead of a setting that silently does nothing.
 | 0 | Success. |
 | 1 | Error (no stack root found, unreadable or invalid config, …). |
 | 2 | Usage error (clap's own code). |
-| 3 | Command is declared but not implemented yet. |
+| 3 | Historical: "declared but not implemented yet". Nothing exits 3 any more — every declared command is built — but a script that checks for it loses nothing. |
 
 `status` reports what it finds and exits 0 whether or not services are running.
 

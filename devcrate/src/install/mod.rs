@@ -1,17 +1,19 @@
 //! `devcrate install` -- putting a runtime into the stack root.
 //!
-//! The pipeline starts from a *local archive*. Downloading is a separate step
-//! that ends by handing this code a file on disk, so everything genuinely hard
-//! about installing -- proving the archive holds the build the stack needs,
-//! keeping the extraction inside the stack root, generating the first-run
-//! config, and never leaving a half-written version behind -- happens after the
-//! bytes have landed, and can be tested without a network.
+//! The pipeline starts from a *local archive*. Downloading ([`download`]) is a
+//! separate step that ends by handing this code a verified file on disk, so
+//! everything genuinely hard about installing -- proving the archive holds the
+//! build the stack needs, keeping the extraction inside the stack root,
+//! generating the first-run config, and never leaving a half-written version
+//! behind -- happens after the bytes have landed, and can be tested without a
+//! network.
 //!
 //! Printing lives in [`install`]. [`from_archive`] returns a structured result
 //! and reports progress through a callback, because the dashboard drives the
 //! same function and must never write to the screen it just drew.
 
 mod archive;
+mod download;
 mod php;
 
 use std::io::{IsTerminal, Write};
@@ -80,6 +82,8 @@ pub struct Options {
 /// can render it and the CLI can print it, without either owning the pipeline.
 #[derive(Debug, Clone, Copy)]
 pub enum Progress {
+    /// Bytes, not entries; `total` is the Content-Length when the server sent one.
+    Downloading { done: u64, total: Option<u64> },
     Extracting { done: usize, total: usize },
     Validating,
     Configuring,
@@ -149,6 +153,11 @@ fn php_from_archive(
     }
     let file_name =
         archive_path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    // For the receipt. Hashed before any work starts, so a failure here costs
+    // nothing -- and when the archive came through `fetch_php`, this is the
+    // same hash that was just checked against the vendor's feed.
+    let source_sha256 = download::sha256_of(archive_path)
+        .with_context(|| format!("hashing {}", archive_path.display()))?;
 
     let (version, release) = resolve_version(&file_name, opts.version.as_deref())?;
     let tag = format!("php-{version}");
@@ -193,6 +202,7 @@ fn php_from_archive(
         thread_safe: true,
         source_archive: file_name,
         source_bytes: std::fs::metadata(archive_path).map(|m| m.len()).unwrap_or(0),
+        source_sha256,
         files: assembled.files,
     };
     write_receipt(&dest, &receipt)
@@ -313,6 +323,7 @@ struct Receipt {
     thread_safe: bool,
     source_archive: String,
     source_bytes: u64,
+    source_sha256: String,
     files: usize,
 }
 
@@ -387,7 +398,7 @@ pub fn install(
     let runtime = Runtime::parse(runtime)?;
 
     let Some(archive_path) = from else {
-        return Ok(no_downloader(runtime));
+        return install_by_download(stack, runtime, version, force);
     };
 
     let opts = Options { version: version.map(str::to_string), force };
@@ -401,27 +412,108 @@ pub fn install(
     Ok(exit::OK)
 }
 
-/// Downloading is the half that is not built. Say so, and say what is.
-fn no_downloader(runtime: Runtime) -> u8 {
-    let name = runtime.as_str();
-    eprintln!("devcrate install {name}: downloading is not built yet.");
-    eprintln!();
-    eprintln!("What works today is installing from an archive you already have:");
-    eprintln!("  devcrate install {name} --from <path-to-zip>");
-    eprintln!();
-    eprintln!("See docs/installation.md for the vendor page to fetch it from.");
-    exit::NOT_IMPLEMENTED
+/// Fetch the vendor's release list, download the wanted version into
+/// `_downloads\`, and install it -- or, with no version named, print what is
+/// available and stop.
+fn install_by_download(
+    stack: &Stack,
+    runtime: Runtime,
+    version: Option<&str>,
+    force: bool,
+) -> Result<u8> {
+    // Exhaustive on purpose: a second downloadable runtime has to decide what
+    // its catalogue looks like here.
+    match runtime {
+        Runtime::Php => {}
+    }
+
+    println!("  fetching the release list from windows.php.net");
+    let catalogue = download::php_catalogue()?;
+
+    let Some(wanted) = version else {
+        print_catalogue(stack, &catalogue);
+        return Ok(exit::OK);
+    };
+
+    let digits = crate::php::digits(wanted);
+    if digits.len() < 2 {
+        bail!("{wanted:?} does not name a PHP version (try 8.4)");
+    }
+    let version = config::version_from_tag(&digits);
+    let Some(release) = catalogue.iter().find(|r| r.version == version) else {
+        bail!(
+            "PHP {version} is not on windows.php.net's release list.\n\
+             Available: {}\n\
+             An older build can still be installed with --from (docs/installation.md).",
+            catalogue.iter().map(|r| r.version.as_str()).collect::<Vec<_>>().join(", ")
+        );
+    };
+
+    // The refusal --force overrides comes before the transfer, not after
+    // thirty megabytes of it.
+    let dest = stack.php_dir.join(format!("php-{version}"));
+    if dest.exists() && !force {
+        bail!("{} already exists; pass --force to replace it", stack.rel(&dest));
+    }
+
+    let downloads = stack.root.join(DOWNLOADS_DIR);
+    let mut reporter = Reporter::new();
+    let fetched = download::fetch_php(release, &downloads, &mut |done, total| {
+        reporter.report(Progress::Downloading { done, total })
+    })?;
+    reporter.finish();
+    match fetched.cached {
+        true => println!(
+            "  already in {}, checksum still good -- nothing downloaded",
+            stack.rel(&downloads)
+        ),
+        false => println!("  sha256 verified against the release list"),
+    }
+
+    let opts = Options { version: None, force };
+    let mut reporter = Reporter::new();
+    let done = from_archive(stack, runtime, &fetched.path, &opts, &mut |progress| {
+        reporter.report(progress)
+    })?;
+    reporter.finish();
+
+    print_installed(&done);
+    Ok(exit::OK)
+}
+
+/// Where downloads land, and stay: the archive doubles as the offline
+/// fallback for `--from`, and the whole directory is gitignored.
+const DOWNLOADS_DIR: &str = "_downloads";
+
+fn print_catalogue(stack: &Stack, catalogue: &[download::PhpRelease]) {
+    println!();
+    println!("PHP releases on windows.php.net (thread-safe x64):");
+    println!();
+    let width = catalogue.iter().map(|r| r.release.len()).max().unwrap_or(0);
+    for release in catalogue {
+        let tag = format!("php-{}", release.version);
+        let installed =
+            if stack.php_dir.join(&tag).is_dir() { "   installed" } else { "" };
+        println!(
+            "  {:<5}  {:<width$}  {:>8}{installed}",
+            release.version, release.release, release.size
+        );
+    }
+    println!();
+    println!("Install one with   devcrate install php 8.4");
+    println!("Only each branch's current release is offered; an older build");
+    println!("installs from a downloaded archive with --from.");
 }
 
 /// Progress on the way to the terminal.
 ///
-/// Extraction is thousands of entries, so the percentage is redrawn in place on
-/// a terminal and suppressed entirely otherwise -- an install log redirected to
-/// a file does not want three thousand progress lines, and `\r` is meaningless
-/// in one.
+/// A download is millions of bytes and an extraction thousands of entries, so
+/// both are redrawn in place on a terminal and suppressed entirely otherwise
+/// -- an install log redirected to a file does not want three thousand
+/// progress lines, and `\r` is meaningless in one.
 struct Reporter {
     interactive: bool,
-    last_percent: usize,
+    last: String,
     drawing: bool,
 }
 
@@ -429,30 +521,42 @@ impl Reporter {
     fn new() -> Reporter {
         Reporter {
             interactive: std::io::stdout().is_terminal(),
-            last_percent: usize::MAX,
+            last: String::new(),
             drawing: false,
         }
     }
 
     fn report(&mut self, progress: Progress) {
         match progress {
+            Progress::Downloading { done, total } => match total {
+                Some(total) => self.redraw(format!(
+                    "  downloading  {:>3}%  {} / {}",
+                    done * 100 / total.max(1),
+                    megabytes(done),
+                    megabytes(total)
+                )),
+                None => self.redraw(format!("  downloading  {}", megabytes(done))),
+            },
             Progress::Extracting { done, total } => {
-                if !self.interactive {
-                    return;
-                }
                 let percent = done * 100 / total.max(1);
-                if percent == self.last_percent {
-                    return;
-                }
-                self.last_percent = percent;
-                self.drawing = true;
-                print!("\r  extracting   {percent:>3}%");
-                let _ = std::io::stdout().flush();
+                self.redraw(format!("  extracting   {percent:>3}%"));
             }
             Progress::Validating => self.line("checking the build"),
             Progress::Configuring => self.line("generating php.ini"),
             Progress::Installing => self.line("moving it into place"),
         }
+    }
+
+    /// Repaint the in-place line, but only when its text has changed -- the
+    /// download callback fires on every 64 KiB read.
+    fn redraw(&mut self, text: String) {
+        if !self.interactive || text == self.last {
+            return;
+        }
+        self.last = text;
+        self.drawing = true;
+        print!("\r{}", self.last);
+        let _ = std::io::stdout().flush();
     }
 
     fn line(&mut self, text: &str) {
@@ -467,6 +571,10 @@ impl Reporter {
             self.drawing = false;
         }
     }
+}
+
+fn megabytes(bytes: u64) -> String {
+    format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
 }
 
 fn print_installed(done: &Installed) {

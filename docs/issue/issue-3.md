@@ -23,7 +23,8 @@ implementable as a thin front end rather than a second implementation.
 - [x] `devcrate start [service]` / `devcrate stop [service]` / `devcrate restart`
 - [x] `devcrate status` (with `--json` for machine-readable output)
 - [x] `devcrate php use 8.5` — accepts `8.5`, `85`, `php-8.5`, or the older `php85`
-- [ ] `devcrate install php 8.5` (surface reserved for #2) — declared, exits 3
+- [x] `devcrate install php 8.5` (surface reserved for #2) — built by #2:
+      downloads, verifies, and installs; see [docs/cli.md](docs/cli.md#devcrate-install)
 - [x] `devcrate site add myapp.test --php 8.5` — plus `site set-php` and `site remove`
 - [x] `devcrate --version`, `--help`, and per-subcommand help
 
