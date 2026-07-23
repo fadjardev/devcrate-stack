@@ -1,0 +1,20 @@
+[package]
+name = "devcrate"
+version = "0.1.0"
+edition = "2024"
+description = "A portable, multi-PHP development stack for Windows"
+license = "MIT"
+repository = "https://github.com/fadjardev/devcrate-stack"
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.4", features = ["derive"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+# Only process inspection is used; the disk/network/component probes are dead
+# weight here and drag in a pile of platform crates.
+sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
+toml = "1.1.3"
+
+[profile.release]
+strip = true

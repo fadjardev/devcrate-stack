@@ -29,6 +29,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The `devcrate` binary** (`devcrate/`) - a Rust CLI, and the first step of
+  the roadmap's sequencing item 1. It is **read-only**: it reports on the stack
+  and changes nothing.
+  - `devcrate status` (`--json` for scripts) - per service: installed or not,
+    running or not, which ports answer, and the PIDs. Distinguishes a service
+    that is *running* from a port held by *something else*, by matching the
+    running process's executable path against the stack root rather than its
+    image name.
+  - `devcrate config show` / `config path` - prints the resolved configuration
+    as TOML, so the values currently discovered from the folder layout can be
+    pinned into a `devcrate.toml`.
+  - `devcrate php list` - installed versions, their FastCGI ports, and which
+    one `php\current` resolves to. `devcrate site list` - the vhosts with their
+    `root` and FastCGI port.
+  - `start`, `stop`, `restart`, `php use`, `site add`/`remove`, and `install`
+    are declared so the command surface is settled, but exit 3 and name the
+    batch script that does the job today.
+  - Stack root resolved from `--root`, then `DEVCRATE_HOME`, then the
+    executable's folder, then the working directory - the last two searching
+    upward, so it works from anywhere inside the tree.
+  - `devcrate.toml` is optional and so is every key in it; anything missing is
+    discovered from the layout (the `nginx-*` directory, one PHP entry per
+    `php\php*` folder, FastCGI port `90` + version digits).
+  - Documented in `docs/cli.md`, linked from the README and the docs index.
 - **MIT license** (`LICENSE`), with a License section in the README.
 - **`docs/roadmap.md`** - planned development: a Rust/ratatui TUI shipped as a
   single executable, an in-program downloader/installer for PHP, Nginx,

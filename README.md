@@ -29,6 +29,7 @@ Everything lives in [`docs/`](docs/index.md) ([index](docs/index.md)):
 | [Database](docs/database.md) | MariaDB usage: connecting, databases, imports, per-framework config. |
 | [RabbitMQ](docs/rabbitmq.md) | Broker usage, management UI, PHP client, smoke test. |
 | [Troubleshooting](docs/troubleshooting.md) | Common failures, known limitations, verification checklist. |
+| [The `devcrate` binary](docs/cli.md) | The Rust CLI: building it, stack-root resolution, `devcrate.toml`, which subcommands work today. |
 | [Roadmap](docs/roadmap.md) | Planned development: the Rust/ratatui TUI, runtime installer, CLI, one-step project setup, Node/Bun. |
 
 See [CHANGELOG.md](CHANGELOG.md) for release history.
@@ -50,6 +51,7 @@ C:\devcrate\                # ← the stack root (any folder works)
 ├─ start.bat / stop.bat     # bring the whole stack up / down
 ├─ new-vhost.bat            # scaffold a new nginx vhost + hosts entry
 ├─ phpuse.bat               # switch the global CLI PHP version
+├─ devcrate\                # Rust sources for the devcrate CLI (read-only so far)
 ├─ docs\                    # full documentation (setup, architecture, ...)
 ├─ CHANGELOG.md             # release history
 ├─ nginx-1.31.1\conf\       # nginx.conf + sites\*.conf  (tracked)
@@ -127,6 +129,12 @@ Devcrate is a prototype. The batch scripts are the starting point, not the desti
    way PHP is, so a project's front-end toolchain lives inside the stack root too.
 
 Details, constraints, and build order: [docs/roadmap.md](docs/roadmap.md).
+
+**Started:** the Rust crate exists under [`devcrate/`](devcrate) with stack-root
+resolution, the `devcrate.toml` model, and the subcommand surface. It is
+read-only so far — `devcrate status`, `config show`, `php list`, and `site list`
+report on the stack; everything that changes it is still the batch scripts. See
+[docs/cli.md](docs/cli.md).
 
 ## License
 

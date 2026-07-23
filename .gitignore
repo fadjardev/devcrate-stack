@@ -39,6 +39,9 @@ erl_crash.dump
 !/nginx-1.31.1/conf/**
 /nginx-1.31.1/conf/certs/
 
+# --- Rust: keep the crate sources + Cargo.lock, drop build output ---
+/devcrate/target/
+
 # --- Claude Code local settings (machine-specific) ---
 .claude/settings.local.json
 

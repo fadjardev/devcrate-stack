@@ -11,7 +11,7 @@ stack for you.
 | --- | --- | --- |
 | 1 | Rust TUI (`ratatui`), shipped as a single executable | planned |
 | 2 | Built-in runtime downloader / installer with version selection | planned |
-| 3 | Runs from any terminal, scriptable as well as interactive | planned |
+| 3 | Runs from any terminal, scriptable as well as interactive | in progress |
 | 4 | Open an existing project: vhost + hosts entry + mkcert TLS, in one step | planned |
 | 5 | Node.js and Bun as managed runtimes | planned |
 
@@ -266,9 +266,15 @@ system-wide, everything inside the stack root.
 
 1. Rust project skeleton, `devcrate.toml` config model, path/stack-root
    resolution, and the CLI subcommand surface (item 3's plumbing).
+   **Done** - see [cli.md](cli.md). The read-only commands landed with it:
+   `status` (including `--json`), `config show` / `config path`, `php list`,
+   and `site list`. Every command that would change the stack is declared but
+   exits 3, naming the batch script that does the job today.
 2. Port the existing scripts behind those subcommands: `start`, `stop`,
-   `status`, `php use`, `site add`. At this point the batch files still work
-   and can be retired one at a time.
+   `php use`, `site add`. At this point the batch files still work and can be
+   retired one at a time. `start` is the one that changes the tool's shape -
+   it has to own the child processes for the crash detection item 1 wants,
+   which the read-only status snapshot cannot do.
 3. The ratatui dashboard on top of that core (item 1).
 4. The runtime installer, starting with PHP - it has the most versions and the
    most benefit - then Nginx, Composer, MariaDB, and RabbitMQ/Erlang (item 2).
