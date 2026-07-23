@@ -10,7 +10,7 @@ stack for you.
 | # | Item | Status |
 | --- | --- | --- |
 | 1 | Rust TUI (`ratatui`), shipped as a single executable | done — see [tui.md](tui.md) |
-| 2 | Built-in runtime downloader / installer with version selection | planned |
+| 2 | Built-in runtime downloader / installer with version selection | in progress — installing works, downloading does not |
 | 3 | Runs from any terminal, scriptable as well as interactive | done — see [cli.md](cli.md) |
 | 4 | Open an existing project: vhost + hosts entry + mkcert TLS, in one step | planned |
 | 5 | Node.js and Bun as managed runtimes | planned |
@@ -90,6 +90,29 @@ Right now every runtime is fetched manually from a website and extracted by
 hand ([installation.md](installation.md)). Devcrate should do that itself.
 
 **Managed runtimes:** PHP, Nginx, MariaDB, RabbitMQ, Erlang/OTP, Composer.
+
+**Half built.** `devcrate install php --from <zip>` installs a PHP version from
+an archive already on disk: it unpacks, refuses a non-thread-safe build, writes
+a `php.ini` seeded from the release's own `php.ini-development`, and swaps the
+result into place only once it is complete. The reference is
+[cli.md](cli.md#devcrate-install).
+
+The local-archive path was built before the downloader deliberately. It is
+required scope either way — the offline fallback in the constraints below — and
+it holds everything that is hard to change later: the extraction guard, the
+staging-and-swap that keeps a half-written version invisible, the TS check, and
+the `php.ini` generator. All of it is testable with no network, which the
+downloader's half is not. Fetching then reduces to one seam: produce a verified
+file on disk, and hand it to the pipeline that already works.
+
+**Still to build:** the version catalogue, the download itself, checksum
+verification, uninstall, and every runtime other than PHP.
+
+**Decided, not yet added:** the download will use `ureq` with `rustls`. Blocking
+rather than async, which matches the rest of the binary — the dashboard's
+concurrency is three threads, and there is no runtime to justify. The crate is
+deliberately *not* a dependency yet: nothing installs over the network today, so
+adding it now would be build cost for no caller. It arrives with the fetch.
 
 **What it should do**
 
@@ -328,6 +351,17 @@ system-wide, everything inside the stack root.
    PHP version, and issuing certificates - both belong to items 2 and 4.
 5. The runtime installer, starting with PHP - it has the most versions and the
    most benefit - then Nginx, Composer, MariaDB, and RabbitMQ/Erlang (item 2).
+   **Installing is done for PHP** - see [cli.md](cli.md#devcrate-install).
+   `devcrate install php --from <zip>` unpacks a local archive, refuses a
+   non-thread-safe build, generates `php.ini`, and installs atomically; the
+   version it produces is discovered by `status`, `php list`, and the dashboard
+   with no config written.
+
+   Not delivered: the download. There is no version catalogue, no fetch, and no
+   checksum verification, so an archive still comes from a vendor site by hand.
+   That is also why nothing is verified yet - with no downloader there is no
+   authoritative hash to check against, and pinning per-version hashes in the
+   repo does not scale across PHP's release history. Nor is there an uninstall.
 6. The full site workflow on top of `site add`: hosts-file management and
    mkcert issuance/renewal (item 4). The mkcert half depends on the installer
    from step 5, since mkcert becomes a managed tool.

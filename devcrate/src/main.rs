@@ -2,12 +2,14 @@
 //!
 //! Two front ends over one core: the subcommands below, and the dashboard in
 //! [`tui`] that runs when none is given. Every batch script in the stack root
-//! has an equivalent in both. What is left is `install`, which is declared here
-//! so the surface is fixed and says where to read instead.
+//! has an equivalent in both. What is left is the downloading half of
+//! `install`: a runtime can be installed from an archive already on disk, but
+//! fetching one is still a visit to a vendor site.
 
 mod cli;
 mod config;
 mod control;
+mod install;
 mod php;
 mod probe;
 mod root;
@@ -90,18 +92,14 @@ fn run(cli: Cli) -> Result<u8> {
         Command::Start(args) => control::start(&stack, args.service.as_deref()),
         Command::Stop(args) => control::stop(&stack, args.service.as_deref()),
         Command::Restart(args) => control::restart(&stack, args.service.as_deref()),
-        Command::Install(args) => {
-            Ok(todo_command(&format!("install {}", args.runtime), "docs/installation.md"))
-        }
+        Command::Install(args) => install::install(
+            &stack,
+            &args.runtime,
+            args.version.as_deref(),
+            args.from.as_deref(),
+            args.force,
+        ),
     }
-}
-
-/// Say plainly that a command is declared but not built, and point at what does
-/// the job today. Never silently do nothing.
-fn todo_command(what: &str, instead: &str) -> u8 {
-    eprintln!("devcrate {what}: not implemented yet.");
-    eprintln!("Use {instead} for now.");
-    exit::NOT_IMPLEMENTED
 }
 
 fn config_toml(stack: &Stack) -> Result<String> {

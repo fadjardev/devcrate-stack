@@ -45,6 +45,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`devcrate install php --from <archive>`** - installs a PHP version from a
+  zip already on disk, the first working part of roadmap item 2. Downloading is
+  *not* built: `devcrate install php` with no `--from` exits 3 and names the
+  flag that works.
+  - **The version names the folder**, read from the vendor's own file name -
+    `php-8.4.3-Win32-vs17-x64.zip` becomes `php\php-8.4\` on FastCGI port 9084,
+    by the same `90` + digits convention everything else uses. A renamed archive
+    with no readable version is an error rather than a guess; `--version`
+    overrides it, in any of the usual spellings.
+  - **A non-thread-safe build is refused**, read from the unpacked files
+    (`php8ts.dll`) rather than the file name - the name is a poor signal in both
+    directions, since the NTS download is the one marked `nts` and the TS one
+    carries no marker at all. The stack runs `php-cgi.exe` as a long-lived
+    FastCGI listener with `PHP_FCGI_CHILDREN`, which needs the TS build.
+  - **`php.ini` is generated from the release's own `php.ini-development`**, so
+    every vendor comment and default survives and the result matches the
+    `php\php-8.5\php.ini` already in the repo: relative `extension_dir = "ext"`,
+    `error_log = php_errors.log`, and twelve extensions on (curl, exif,
+    fileinfo, gd, intl, mbstring, openssl, pdo_mysql, pdo_sqlite, sodium,
+    sqlite3, zip). Lines are matched on the key *and* the value, because the
+    template comments the same key more than once with different values -
+    uncommenting on the key alone would enable whichever came last. Any of the
+    twelve the template has no line for is reported, not skipped silently.
+  - **Nothing half-installed is ever visible.** The archive is unpacked into
+    `php\.devcrate-staging-php-<X.Y>` and renamed into place only once it has
+    been checked and configured; the leading dot keeps it out of the `php*` scan
+    that discovers versions, which would otherwise show a half-extracted folder
+    in `status`, `php list`, and the dashboard the instant it appeared. Any
+    failure clears the staging directory. `--force` moves the previous version
+    aside rather than deleting it, and puts it back if the swap fails.
+  - **An archive cannot write outside its destination.** An absolute path, a
+    drive letter, a colon, or a `..` in any entry fails the whole install rather
+    than being sanitised. Beyond the obvious reason, a `..` reaching a document
+    root would produce a PHP that answers nothing but "No input file specified".
+  - **A missing Visual C++ runtime is warned about at install time**, with the
+    installer link - its absence is the single most common cause of
+    `php-cgi.exe` exiting with no output at all.
+  - The installed version needs nothing else edited: discovery already scans
+    `php\`, so it appears in `status`, `php list`, `site add --php`, and the
+    dashboard with no config written. An install receipt
+    (`.devcrate-install.toml`) is left in the version directory, informational
+    only - nothing reads it back, which is what keeps unpacking a folder by hand
+    a complete way to install a version.
+  - Not delivered: the download itself, the version catalogue, checksum
+    verification, uninstall, and every runtime other than PHP. Naming one of
+    those (`nginx`, `mariadb`, `rabbitmq`, `erlang`, `composer`) says it is not
+    built and points at `docs/installation.md`; naming a runtime that does not
+    exist reads differently, so a typo is not mistaken for a missing feature.
+  - Documented in `docs/cli.md`.
 - **The dashboard** - `devcrate` with no arguments opens an interactive terminal
   UI built with [ratatui](https://ratatui.rs/), completing roadmap item 1. Three
   panes: the live service table, the vhosts, and a log tail.
@@ -152,8 +201,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     first - so `devcrate status > report.txt` contains no escape sequences. The
     terminal width is measured rather than assumed: where it cannot be
     determined, nothing is wrapped or truncated to a guess.
-  - `install` is still declared but exits 3, pointing at `docs/installation.md`.
-    The hosts-file entry remains manual, as with `new-vhost.bat`.
+  - `install` was declared but exited 3 at this point; it installs PHP from a
+    local archive now, as described above. The hosts-file entry remains manual,
+    as with `new-vhost.bat`.
   - Stack root resolved from `--root`, then `DEVCRATE_HOME`, then the
     executable's folder, then the working directory - the last two searching
     upward, so it works from anywhere inside the tree.
@@ -171,6 +221,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A second unpacked nginx could have committed its binary and its TLS private
+  keys.** The `.gitignore` rules for nginx spelled out `nginx-1.31.1` in all
+  four of them, so a `nginx-1.32\` directory matched none: both
+  `nginx-1.32\nginx.exe` and `nginx-1.32\conf\certs\*-key.pem` were trackable,
+  against the repo's own rule that neither is ever committed. The rules are now
+  wildcarded (`/nginx-*/...`), matching the `php\` rules, which have always been
+  version-agnostic. Verified both ways - the binaries, logs, temp files, and
+  certificate directories of *any* nginx version are ignored, and every
+  version's `conf\nginx.conf` and `conf\sites\*.conf` are still tracked.
+  - Also added `*-key.pem` as a repository-wide rule. mkcert names every private
+    key it issues that way, its own CA included, so a certificate directory that
+    is moved or added somewhere the nginx paths do not reach is still covered.
+  - Found while scoping the nginx installer, which would have created exactly
+    that second directory. Fixed on its own because it is a leak today,
+    independent of whether the installer is ever built.
 - README's "Adding a project vhost" section described behaviour `new-vhost.bat`
   does not have: it takes `<domain> <phpversion>` as arguments rather than
   prompting, and it only *prints* the hosts-file line instead of adding it -

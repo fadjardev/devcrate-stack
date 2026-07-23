@@ -43,6 +43,21 @@ The `php.ini` for each version is already in the repo at
 `php\<ver>\php.ini` - do not overwrite it with `php.ini-development`. Verify
 each build starts:
 
+> **Adding a version later?** Once the `devcrate` binary is built
+> ([cli.md](cli.md)), the download is still yours to do but the rest is not:
+>
+> ```bat
+> devcrate install php --from C:\downloads\php-8.4.3-Win32-vs17-x64.zip
+> ```
+>
+> It unpacks into `php\php-8.4\`, refuses the archive if it is a non-thread-safe
+> build, generates the `php.ini` described above, and installs atomically. The
+> new version is picked up by `devcrate status`, `php list`, and `site add
+> --php` with nothing else to edit. See
+> [cli.md](cli.md#devcrate-install). The three versions in the table below
+> predate it and were unpacked by hand, which remains a complete way to install
+> one.
+
 ```bat
 C:\devcrate\php\php-7.4\php-cgi.exe -v
 C:\devcrate\php\php-8.2\php-cgi.exe -v

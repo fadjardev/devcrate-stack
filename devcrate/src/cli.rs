@@ -62,7 +62,7 @@ pub enum Command {
     /// Stop, then start again.
     Restart(ServiceArgs),
 
-    /// Download and install a runtime. (Not built yet -- see docs/installation.md.)
+    /// Install a runtime from a local archive. (Downloading is not built yet.)
     Install(InstallArgs),
 }
 
@@ -146,8 +146,17 @@ pub struct ServiceArgs {
 
 #[derive(Debug, Args)]
 pub struct InstallArgs {
-    /// Runtime to install: php, nginx, mariadb, rabbitmq, erlang, composer.
+    /// Runtime to install. Only `php` is built; nginx, mariadb, rabbitmq,
+    /// erlang, and composer are named but not installable yet.
     pub runtime: String,
-    /// Version to install; omit for the latest.
+    /// Version to install. Read from the archive's file name when omitted;
+    /// pass it when the file has been renamed. 8.4, 84, and php-8.4 all work.
     pub version: Option<String>,
+    /// Install from an archive already on disk instead of downloading it.
+    /// Required today: the downloader is not built.
+    #[arg(long, value_name = "PATH")]
+    pub from: Option<PathBuf>,
+    /// Replace an existing installation of the same version.
+    #[arg(long)]
+    pub force: bool,
 }

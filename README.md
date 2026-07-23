@@ -117,15 +117,20 @@ for the details.
 
 Devcrate is a prototype. The batch scripts are the starting point, not the destination:
 
-1. **A Rust TUI** built with [ratatui](https://ratatui.rs/), shipped as a single
+1. ✅ **A Rust TUI** built with [ratatui](https://ratatui.rs/), shipped as a single
    `devcrate.exe` — dashboard, service control, log viewer, vhost and PHP-version
-   management.
-2. **Install runtimes from inside the program** — pick a version of PHP, Nginx,
+   management. **Built** — see [docs/tui.md](docs/tui.md).
+2. 🚧 **Install runtimes from inside the program** — pick a version of PHP, Nginx,
    MariaDB, RabbitMQ, Erlang, or Composer and have Devcrate download, verify, and
    configure it, instead of fetching archives from vendor sites by hand.
-3. **Run from any terminal** — one binary on `PATH` that works in cmd, PowerShell,
+   **Half built**: `devcrate install php --from <zip>` installs a PHP version
+   from an archive you already have — unpacking it, refusing a non-thread-safe
+   build, and generating its `php.ini`. Downloading, verifying, and every other
+   runtime are still to come.
+3. ✅ **Run from any terminal** — one binary on `PATH` that works in cmd, PowerShell,
    Windows Terminal, and Git Bash, with scriptable subcommands (`devcrate start`,
    `devcrate php use 8.5`, …) behind the same executable as the TUI.
+   **Built** — see [docs/cli.md](docs/cli.md).
 4. **Open an existing project in one step** — point Devcrate at a folder you already
    have and get the vhost, the `hosts` entry, and a trusted local TLS certificate
    issued with mkcert, without editing any of them by hand.

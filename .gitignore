@@ -34,10 +34,21 @@ erl_crash.dump
 /php/current/
 
 # --- Nginx: keep ONLY conf/, drop binaries, logs, temp, and TLS keys ---
-/nginx-1.31.1/**
-!/nginx-1.31.1/conf/
-!/nginx-1.31.1/conf/**
-/nginx-1.31.1/conf/certs/
+# Wildcarded rather than naming one version. These rules used to spell out
+# nginx-1.31.1, so a second unpacked nginx (nginx-1.32\) matched none of them
+# and its nginx.exe and conf\certs\*-key.pem were both committable. The php\
+# rules above have always been version-agnostic; these now match.
+/nginx-*/**
+!/nginx-*/conf/
+!/nginx-*/conf/**
+/nginx-*/conf/certs/
+
+# --- TLS private keys, wherever they end up ---
+# A belt to the certs\ rule above rather than a replacement for it. mkcert names
+# every private key <name>-key.pem, its own CA included, so this still holds if
+# a certificate directory is moved or a new one appears somewhere the paths
+# above do not reach.
+*-key.pem
 
 # --- Rust: keep the crate sources + Cargo.lock, drop build output ---
 /devcrate/target/

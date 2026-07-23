@@ -360,7 +360,7 @@ fn dir_tag(dir: &Path) -> String {
 ///
 /// Reading the digits rather than the punctuation is what let the directories
 /// be renamed from `php85` to `php-8.5` without touching any of this.
-fn version_from_tag(tag: &str) -> String {
+pub(crate) fn version_from_tag(tag: &str) -> String {
     let digits: String = tag.chars().filter(|c| c.is_ascii_digit()).collect();
     match digits.len() {
         0 => tag.to_string(),
@@ -372,7 +372,7 @@ fn version_from_tag(tag: &str) -> String {
 /// The FastCGI port convention the batch scripts use: `90` + the version digits,
 /// so `php-7.4` listens on 9074. Anything that does not fit in a port number
 /// gets no default and has to be spelled out in `devcrate.toml`.
-fn port_from_tag(tag: &str) -> Option<u16> {
+pub(crate) fn port_from_tag(tag: &str) -> Option<u16> {
     let digits: String = tag.chars().filter(|c| c.is_ascii_digit()).collect();
     if digits.is_empty() {
         return None;

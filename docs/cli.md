@@ -7,10 +7,12 @@ executable, over one core.
 - **`devcrate`** with no arguments opens the dashboard — see [tui.md](tui.md).
 - **`devcrate <command>`** does one thing and exits. That is this document.
 
-**Everything the batch scripts do is available in both**, except installing
-runtimes: `start`, `stop`, `restart`, `php use`, `site add` / `set-php` /
-`remove`, and the reporting commands. `install` is declared so the shape is
-settled, but exits 3 and points at [installation.md](installation.md).
+**Everything the batch scripts do is available in both**: `start`, `stop`,
+`restart`, `php use`, `site add` / `set-php` / `remove`, and the reporting
+commands. `install` goes further than any script does — it installs a PHP
+version from an archive — but only from one already on disk. Fetching the
+archive is not built, so `devcrate install php` on its own exits 3 and says
+which half is missing.
 
 The batch scripts stay in the repo and keep working; nothing about them has
 changed.
@@ -39,11 +41,13 @@ the root resolves it immediately, with no `--root` and no `DEVCRATE_HOME`.
 `/devcrate.exe` is gitignored — it is build output, not source. Repeat the copy
 after each `cargo build --release`.
 
-Requires a Rust toolchain (built against 1.97, edition 2024). Dependencies:
-`clap`, `serde` + `toml`, `serde_json`, `sysinfo`, `anyhow`, `ratatui` (with
-only the crossterm backend), and `windows-sys` for the two Win32 calls that have
-no portable equivalent. No async runtime: the dashboard's three background
-threads are threads, which is all the concurrency there is to manage here.
+Requires a Rust toolchain (built against 1.96 and 1.97, edition 2024).
+Dependencies: `clap`, `serde` + `toml`, `serde_json`, `sysinfo`, `anyhow`,
+`ratatui` (with only the crossterm backend), `zip` (deflate only — the
+bzip2/zstd/AES features pull in C libraries for formats no vendor here ships),
+and `windows-sys` for the Win32 calls that have no portable equivalent. No
+async runtime: the dashboard's three background threads are threads, which is
+all the concurrency there is to manage here.
 
 ## One core, two front ends
 
@@ -94,7 +98,9 @@ visible rather than mysterious.
 | `devcrate site add <host>` | **works** — web root, conf, junction, reload |
 | `devcrate site set-php <host> <version>` | **works** — repoints an existing vhost |
 | `devcrate site remove <host>` | **works** — removes the conf, keeps the project |
-| `devcrate install <runtime>` | not built — see [installation.md](installation.md) |
+| `devcrate install php --from <zip>` | **works** — unpacks, checks, configures, installs |
+| `devcrate install php` (no `--from`) | not built — downloading is [roadmap](roadmap.md) item 2 |
+| `devcrate install <other runtime>` | not built — see [installation.md](installation.md) |
 
 `--root` is accepted on every command.
 
@@ -407,6 +413,104 @@ The configuration is tested with `nginx -t` before the reload, as with
 `site add`. Changing the version does **not** start that version's FastCGI
 worker — the output says which one you need.
 
+### `devcrate install`
+
+```
+devcrate install php --from C:\downloads\php-8.4.3-Win32-vs17-x64.zip
+devcrate install php --from <zip> --version 8.4   REM the file has been renamed
+devcrate install php --from <zip> --force         REM replace an existing 8.4
+```
+
+```
+  extracting   100%
+  checking the build
+  generating php.ini
+  moving it into place
+
+  1204 files into php\php-8.4
+  php.ini generated from php.ini-development, 12 extensions enabled
+
+PHP 8.4.3 installed as php-8.4 (fastcgi 9084)
+  serve a site with it   devcrate site add myapp.test --php 8.4
+  make it the CLI PHP    devcrate php use 8.4
+  start its worker       devcrate start php-8.4
+```
+
+**Only PHP, and only from a local archive.** Downloading is the other half of
+[roadmap](roadmap.md) item 2 and is not built: `devcrate install php` with no
+`--from` exits 3 and names the flag that works. Naming a runtime that is planned
+but not built (`nginx`, `mariadb`, `rabbitmq`, `erlang`, `composer`) says so and
+points at [installation.md](installation.md); naming one that does not exist at
+all reads differently, so a typo is not mistaken for a missing feature.
+
+**The version names the folder.** It is read from the vendor's own file name —
+`php-8.4.3-Win32-vs17-x64.zip` gives `php-8.4`, listening on 9084 by the usual
+`90` + digits convention. Only the major and minor reach the folder name,
+because that is what the stack knows a version by; the patch level goes in the
+receipt. A renamed archive that carries no version is an error rather than a
+guess, and `--version` overrides it in any of the usual spellings.
+
+**A non-thread-safe build is refused.** The stack runs `php-cgi.exe` as a
+long-lived FastCGI listener with `PHP_FCGI_CHILDREN`, which needs the TS build
+(see [php-versions.md](php-versions.md)). This is read from the unpacked files —
+a TS build ships `php8ts.dll` — rather than from the file name, which is a poor
+signal in both directions: the NTS download is the one marked `nts`, and the TS
+one carries no marker at all.
+
+**`php.ini` is generated from the release's own `php.ini-development`**, so
+every comment and default the vendor shipped survives, and the result matches
+the `php\php-8.5\php.ini` already in the repo: `extension_dir = "ext"`,
+`error_log = php_errors.log`, and twelve extensions enabled — curl, exif,
+fileinfo, gd, intl, mbstring, openssl, pdo_mysql, pdo_sqlite, sodium, sqlite3,
+zip. The template comments the same key more than once with different values
+(`extension_dir` as both `"./"` and `"ext"`), so lines are matched on the key
+*and* the value; uncommenting on the key alone would enable whichever came last.
+Any of the twelve the template has no line for is reported rather than silently
+skipped.
+
+**Nothing half-installed is ever visible.** The archive is unpacked into
+`php\.devcrate-staging-php-<X.Y>` and only renamed into place once it has been
+checked and configured. The leading dot is load-bearing: versions are discovered
+by scanning `php\` for directories whose name starts with `php`, so a directory
+called `php-8.4` appears in `status`, `php list`, and the dashboard the instant
+it exists. Any failure clears the staging directory. Replacing a version with
+`--force` moves the old one aside rather than deleting it, and puts it back if
+the rename fails, so a failed install cannot leave the version missing
+altogether.
+
+**Extraction cannot write outside the destination.** A zip entry carries its own
+path, and that path came from a file downloaded off a vendor site, so it is
+treated as input rather than instruction: an absolute path, a drive letter, a
+colon, or a `..` fails the whole install rather than being sanitised. Beyond the
+obvious reason, a `..` that survived into a document root would produce a PHP
+that answers nothing but "No input file specified" — see
+[troubleshooting.md](troubleshooting.md).
+
+**A missing Visual C++ runtime is a warning, not a failure.** `vcruntime140.dll`
+in the system directory is checked for, because its absence is the single most
+common cause of `php-cgi.exe` exiting with no output at all. It is a
+good-enough signal rather than an inventory — it cannot report *which* version
+is installed, only that nothing is.
+
+Each install leaves a `.devcrate-install.toml` receipt in the version directory
+recording the runtime, version, release, thread-safety, and the archive it came
+from. It is informational: nothing reads it back, because the stack discovers
+versions from the folder name. That is what keeps unpacking a folder by hand a
+complete way to install a version.
+
+**Not delivered here**, and worth knowing before relying on it:
+
+- **No checksum is recorded or verified.** With no downloader there is nothing
+  authoritative to check an archive against, and pinning per-version hashes in
+  the repo does not scale across PHP's release history. Verification arrives
+  with the downloader, which is where the vendor's published hash can be
+  fetched over the same TLS connection.
+- **No uninstall.** Removing a version is still `rmdir`, and nothing warns that
+  a vhost still points at its FastCGI port.
+- **`nginx`, `mariadb`, `rabbitmq`, `erlang`, and `composer` are named but not
+  installable.** The extraction layer already strips a wrapper directory, which
+  is what nginx's zip needs, but nothing else about them is built.
+
 ## `devcrate.toml`
 
 Optional, and every key in it is optional. A stack built by the batch scripts has
@@ -464,7 +568,13 @@ ignored, so a typo is an error instead of a setting that silently does nothing.
 ## What this deliberately does not do
 
 - **Never writes `devcrate.toml`.** `config show` prints to stdout and leaves
-  redirecting it to you.
+  redirecting it to you. `install` does not write one either, though it is the
+  one command that could claim a reason to: a version it has just installed is
+  already fully described by its folder name, so recording it in a config file
+  would create a second source of truth for something discovery already knows.
+- **Never installs outside the stack root.** Every runtime lands under the root
+  the command resolved, and an archive that asks to write anywhere else fails
+  the install.
 - **Never parses an nginx config.** `site list` does a shallow scan for the two
   directives it wrote (`root`, `fastcgi_pass`) and ignores the rest, so a
   hand-edited conf is reported as it stands. `site add` writes a whole file or
