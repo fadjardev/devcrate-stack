@@ -192,12 +192,39 @@ put these lines outside that block so they are not overwritten.
 
 ## 8. Composer (keep it inside the stack root)
 
+> **Once the `devcrate` binary is built** ([cli.md](cli.md)), the phar itself is
+> not yours to fetch by hand:
+>
+> ```bat
+> devcrate install composer          &REM list the lines on offer
+> devcrate install composer stable   &REM download, verify sha256, install
+> ```
+>
+> It reads `getcomposer.org/versions`, downloads the current stable phar,
+> verifies it against the `composer.phar.sha256sum` the vendor publishes beside
+> it, and installs it into `C:\devcrate\composer\composer.phar` with a
+> `composer.bat` (and a Git Bash `composer`) shim beside it. It also creates the
+> `home\` and `cache\` directories below. An existing phar is *updated* rather
+> than refused, and a phar already on disk installs with
+> `--from <path>`. See [cli.md](cli.md#composer).
+
+Point Composer's home and cache inside the stack root so nothing leaks into
+`%APPDATA%`:
+
 ```cmd
 setx COMPOSER_HOME      "C:\devcrate\composer\home"
 setx COMPOSER_CACHE_DIR "C:\devcrate\composer\cache"
 ```
 
-Restart open terminals afterward. Verify with `echo %COMPOSER_HOME%`.
+Add `C:\devcrate\composer` to `PATH` (once, the way `php\current` was added) so
+`composer` resolves; the shim runs the phar with bare `php`, so it uses whatever
+version `php\current` names. Restart open terminals afterward, and verify with
+`composer --version`.
+
+If you have not built the binary, download the phar by hand from
+[getcomposer.org/download](https://getcomposer.org/download/) into
+`C:\devcrate\composer\composer.phar` and write the `composer.bat` shim yourself:
+`@echo off` then `php "%~dp0composer.phar" %*`.
 
 ## 9. Projects
 

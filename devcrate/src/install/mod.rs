@@ -19,6 +19,7 @@
 //! same function and must never write to the screen it just drew.
 
 mod archive;
+mod composer;
 mod download;
 mod nginx;
 mod php;
@@ -41,10 +42,11 @@ use crate::{exit, junction};
 pub enum Runtime {
     Php,
     Nginx,
+    Composer,
 }
 
 /// Named in `devcrate install --help`, installable in the order issue #2 sets.
-const PLANNED: [&str; 4] = ["mariadb", "rabbitmq", "erlang", "composer"];
+const PLANNED: [&str; 3] = ["mariadb", "rabbitmq", "erlang"];
 
 impl Runtime {
     pub fn parse(name: &str) -> Result<Runtime> {
@@ -52,13 +54,14 @@ impl Runtime {
         match name.as_str() {
             "php" => Ok(Runtime::Php),
             "nginx" => Ok(Runtime::Nginx),
+            "composer" => Ok(Runtime::Composer),
             other if PLANNED.contains(&other) => bail!(
-                "installing {other} is not built yet -- PHP and nginx are the \
-                 runtimes that are (docs/roadmap.md item 2).\n\
+                "installing {other} is not built yet -- PHP, nginx, and Composer \
+                 are the runtimes that are (docs/roadmap.md item 2).\n\
                  Unpack it by hand for now: docs/installation.md"
             ),
             other => bail!(
-                "{other:?} is not a runtime devcrate manages.\nKnown: php, nginx, {}",
+                "{other:?} is not a runtime devcrate manages.\nKnown: php, nginx, composer, {}",
                 PLANNED.join(", ")
             ),
         }
@@ -69,6 +72,7 @@ impl Runtime {
         match self {
             Runtime::Php => "php",
             Runtime::Nginx => "nginx",
+            Runtime::Composer => "composer",
         }
     }
 
@@ -77,6 +81,7 @@ impl Runtime {
         match self {
             Runtime::Php => "PHP",
             Runtime::Nginx => "nginx",
+            Runtime::Composer => "Composer",
         }
     }
 }
@@ -129,6 +134,7 @@ pub struct Installed {
 pub enum Details {
     Php(PhpInstalled),
     Nginx(NginxInstalled),
+    Composer(ComposerInstalled),
 }
 
 #[derive(Debug)]
@@ -157,6 +163,22 @@ pub struct NginxInstalled {
     pub restart_needed: bool,
 }
 
+#[derive(Debug)]
+pub struct ComposerInstalled {
+    /// Root-relative `composer\` directory the phar and shims landed in.
+    pub dir: String,
+    /// Shim launchers written beside the phar (`composer.bat`, `composer`).
+    pub shims: Vec<String>,
+    /// `home\` / `cache\` directories that had to be created.
+    pub created: Vec<String>,
+    /// The version replaced, when a phar was already there. Composer is a single
+    /// tool, so installing over one is an update, not the refusal a version gets.
+    pub replaced_version: Option<String>,
+    /// What running the phar under `php\current` said. Advisory, like nginx's
+    /// `-t`; `None` when the stack names no current PHP to try it with.
+    pub run: Option<composer::Run>,
+}
+
 /// Install a runtime from an archive already on disk.
 pub fn from_archive(
     stack: &Stack,
@@ -168,6 +190,7 @@ pub fn from_archive(
     match runtime {
         Runtime::Php => php_from_archive(stack, archive_path, opts, progress),
         Runtime::Nginx => nginx_from_archive(stack, archive_path, opts, progress),
+        Runtime::Composer => composer_from_phar(stack, archive_path, opts, progress),
     }
 }
 
@@ -449,6 +472,116 @@ fn resolve_nginx_version(file_name: &str, wanted: Option<&str>) -> Result<String
     }
 }
 
+/// Install Composer: put the verified phar in `composer\`, write the shims that
+/// launch it, and make the home/cache directories it keeps in the stack root.
+///
+/// The shortest install of the three, because Composer is a single file and not
+/// a version. There is no archive to extract and nothing side by side to
+/// disturb, so the staging dance the other two need collapses to one atomic
+/// rename. It is also the only install that *updates* rather than refuses: a
+/// phar already there is a Composer to replace, not a version to protect, so an
+/// existing one is reported and overwritten instead of standing in the way.
+fn composer_from_phar(
+    stack: &Stack,
+    phar_path: &Path,
+    opts: &Options,
+    progress: &mut dyn FnMut(Progress),
+) -> Result<Installed> {
+    if !phar_path.is_file() {
+        bail!("{} is not a file", phar_path.display());
+    }
+    let file_name = phar_path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    let source_sha256 = download::sha256_of(phar_path)
+        .with_context(|| format!("hashing {}", phar_path.display()))?;
+
+    progress(Progress::Validating);
+    composer::check(phar_path)?;
+
+    let dir = stack.root.join("composer");
+    let dest = dir.join("composer.phar");
+    let php_exe = composer::current_php_exe(stack.current_php());
+
+    // The version, in order of what actually knows it: an explicit override, the
+    // download's own name (`composer-2.10.2.phar`), then asking the phar itself.
+    // A bare `composer.phar` from an offline `--from`, on a stack with no PHP to
+    // run it, is the one case left unnamed.
+    let version = opts
+        .version
+        .clone()
+        .or_else(|| composer::version_from_file_name(&file_name))
+        .or_else(|| {
+            php_exe
+                .as_deref()
+                .and_then(|exe| composer::probe(exe, phar_path))
+                .filter(|run| run.ok)
+                .and_then(|run| composer::version_from_output(&run.detail))
+        });
+
+    // What was there before, for the "updated X -> Y" line. Read from the
+    // receipt so it costs nothing and needs no PHP; an unnamed previous install
+    // is not worth reporting a replacement of.
+    let existed = dest.is_file();
+    let replaced_version = read_receipt_version(&dir).filter(|v| v != "unknown");
+
+    progress(Progress::Configuring);
+    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", stack.rel(&dir)))?;
+    let shims = composer::write_shims(&dir, |p| stack.rel(p))?;
+    let created = composer::ensure_home(&dir, |p| stack.rel(p))?;
+
+    // One file, so "staging" is a sibling `.part` renamed over the destination
+    // -- the same atomic-rename trust the download already leans on, with no
+    // directory to swap.
+    progress(Progress::Installing);
+    let staged = dir.join(".devcrate-composer.phar.part");
+    std::fs::copy(phar_path, &staged)
+        .with_context(|| format!("staging the phar in {}", stack.rel(&dir)))?;
+    if let Err(err) = std::fs::rename(&staged, &dest) {
+        let _ = std::fs::remove_file(&staged);
+        return Err(anyhow::Error::new(err).context(format!("installing {}", stack.rel(&dest))));
+    }
+
+    let known = version.unwrap_or_else(|| "unknown".to_string());
+    let receipt = Receipt {
+        runtime: Runtime::Composer.as_str().to_string(),
+        version: known.clone(),
+        release: known.clone(),
+        thread_safe: None,
+        source_archive: file_name,
+        source_bytes: std::fs::metadata(phar_path).map(|m| m.len()).unwrap_or(0),
+        source_sha256,
+        files: 1,
+    };
+    // The receipt lives beside the phar, not in a version folder of its own.
+    write_receipt(&dir, &receipt)
+        .with_context(|| format!("writing the install receipt in {}", stack.rel(&dir)))?;
+
+    // The real "does this PHP run it" answer, from the installed phar.
+    let run = php_exe.as_deref().and_then(|exe| composer::probe(exe, &dest));
+
+    Ok(Installed {
+        runtime: Runtime::Composer,
+        version: known.clone(),
+        release: known,
+        dir: stack.rel(&dir),
+        files: 1,
+        replaced: existed,
+        details: Details::Composer(ComposerInstalled {
+            dir: stack.rel(&dir),
+            shims: shims.written,
+            created,
+            replaced_version,
+            run,
+        }),
+    })
+}
+
+/// The version an install receipt records, if one is there.
+fn read_receipt_version(dir: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(dir.join(RECEIPT_FILE)).ok()?;
+    let value: toml::Value = toml::from_str(&text).ok()?;
+    value.get("version")?.as_str().map(str::to_string)
+}
+
 struct Assembled {
     files: usize,
     ini: php::Ini,
@@ -666,15 +799,17 @@ fn install_by_download(
     let chosen = match runtime {
         Runtime::Php => choose_php(stack, version)?,
         Runtime::Nginx => choose_nginx(stack, version)?,
+        Runtime::Composer => choose_composer(stack, version)?,
     };
     // Nothing chosen means the catalogue was printed instead.
-    let Some(Chosen { download: source, dest }) = chosen else {
+    let Some(Chosen { download: source, dest, replace_freely }) = chosen else {
         return Ok(exit::OK);
     };
 
     // The refusal --force overrides comes before the transfer, not after
-    // thirty megabytes of it.
-    if dest.exists() && !force {
+    // thirty megabytes of it. Composer opts out: re-installing it is an update,
+    // so an existing phar is never the thing that stops one.
+    if dest.exists() && !force && !replace_freely {
         bail!("{} already exists; pass --force to replace it", stack.rel(&dest));
     }
 
@@ -684,7 +819,7 @@ fn install_by_download(
         reporter.report(Progress::Downloading { done, total })
     })?;
     reporter.finish();
-    report_transfer(stack, &downloads, &fetched);
+    report_transfer(stack, runtime, &downloads, &fetched);
 
     let opts = Options { version: None, force };
     let mut reporter = Reporter::new(runtime);
@@ -701,6 +836,9 @@ fn install_by_download(
 struct Chosen {
     download: download::Download,
     dest: PathBuf,
+    /// An existing installation at `dest` is replaced rather than refused.
+    /// True only for Composer, the one runtime that is a tool and not a version.
+    replace_freely: bool,
 }
 
 fn choose_php(stack: &Stack, version: Option<&str>) -> Result<Option<Chosen>> {
@@ -729,6 +867,7 @@ fn choose_php(stack: &Stack, version: Option<&str>) -> Result<Option<Chosen>> {
     Ok(Some(Chosen {
         download: release.download(),
         dest: stack.php_dir.join(format!("php-{version}")),
+        replace_freely: false,
     }))
 }
 
@@ -750,7 +889,72 @@ fn choose_nginx(stack: &Stack, version: Option<&str>) -> Result<Option<Chosen>> 
     Ok(Some(Chosen {
         download: release.download(),
         dest: prefix.join(format!("nginx-{}", release.version)),
+        replace_freely: false,
     }))
+}
+
+fn choose_composer(stack: &Stack, version: Option<&str>) -> Result<Option<Chosen>> {
+    println!("  fetching the version list from getcomposer.org");
+    let catalogue = download::composer_catalogue()?;
+
+    let Some(wanted) = version else {
+        print_composer_catalogue(stack, &catalogue);
+        return Ok(None);
+    };
+
+    let release = pick_composer(&catalogue, wanted)?;
+    println!("  fetching the checksum for {}", release.version);
+    Ok(Some(Chosen {
+        // Composer's is the download that fetches its own sha256 sidecar, so
+        // this is the one `download()` that can fail.
+        download: release.download()?,
+        dest: stack.root.join("composer").join("composer.phar"),
+        replace_freely: true,
+    }))
+}
+
+/// The release a spelling names: a line by name (`stable`, `lts`, `preview`,
+/// `snapshot`), or an exact version off the stable list.
+///
+/// No dotted-prefix shorthand like nginx's -- the index carries only the
+/// current release of each line, so there is no series of point releases for
+/// `2.10` to disambiguate, and the line names cover what the shorthand was for.
+/// An exact version therefore resolves only while it is still current; an older
+/// one installs with `--from`.
+fn pick_composer<'a>(
+    catalogue: &'a download::ComposerCatalogue,
+    wanted: &str,
+) -> Result<&'a download::ComposerRelease> {
+    let named = |line: Option<&'a download::ComposerRelease>, what: &str| {
+        line.ok_or_else(|| anyhow!("getcomposer.org lists no {what} release right now"))
+    };
+
+    match wanted.trim().to_ascii_lowercase().as_str() {
+        "stable" | "latest" => named(catalogue.latest_stable(), "stable"),
+        "lts" => named(catalogue.lts.as_ref(), "LTS"),
+        "preview" => named(catalogue.preview.as_ref(), "preview"),
+        "snapshot" => named(catalogue.snapshot.as_ref(), "snapshot"),
+        exact => catalogue
+            .stable
+            .iter()
+            .find(|r| r.version == exact)
+            .or_else(|| catalogue.lts.iter().find(|r| r.version == exact))
+            .ok_or_else(|| {
+                anyhow!(
+                    "Composer {exact} is not on getcomposer.org's version list.\n\
+                     Name a line -- stable, lts, preview, snapshot -- or a version it \
+                     carries; the newest are: {}\n\
+                     An older phar can still be installed with --from (docs/installation.md).",
+                    catalogue
+                        .stable
+                        .iter()
+                        .take(5)
+                        .map(|r| r.version.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }),
+    }
 }
 
 /// The release a spelling names, by the same rule `devcrate nginx use` uses on
@@ -792,9 +996,21 @@ fn pick_nginx<'a>(
 /// fallback for `--from`, and the whole directory is gitignored.
 const DOWNLOADS_DIR: &str = "_downloads";
 
-/// What the transfer came to. Said out loud because the two vendors give
-/// different amounts to go on, and which one you got is worth knowing.
-fn report_transfer(stack: &Stack, downloads: &Path, fetched: &download::Fetched) {
+/// What the transfer came to. Said out loud because the vendors give different
+/// amounts to go on, and which one you got is worth knowing.
+fn report_transfer(
+    stack: &Stack,
+    runtime: Runtime,
+    downloads: &Path,
+    fetched: &download::Fetched,
+) {
+    // Where the verifying hash came from, for the runtimes that publish one.
+    let against = match runtime {
+        Runtime::Php => "the release list",
+        Runtime::Composer => "getcomposer.org's checksum",
+        // nginx publishes none, so this arm is never the verified one.
+        Runtime::Nginx => "the vendor's checksum",
+    };
     match (fetched.cached, fetched.verified) {
         (true, true) => println!(
             "  already in {}, checksum still good -- nothing downloaded",
@@ -803,7 +1019,7 @@ fn report_transfer(stack: &Stack, downloads: &Path, fetched: &download::Fetched)
         (true, false) => {
             println!("  already in {} -- nothing downloaded", stack.rel(downloads))
         }
-        (false, true) => println!("  sha256 verified against the release list"),
+        (false, true) => println!("  sha256 verified against {against}"),
         (false, false) => {
             println!("  sha256 {}", fetched.sha256);
             println!("  (nginx publishes no checksum; the transfer was checked");
@@ -857,6 +1073,47 @@ fn print_nginx_catalogue(
     println!("Each build gets its own folder in {}.", stack.rel(prefix));
 }
 
+fn print_composer_catalogue(stack: &Stack, catalogue: &download::ComposerCatalogue) {
+    let dir = stack.root.join("composer");
+    let installed = read_receipt_version(&dir).filter(|v| v != "unknown");
+
+    println!();
+    println!("Composer on getcomposer.org:");
+    println!();
+
+    // One line each -- Composer is a tool you take the current of, not a version
+    // you pick among, so the lines are what to name and not a wall of releases.
+    let row = |release: Option<&download::ComposerRelease>| {
+        let Some(release) = release else { return };
+        let here = installed.as_deref() == Some(release.version.as_str());
+        let php = release
+            .min_php
+            .map(|n| format!("php >= {}", composer::format_min_php(n)))
+            .unwrap_or_default();
+        // snapshot's "version" is a 40-char commit hash; keep it from shoving
+        // the columns after it off the line.
+        let version = ellipsize(&release.version, 14);
+        let line = format!(
+            "  {:<9} {:<15} {:<14} {}",
+            release.line.label(),
+            version,
+            php,
+            if here { "installed" } else { "" }
+        );
+        println!("{}", line.trim_end());
+    };
+    row(catalogue.latest_stable());
+    row(catalogue.lts.as_ref());
+    row(catalogue.preview.as_ref());
+    row(catalogue.snapshot.as_ref());
+
+    println!();
+    println!("Install the current stable    devcrate install composer stable");
+    println!("...the LTS line (for old PHP)  devcrate install composer lts");
+    println!("An older release installs from a downloaded phar with --from.");
+    println!("It lands in {}, runs under whatever php is on PATH.", stack.rel(&dir));
+}
+
 /// Progress on the way to the terminal.
 ///
 /// A download is millions of bytes and an extraction thousands of entries, so
@@ -895,13 +1152,17 @@ impl Reporter {
                 let percent = done * 100 / total.max(1);
                 self.redraw(format!("  extracting   {percent:>3}%"));
             }
-            Progress::Validating => self.line("checking the build"),
+            Progress::Validating => match self.runtime {
+                Runtime::Composer => self.line("checking the phar"),
+                _ => self.line("checking the build"),
+            },
             // The one step that means genuinely different things: PHP's
-            // configuration is the version's own, nginx's belongs to the
-            // prefix it is about to sit in.
+            // configuration is the version's own, nginx's belongs to the prefix
+            // it is about to sit in, and Composer's is the shim that launches it.
             Progress::Configuring => match self.runtime {
                 Runtime::Php => self.line("generating php.ini"),
                 Runtime::Nginx => self.line("preparing the prefix"),
+                Runtime::Composer => self.line("writing the composer shim"),
             },
             Progress::Installing => self.line("moving it into place"),
         }
@@ -937,12 +1198,23 @@ fn megabytes(bytes: u64) -> String {
     format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
 }
 
+/// Trim a long display string to `max` characters, marking the cut with `…`.
+fn ellipsize(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let kept: String = text.chars().take(max.saturating_sub(1)).collect();
+    format!("{kept}…")
+}
+
 fn print_installed(done: &Installed) {
     println!();
-    println!("  {} files into {}", done.files, done.dir);
+    let files = if done.files == 1 { "1 file".to_string() } else { format!("{} files", done.files) };
+    println!("  {files} into {}", done.dir);
     match &done.details {
         Details::Php(php) => print_php_installed(done, php),
         Details::Nginx(nginx) => print_nginx_installed(done, nginx),
+        Details::Composer(composer) => print_composer_installed(done, composer),
     }
 }
 
@@ -1041,6 +1313,51 @@ fn print_nginx_installed(done: &Installed, nginx: &NginxInstalled) {
     }
 }
 
+fn print_composer_installed(done: &Installed, composer: &ComposerInstalled) {
+    for shim in &composer.shims {
+        println!("  wrote {shim}");
+    }
+    for created in &composer.created {
+        println!("  created {created}");
+    }
+    match &composer.replaced_version {
+        Some(old) if old == &done.version => println!("  reinstalled the same version"),
+        Some(old) => println!("  updated from {old}"),
+        None if done.replaced => println!("  replaced the previous phar"),
+        None => {}
+    }
+
+    println!();
+    if done.version == "unknown" {
+        println!("Composer installed in {}", composer.dir);
+        println!("  (its version could not be read -- no php\\current to run it, and the");
+        println!("   file name did not carry one)");
+    } else {
+        println!("Composer {} installed in {}", done.version, composer.dir);
+    }
+
+    // The functional check: did the PHP on PATH actually run it? A failure here
+    // is advisory -- the phar is installed and verified regardless.
+    match &composer.run {
+        Some(run) if run.ok => println!("  {}", run.detail),
+        Some(run) => {
+            println!();
+            println!("WARNING: php\\current could not run the phar:");
+            println!("         {}", run.detail);
+            println!("         The phar is installed; this is the PHP it would run under.");
+        }
+        None => {
+            println!();
+            println!("NOTE: no php\\current to run it with yet. Composer needs a PHP:");
+            println!("      devcrate install php 8.4  &&  devcrate php use 8.4");
+        }
+    }
+
+    println!();
+    println!("  put it on PATH   add {} (once, like php\\current)", composer.dir);
+    println!("  then             composer --version");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1097,12 +1414,62 @@ mod tests {
         assert_eq!(Runtime::parse("php").unwrap(), Runtime::Php);
         assert_eq!(Runtime::parse("PHP").unwrap(), Runtime::Php);
         assert_eq!(Runtime::parse("nginx").unwrap(), Runtime::Nginx);
+        assert_eq!(Runtime::parse("composer").unwrap(), Runtime::Composer);
+        assert_eq!(Runtime::parse("Composer").unwrap(), Runtime::Composer);
 
         let planned = Runtime::parse("mariadb").unwrap_err().to_string();
         assert!(planned.contains("not built yet"), "{planned}");
 
         let typo = Runtime::parse("pph").unwrap_err().to_string();
         assert!(typo.contains("not a runtime devcrate manages"), "{typo}");
+    }
+
+    fn composer_catalogue() -> download::ComposerCatalogue {
+        let release = |version: &str, line| download::ComposerRelease {
+            version: version.to_string(),
+            path: format!("/download/{version}/composer.phar"),
+            min_php: Some(70205),
+            line,
+        };
+        download::ComposerCatalogue {
+            stable: vec![
+                release("2.10.2", download::ComposerLine::Stable),
+                release("2.10.1", download::ComposerLine::Stable),
+                release("2.7.1", download::ComposerLine::Stable),
+            ],
+            lts: Some(release("2.2.29", download::ComposerLine::Lts)),
+            preview: Some(release("2.11.0-RC1", download::ComposerLine::Preview)),
+            snapshot: None,
+        }
+    }
+
+    /// A line by name, or an exact version off the history -- the two ways to
+    /// pick a Composer, since it has no series to shorthand.
+    #[test]
+    fn a_composer_line_or_version_is_named() {
+        let catalogue = composer_catalogue();
+        assert_eq!(pick_composer(&catalogue, "stable").unwrap().version, "2.10.2");
+        assert_eq!(pick_composer(&catalogue, "latest").unwrap().version, "2.10.2");
+        assert_eq!(pick_composer(&catalogue, "LTS").unwrap().version, "2.2.29");
+        assert_eq!(pick_composer(&catalogue, "preview").unwrap().version, "2.11.0-RC1");
+        // An exact version resolves off the stable history...
+        assert_eq!(pick_composer(&catalogue, "2.7.1").unwrap().version, "2.7.1");
+        // ...or the LTS line.
+        assert_eq!(pick_composer(&catalogue, "2.2.29").unwrap().version, "2.2.29");
+    }
+
+    /// A line the index does not carry today, and a version it never had, both
+    /// have to say so rather than install the wrong thing.
+    #[test]
+    fn an_absent_line_or_unknown_version_is_an_error() {
+        let catalogue = composer_catalogue();
+        let no_snapshot = pick_composer(&catalogue, "snapshot").unwrap_err().to_string();
+        assert!(no_snapshot.contains("no snapshot release"), "{no_snapshot}");
+
+        let unknown = pick_composer(&catalogue, "9.9.9").unwrap_err().to_string();
+        assert!(unknown.contains("not on getcomposer.org"), "{unknown}");
+        // The newest few are offered as a hint, not the whole history.
+        assert!(unknown.contains("2.10.2"), "{unknown}");
     }
 
     #[test]

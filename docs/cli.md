@@ -11,10 +11,11 @@ executable, over one core.
 `restart`, `php use`, `site add` / `set-php` / `remove`, and the reporting
 commands. `install` goes further than any script does: `devcrate install php
 8.4` downloads the release from windows.php.net, verifies its sha256 against
-the vendor's own feed, and installs it, and `devcrate install nginx 1.31.3`
-does the equivalent from nginx.org; `--from` does the same from an archive
-already on disk. MariaDB, RabbitMQ, Erlang, and Composer are not installable
-yet.
+the vendor's own feed, and installs it, `devcrate install nginx 1.31.3` does the
+equivalent from nginx.org, and `devcrate install composer` fetches the phar from
+getcomposer.org and verifies it against the checksum the vendor publishes beside
+it; `--from` does the same from an archive already on disk. MariaDB, RabbitMQ,
+and Erlang are not installable yet.
 
 The batch scripts stay in the repo and keep working; nothing about them has
 changed.
@@ -110,7 +111,9 @@ visible rather than mysterious.
 | `devcrate install php` (no version) | **works** — lists the versions windows.php.net offers |
 | `devcrate install nginx <version>` | **works** — downloads and installs a build into the prefix |
 | `devcrate install nginx` (no version) | **works** — lists the builds nginx.org offers |
-| `devcrate install <runtime> --from <zip>` | **works** — the same install from an archive on disk |
+| `devcrate install composer <line\|version>` | **works** — downloads the phar, verifies sha256, installs it into `composer\` |
+| `devcrate install composer` (no version) | **works** — lists the lines getcomposer.org offers |
+| `devcrate install <runtime> --from <file>` | **works** — the same install from an archive or phar on disk |
 | `devcrate install <other runtime>` | not built — see [installation.md](installation.md) |
 
 `--root` is accepted on every command.
@@ -519,6 +522,11 @@ devcrate install nginx                            REM list what can be downloade
 devcrate install nginx 1.31.3                     REM download and install
 devcrate install nginx 1.30                       REM ...or name the series
 devcrate install nginx --from C:\downloads\nginx-1.31.3.zip
+
+devcrate install composer                         REM list the lines on offer
+devcrate install composer stable                  REM download, verify, install the current stable
+devcrate install composer lts                     REM ...or the 2.2 LTS line
+devcrate install composer --from C:\downloads\composer.phar
 ```
 
 The version is a positional argument, not a flag: `devcrate install php 8.4
@@ -543,17 +551,21 @@ PHP 8.4.23 installed as php-8.4 (fastcgi 9084)
   start its worker       devcrate start php-8.4
 ```
 
-**PHP and nginx.** Naming a runtime that is planned but not built (`mariadb`,
-`rabbitmq`, `erlang`, `composer`) says so and points at
+**Three runtimes.** Naming one that is planned but not built (`mariadb`,
+`rabbitmq`, `erlang`) says so and points at
 [installation.md](installation.md); naming one that does not exist at all reads
 differently, so a typo is not mistaken for a missing feature.
 
-The two share everything between the archive and the folder — the extraction
-guard, the staging directory, the swap — and differ in what happens at each
-end, because they are versioned for opposite reasons. Read
+PHP and nginx share everything between the archive and the folder — the
+extraction guard, the staging directory, the swap — and differ in what happens
+at each end, because they are versioned for opposite reasons. Read
 [`devcrate nginx`](#devcrate-nginx) for why the layouts mirror each other; the
 consequence for installing is that PHP configures the *version* it just
 unpacked, and nginx prepares the *prefix* the build is about to sit in.
+Composer is the third shape and shares neither half: it is a single phar, not
+an archive, and a tool the stack runs rather than a version it serves with, so
+there is nothing to extract and nothing versioned — see [Composer](#composer)
+below.
 
 #### PHP
 
@@ -706,7 +718,82 @@ a second build would nest one version inside another and leave the stack's
 certificates and logs under a build that is no longer the only one — exactly
 the tangle [`nginx migrate`](#devcrate-nginx) exists to undo.
 
-#### Both runtimes
+#### Composer
+
+```
+  fetching the version list from getcomposer.org
+  fetching the checksum for 2.10.2
+  downloading  100%  3.5 MB / 3.5 MB
+  sha256 verified against getcomposer.org's checksum
+  checking the phar
+  writing the composer shim
+  moving it into place
+
+  1 file into composer
+  wrote composer\composer.bat
+  wrote composer\composer
+  created composer\home
+  created composer\cache
+
+Composer 2.10.2 installed in composer
+  Composer version 2.10.2 2025-06-...
+  put it on PATH   add composer (once, like php\current)
+  then             composer --version
+```
+
+**The catalogue is `getcomposer.org/versions`, JSON** — machine-readable, unlike
+nginx's page, but carrying no hash, unlike PHP's feed. It lists the current
+release of each maintained line, so `devcrate install composer` with no version
+prints them and stops:
+
+```
+  stable    2.10.2   php >= 7.2.5
+  LTS       2.2.29   php >= 5.3.0
+  preview   2.10.2   php >= 7.2.5
+  snapshot  bb38c69cac82c…
+```
+
+A line is named by keyword — `stable` (what you almost always want), `lts` for
+the 2.2 series that still runs on old PHP, `preview`, `snapshot` — or an exact
+version while it is still one of those the list carries. There is no series
+shorthand like nginx's, because there is no series of point releases to
+disambiguate; an older release installs with `--from`.
+
+**The download *is* checksum-verified, at full strength.** The hash is not in
+the catalogue, so it is fetched from the `composer.phar.sha256sum` sidecar the
+vendor publishes beside each versioned phar, over the same TLS, and the transfer
+is hashed as it streams — a mismatch discards it, exactly as PHP's does. This is
+where Composer differs from nginx and the output says which you got: nginx has
+only a length to check, Composer has a real hash. (The roadmap had expected
+`installer.sig` for this; that is the SHA-384 of the *setup script*, which would
+need the PHP bootstrap to use, whereas the sidecar hashes the phar the stack
+actually installs.)
+
+**It lands in `composer\`, and is not versioned.** Composer is one file that
+runs under whatever PHP is current, not a runtime the stack serves with, so —
+unlike PHP and nginx — there is no version folder, no `current` junction, and no
+port. The phar goes to `composer\composer.phar`, beside the `home\` and `cache\`
+that hold `COMPOSER_HOME` and `COMPOSER_CACHE_DIR`
+([architecture.md](architecture.md)). Two shims are written next to it —
+`composer.bat` for cmd/PowerShell and an extension-less `composer` for Git Bash
+— each of which runs the phar with *bare* `php`, so Composer resolves through the
+same `php\current` on `PATH` that `php` itself does. Add `composer\` to `PATH`
+once, the way `php\current` was added.
+
+**Installing over an existing Composer updates it**, rather than refusing the way
+a version does. A phar already there is a tool to replace, not a version to
+protect, so it is overwritten and the previous version reported (`updated from
+2.7.1`). `--force` is therefore not needed for Composer, and the receipt beside
+the phar records what is there so an update can say what it replaced without
+running anything.
+
+**The installed phar is run once, advisorily.** With a `php\current` to run it,
+`composer --version` is invoked and its banner printed — the real proof the PHP
+on `PATH` can run this release. A failure there (an old PHP, or none) is a
+warning, never a reason to undo the install, the same way nginx's `-t` is. With
+no PHP installed yet, the install still completes and says Composer needs one.
+
+#### Both PHP and nginx
 
 **Nothing half-installed is ever visible.** The archive is unpacked into
 `.devcrate-staging-<folder>` beside where it will land — `php\` for PHP, the

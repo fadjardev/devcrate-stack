@@ -90,6 +90,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`devcrate install composer` downloads and installs Composer** into
+  `composer\`, verified against the checksum getcomposer.org publishes beside the
+  phar. `devcrate install composer` with no version lists the lines on offer -
+  stable, the 2.2 LTS, preview, snapshot - each with the PHP it needs, and marks
+  the one installed. A line is named by keyword (`stable`, `lts`, ...) or an
+  exact version while the list still carries it; an older phar installs with
+  `--from`.
+  - **The catalogue is `getcomposer.org/versions`, JSON** - machine-readable
+    unlike nginx's page, so it is read rather than scraped, and it lists the
+    current release of each line rather than a wall of point releases.
+  - **The download is checksum-verified, at full strength.** The hash is not in
+    the catalogue, so it is fetched from the per-version `composer.phar.sha256sum`
+    sidecar beside the phar and the transfer hashed as it streams, exactly as
+    PHP's is - a mismatch discards it. This is where Composer differs from nginx,
+    and the output says which you got. (The trust root is the sidecar, *not* the
+    `installer.sig` first assumed: that signs the setup script, usable only
+    through the PHP bootstrap, while the sidecar hashes the phar itself.)
+  - **Composer is a tool, not a version, so it is not versioned.** One phar in
+    `composer\composer.phar`, with `composer.bat` and a Git Bash `composer` shim
+    beside it, and the `home\` / `cache\` directories `COMPOSER_HOME` and
+    `COMPOSER_CACHE_DIR` point at. Each shim runs the phar with bare `php`, so
+    Composer resolves through the same `php\current` on `PATH` that `php` does -
+    which is why the phar lives outside the version folder and survives a switch.
+    Add `composer\` to `PATH` once, the way `php\current` was added.
+  - **Installing over an existing Composer updates it**, rather than refusing the
+    way a version does; the previous version is read from the receipt and
+    reported, and `--force` is not needed.
+  - **The installed phar is run once, advisorily.** With a `php\current` to run
+    it, `composer --version` is invoked and its banner printed - the proof the
+    PHP on `PATH` can run this release. A failure there is a warning, never a
+    reason to undo the install; with no PHP yet, the install still completes and
+    says Composer needs one.
+
 - **`devcrate install nginx <version>` downloads and installs an nginx build**
   into the prefix, beside any already there. `devcrate install nginx` with no
   version lists what nginx.org offers, labelled mainline / stable / legacy and

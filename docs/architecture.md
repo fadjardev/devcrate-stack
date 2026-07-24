@@ -41,7 +41,7 @@ C:\devcrate\                   <- the stack root (any folder works)
 |
 |- mariadb\                    Portable MariaDB (binaries + data, not versioned)
 |- rabbitmq\ + erlang\         Portable RabbitMQ broker + Erlang runtime (not versioned)
-|- composer\                   Composer home + cache, kept in-root (not versioned)
+|- composer\                   composer.phar + shims + home/cache, in-root (not versioned)
 |- tools\rabbitmq-smoketest\   Standalone AMQP publish/consume test
 |- projects\                   Application code, one folder per site (NOT versioned)
 ```
@@ -98,9 +98,13 @@ that takes a version accepts `8.5`, `85`, or `php-8.5` interchangeably.
    PHP version means pointing its `fastcgi_pass` at a different port and
    reloading — `devcrate site set-php <host> <version>` does exactly that. See
    [nginx-vhosts.md](nginx-vhosts.md).
-2. **CLI (global):** the `php\current` junction, repointed by `phpuse`. This is
-   what `php`, `composer`, and `laravel` on the command line resolve to. See
-   [php-versions.md](php-versions.md).
+2. **CLI (global):** the `php\current` junction, repointed by `phpuse`. `php` on
+   the command line resolves to it directly. `composer` is a shim in `composer\`
+   (its own entry on `PATH`) that runs the phar with bare `php`, so repointing
+   `php\current` changes the PHP Composer *runs on* without moving Composer
+   itself — which is why the phar lives outside the version folder and survives a
+   switch. See [php-versions.md](php-versions.md) and
+   [cli.md](cli.md#composer).
 
 ## Design decisions
 

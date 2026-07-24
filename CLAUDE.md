@@ -80,11 +80,22 @@ Each of these cost real effort to find.
   `nginx::answers_to`, used by both `nginx use` and `install nginx`.
 - **What the vendor publishes decides what can be verified.** PHP's
   `releases.json` carries a sha256 per zip, so a download is verified against
-  it. nginx publishes only PGP signatures, so its download is checked against
-  the declared `Content-Length` over TLS and nothing more — and the command
-  *says* so. `download::Download::sha256` is an `Option` to keep that
+  it. Composer's `/versions` catalogue carries no hash, but a per-version
+  `composer.phar.sha256sum` sidecar does, so its download is verified too, at
+  full strength — the sha256 is `Some`, just fetched from the sidecar rather
+  than the catalogue (*not* `installer.sig`, which signs the setup script, not
+  the phar). nginx publishes only PGP signatures, so its download is checked
+  against the declared `Content-Length` over TLS and nothing more — and the
+  command *says* so. `download::Download::sha256` is an `Option` to keep that
   difference in the type rather than in someone's memory. Never round
   "downloaded over TLS" up to "verified".
+- **Composer is a tool, not a versioned runtime.** One phar in `composer\`
+  (in-root, not versioned — no `current` junction, no port), with `composer.bat`
+  and a Git Bash `composer` shim that run it under bare `php`, so it resolves
+  through `php\current`. Installing over an existing one *updates* it (no
+  `--force`), unlike the version folders PHP and nginx guard. `install composer`
+  with no version lists the lines (stable/lts/preview/snapshot); a line keyword
+  or an exact still-current version installs.
 - **One core, two front ends.** Each action is a function returning a structured
   result (`control::run_start`, `site::create`, `php::use_version`) with the
   printing in a thin CLI wrapper. The dashboard must never call anything that

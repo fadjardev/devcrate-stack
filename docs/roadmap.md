@@ -10,7 +10,7 @@ stack for you.
 | # | Item | Status |
 | --- | --- | --- |
 | 1 | Rust TUI (`ratatui`), shipped as a single executable | done — see [tui.md](tui.md) |
-| 2 | Built-in runtime downloader / installer with version selection | in progress — PHP and nginx done end to end; MariaDB, RabbitMQ, Erlang, Composer to come |
+| 2 | Built-in runtime downloader / installer with version selection | in progress — PHP, nginx, and Composer done end to end; MariaDB, RabbitMQ, Erlang to come |
 | 3 | Runs from any terminal, scriptable as well as interactive | done — see [cli.md](cli.md) |
 | 4 | Open an existing project: vhost + hosts entry + mkcert TLS, in one step | planned |
 | 5 | Node.js and Bun as managed runtimes | planned |
@@ -144,7 +144,23 @@ mainline one must not become a downgrade nobody asked for. The new binary is
 asked to parse the stack's configuration (`nginx -t`) and the verdict reported,
 advisory rather than fatal.
 
-**Still to build:** uninstall, and MariaDB, RabbitMQ, Erlang, and Composer.
+**Built for Composer too**, and it is the one that fills in the verification
+story the other two only bracket. `devcrate install composer` reads
+`getcomposer.org/versions` — machine-readable, unlike nginx's page — downloads
+the current stable phar, and verifies it against the `composer.phar.sha256sum`
+the vendor publishes beside it: a real hash, at full strength, where nginx had
+only a length. Composer is a tool, not a runtime the stack serves with, so it
+breaks the versioned-folder mould deliberately — one phar in `composer\`, two
+shims that run it under whatever `php\current` names, and no `current` junction
+of its own. Installing over an existing one updates it rather than refusing.
+
+One assumption this repo held going in turned out wrong, and is worth recording:
+Composer's trust root is *not* `installer.sig`. That file is the SHA-384 of the
+*setup script*, usable only through the PHP bootstrap; the `sha256sum` sidecar
+hashes the phar the stack actually installs, which is both stronger and needs no
+PHP to check. What the vendor publishes decided it, as ever.
+
+**Still to build:** uninstall, and MariaDB, RabbitMQ, and Erlang.
 
 **What it should do**
 
@@ -158,7 +174,7 @@ advisory rather than fatal.
   | MariaDB | MariaDB downloads REST API |
   | RabbitMQ | GitHub releases (`rabbitmq/rabbitmq-server`) |
   | Erlang/OTP | GitHub releases (`erlang/otp`) - Windows installer / portable |
-  | Composer | `getcomposer.org/download/` (+ `installer.sig`) |
+  | Composer | **built** — `getcomposer.org/versions` (JSON, no hash); verified against the per-version `composer.phar.sha256sum` sidecar, *not* `installer.sig` (which signs the setup script, not the phar) |
 
 - **Install** - pick a version, download with a progress bar, verify the
   checksum/signature the vendor publishes, extract into the standard layout
@@ -409,9 +425,16 @@ system-wide, everything inside the stack root.
    HTML page rather than a feed, and nginx publishes no checksums, so the
    download is checked against its declared length over TLS instead of a hash.
 
-   Not delivered: uninstall, and MariaDB, RabbitMQ, Erlang, and Composer.
-   Composer is the natural next one — a single file with an `installer.sig`,
-   so it has a real trust root to pin, unlike nginx.
+   **Composer followed**, and closed the second of those gaps. `devcrate install
+   composer` reads the `getcomposer.org/versions` JSON and verifies the phar
+   against the `composer.phar.sha256sum` the vendor publishes beside it — a real
+   hash, where nginx had only a length. It is the first runtime that is a *tool*
+   and not a version: one phar in `composer\`, shims that run it under
+   `php\current`, no versioned folder, and an install that updates rather than
+   refuses. The trust root turned out to be the sidecar, not the `installer.sig`
+   this repo had expected — that signs the setup script, not the phar.
+
+   Not delivered: uninstall, and MariaDB, RabbitMQ, and Erlang.
 6. The full site workflow on top of `site add`: hosts-file management and
    mkcert issuance/renewal (item 4). The mkcert half depends on the installer
    from step 5, since mkcert becomes a managed tool.

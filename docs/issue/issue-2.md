@@ -21,14 +21,17 @@ no output. The program knows exactly what it needs — it should just get it.
 ### Version catalogue
 
 - [x] List available versions per runtime, resolved from upstream at runtime rather
-  than from a list baked into the binary — *PHP and nginx. `devcrate install php`
-  or `install nginx` with no version prints the list, with what is already
+  than from a list baked into the binary — *PHP, nginx, and Composer. `devcrate
+  install <runtime>` with no version prints the list, with what is already
   installed marked. PHP's feed is `releases.json`, which carries every branch —
   EOL included — so `/archives/` turned out not to be needed; only each branch's
   current release is offered, and older builds install with `--from`. nginx has
   no feed at all, so its download page is parsed for the `<h4>` above each group
   and the `/download/nginx-<version>.zip` links; a page yielding nothing is an
-  error rather than an empty list.*
+  error rather than an empty list. Composer's `/versions` is JSON — the current
+  release of each line (stable, the 2.2 LTS, preview, snapshot) — so it is read,
+  not scraped, and named by line rather than picked from a wall of point
+  releases.*
 - [ ] Cache the catalogue so the UI stays responsive offline — *not built. The
   archive cache in `_downloads\` makes a repeat install work offline, but listing
   versions still needs the network, for both runtimes.*
@@ -40,28 +43,33 @@ no output. The program knows exactly what it needs — it should just get it.
 | MariaDB    | MariaDB downloads REST API                                            |
 | RabbitMQ   | GitHub releases (`rabbitmq/rabbitmq-server`)                          |
 | Erlang/OTP | GitHub releases (`erlang/otp`) — Windows installer / portable         |
-| Composer   | `getcomposer.org/download/` (+ `installer.sig`)                       |
+| Composer   | **built** — `getcomposer.org/versions` (JSON); verified against the per-version `composer.phar.sha256sum` sidecar, not `installer.sig` |
 
 ### Install
 
-- [x] Pick a version and download it with a progress bar — *PHP and nginx.
-  Both download into `_downloads\` (gitignored, and the archive is kept as the
-  offline fallback). Download and extraction report progress, redrawn in place
-  on a terminal and suppressed when the output is redirected.*
+- [x] Pick a version and download it with a progress bar — *PHP, nginx, and
+  Composer. All download into `_downloads\` (gitignored, and the file is kept as
+  the offline fallback; Composer's is version-keyed, `composer-2.10.2.phar`, so
+  two versions do not collide). Progress is redrawn in place on a terminal and
+  suppressed when the output is redirected.*
 - [x] Verify the checksum/signature the vendor publishes **before** extracting —
   *PHP: `releases.json` publishes a sha256 per zip; the transfer is hashed as it
   streams, a mismatch discards it, and the file only gets its final name in
-  `_downloads\` after the hash matches. **nginx: there is nothing to verify
-  against** — it publishes only PGP signatures, so the transfer is checked
-  against its declared `Content-Length` over TLS to nginx.org, and the sha256 is
-  computed locally, printed, and recorded. The command says which of the two you
-  got rather than implying they are the same. A `--from` archive is hashed into
-  the receipt but not judged — it may legitimately be a release the vendor no
-  longer lists.*
+  `_downloads\` after the hash matches. **Composer: the same, at full strength**
+  — the hash is not in the `/versions` catalogue, so it is fetched from the
+  `composer.phar.sha256sum` sidecar beside the phar and checked identically.
+  **nginx: there is nothing to verify against** — it publishes only PGP
+  signatures, so the transfer is checked against its declared `Content-Length`
+  over TLS to nginx.org, and the sha256 is computed locally, printed, and
+  recorded. The command says which of the three you got rather than implying they
+  are the same. A `--from` file is hashed into the receipt but not judged — it
+  may legitimately be a release the vendor no longer lists.*
 - [x] Extract into the standard layout (`php\php-8.5\`, `nginx\`, `mariadb\`, …)
   — *PHP and nginx. The extractor strips a wrapper directory when every entry is
   under one, which is exactly the difference between the two archives: nginx
-  ships `nginx-1.31.3/…`, PHP ships its files at the top level.*
+  ships `nginx-1.31.3/…`, PHP ships its files at the top level. Composer has
+  nothing to extract — the phar is one file, placed into `composer\` by an atomic
+  rename rather than unpacked.*
 - [x] Generate first-run config: a `php.ini` seeded from `php.ini-development` with
   the extension set Devcrate expects (curl, exif, fileinfo, gd, intl, mbstring,
   openssl, pdo_mysql, pdo_sqlite, sodium, sqlite3, zip) — *done, and it reports
@@ -156,15 +164,21 @@ no output. The program knows exactly what it needs — it should just get it.
   **Settled for PHP: alongside.** Each version is its own folder, so installing
   8.4 cannot disturb 8.2. Replacing the *same* version needs `--force`, and the
   old copy is moved aside rather than deleted so a failed swap can put it back.
-  Still open for Nginx and Composer, where in-place is probably right — and
-  Nginx has a wrinkle of its own, below.
+  **Settled for Composer: in place.** It is a tool, not a version — one phar
+  everything shares — so installing over it *is* the update, and it is done
+  without `--force`, the previous version read from the receipt and reported.
+  Nginx installs alongside (versioned builds in one prefix), with a wrinkle of
+  its own below.
 - Where do checksums come from for runtimes that do not publish them in a machine-
   readable form? **Pinning known-good hashes in the repo is rejected** — it does
   not scale across PHP's release history and goes stale the day a version ships.
   **Settled for PHP**: `releases.json` publishes a sha256 per zip, fetched over
   the same TLS origin as the archive itself, which is exactly the intended
-  answer. Pin only where there is a real trust root to pin (Composer's
-  `installer.sig`).
+  answer. **Settled for Composer, and not where this issue guessed:** the trust
+  root is the per-version `composer.phar.sha256sum` sidecar, *not* `installer.sig`
+  — that file is the SHA-384 of the setup script, usable only through the PHP
+  bootstrap, whereas the sidecar hashes the phar the stack installs and needs no
+  PHP to check. Fetched over the same TLS origin as the phar, exactly as PHP's.
 
   **Answered for nginx, and the answer is "it doesn't".** nginx publishes a
   `.asc` PGP signature beside each zip and nothing else — no sha256, no
@@ -203,7 +217,8 @@ no output. The program knows exactly what it needs — it should just get it.
   This model will **not** transfer to MariaDB or RabbitMQ: their on-disk data
   formats are version-specific, so switching versions under one data directory
   is a migration, not a junction rewrite. Composer and mkcert are single
-  binaries and want in-place replacement instead.
+  binaries and want in-place replacement instead — which is exactly how Composer
+  now installs: one phar in `composer\`, overwritten on update, not versioned.
 
 ## Out of scope
 

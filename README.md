@@ -133,13 +133,15 @@ Devcrate is a prototype. The batch scripts are the starting point, not the desti
 2. 🚧 **Install runtimes from inside the program** — pick a version of PHP, Nginx,
    MariaDB, RabbitMQ, Erlang, or Composer and have Devcrate download, verify, and
    configure it, instead of fetching archives from vendor sites by hand.
-   **Built for PHP and Nginx**: `devcrate install php 8.4` downloads the
-   release from windows.php.net, verifies its sha256 against the vendor's own
+   **Built for PHP, Nginx, and Composer**: `devcrate install php 8.4` downloads
+   the release from windows.php.net, verifies its sha256 against the vendor's own
    feed, and installs it — `php.ini` generated, non-thread-safe builds refused.
    `devcrate install nginx 1.31.3` does the same from nginx.org, into the
    prefix beside any build already there — though nginx publishes no checksum,
-   which the command says rather than glosses over. `--from <zip>` installs
-   either offline. MariaDB, RabbitMQ, Erlang, and Composer are still to come.
+   which the command says rather than glosses over. `devcrate install composer`
+   fetches the phar from getcomposer.org and verifies it against the checksum
+   published beside it — a real hash, where nginx had only a length. `--from`
+   installs any of them offline. MariaDB, RabbitMQ, and Erlang are still to come.
 3. ✅ **Run from any terminal** — one binary on `PATH` that works in cmd, PowerShell,
    Windows Terminal, and Git Bash, with scriptable subcommands (`devcrate start`,
    `devcrate php use 8.5`, …) behind the same executable as the TUI.
@@ -163,7 +165,7 @@ devcrate start / stop / restart
 devcrate php use 8.5
 devcrate nginx list / use / migrate
 devcrate site add / set-php / remove
-devcrate install php 8.4 / install nginx 1.31.3
+devcrate install php 8.4 / install nginx 1.31.3 / install composer
 ```
 
 Every batch script above has an equivalent in both. They act only on the
@@ -171,10 +173,10 @@ processes belonging to their own stack root, name the process holding a port
 they wanted, and test the nginx configuration before reloading it — none of
 which the scripts can do. The dashboard adds the one thing a command cannot: it
 stays resident, so a service that dies on its own reads `crashed` rather than
-`stopped`. The scripts keep working. `devcrate install php 8.4` and `devcrate
-install nginx 1.31.3` download and install a runtime (item 2); MariaDB,
-RabbitMQ, Erlang, Composer, the hosts file, and mkcert (item 4) are still
-manual. See [docs/cli.md](docs/cli.md) and [docs/tui.md](docs/tui.md).
+`stopped`. The scripts keep working. `devcrate install php 8.4`, `devcrate
+install nginx 1.31.3`, and `devcrate install composer` download and install a
+runtime (item 2); MariaDB, RabbitMQ, Erlang, the hosts file, and mkcert (item 4)
+are still manual. See [docs/cli.md](docs/cli.md) and [docs/tui.md](docs/tui.md).
 
 ## License
 

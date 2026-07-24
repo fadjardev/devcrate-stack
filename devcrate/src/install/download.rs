@@ -17,6 +17,16 @@
 //! [`Download::sha256`] being an `Option` is where the difference lives rather
 //! than something the caller has to remember.
 //!
+//! **Composer** is the third shape. Its `/versions` index is JSON -- so the
+//! catalogue is read, not scraped -- but carries no hash, unlike PHP's feed.
+//! The hash lives next to each phar instead, in a `composer.phar.sha256sum`
+//! sidecar fetched over the same TLS. So Composer's download *is* checksum-
+//! verified, at full strength: the `Download::sha256` is `Some`, filled from
+//! the sidecar rather than from the catalogue. The roadmap had guessed
+//! `installer.sig` for this; that is the SHA-384 of the *setup script*, which
+//! would need the PHP bootstrap to use, whereas the sidecar hashes the phar the
+//! stack actually installs.
+//!
 //! Nothing here prints. The catalogues and the fetch return structured results
 //! and report progress through a callback, same as [`super::from_archive`],
 //! so the dashboard can drive them without touching stdout.
@@ -36,6 +46,11 @@ const RELEASES_URL: &str = "https://windows.php.net/downloads/releases/";
 /// nginx's download page, and the directory the zips it names actually sit in.
 const NGINX_PAGE_URL: &str = "https://nginx.org/en/download.html";
 const NGINX_DOWNLOAD_URL: &str = "https://nginx.org/download/";
+
+/// Composer's machine-readable version index, and the directory each release's
+/// phar and its checksum sidecar sit under (`<version>/composer.phar`).
+const COMPOSER_VERSIONS_URL: &str = "https://getcomposer.org/versions";
+const COMPOSER_DOWNLOAD_URL: &str = "https://getcomposer.org/download/";
 
 /// One archive to fetch, and what there is to check it against.
 ///
@@ -320,6 +335,170 @@ fn is_version(text: &str) -> bool {
         && text.split('.').all(|part| !part.is_empty())
 }
 
+/// Which line of Composer a release is on, as `/versions` groups them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ComposerLine {
+    /// The current release everyone should install.
+    Stable,
+    /// The long-term-support line (2.2.x), for hosts stuck on old PHP.
+    Lts,
+    /// Pre-release and development builds -- offered by name, never by default.
+    Preview,
+    Snapshot,
+}
+
+impl ComposerLine {
+    pub fn label(self) -> &'static str {
+        match self {
+            ComposerLine::Stable => "stable",
+            ComposerLine::Lts => "LTS",
+            ComposerLine::Preview => "preview",
+            ComposerLine::Snapshot => "snapshot",
+        }
+    }
+}
+
+/// One installable Composer release, as the version index lists it.
+#[derive(Debug, Clone)]
+pub struct ComposerRelease {
+    /// The full version, and the name the download is cached under: `2.10.2`.
+    pub version: String,
+    /// The index's own path to the phar: `/download/2.10.2/composer.phar`.
+    pub path: String,
+    /// The lowest PHP the release runs on, as `min-php` encodes it (`70205`).
+    /// Informational -- shown so a stack on old PHP is not surprised.
+    pub min_php: Option<u32>,
+    pub line: ComposerLine,
+}
+
+/// The Composer lines worth offering, each already newest-first.
+///
+/// Like PHP's and nginx's catalogues, this is only what the vendor currently
+/// serves, not a history: `/versions` lists the *current* release of each
+/// maintained line under `stable` (the 2.x stable and the 2.2 LTS today), so an
+/// exact version resolves only while it is still one of those. An older release
+/// installs from a downloaded phar with `--from`, the same offline path the
+/// other runtimes fall back to.
+#[derive(Debug, Clone)]
+pub struct ComposerCatalogue {
+    /// The `stable` array as the index gives it, newest first -- the current
+    /// stable of each maintained line, which an exact version resolves against.
+    pub stable: Vec<ComposerRelease>,
+    pub lts: Option<ComposerRelease>,
+    pub preview: Option<ComposerRelease>,
+    pub snapshot: Option<ComposerRelease>,
+}
+
+impl ComposerCatalogue {
+    /// The release `install composer` with no version installs.
+    pub fn latest_stable(&self) -> Option<&ComposerRelease> {
+        self.stable.first()
+    }
+}
+
+/// The releases getcomposer.org offers.
+pub fn composer_catalogue() -> Result<ComposerCatalogue> {
+    let mut response = agent()
+        .get(COMPOSER_VERSIONS_URL)
+        .call()
+        .with_context(|| format!("fetching the Composer version list from {COMPOSER_VERSIONS_URL}"))?;
+    let json = response
+        .body_mut()
+        .read_to_string()
+        .with_context(|| format!("reading the Composer version list from {COMPOSER_VERSIONS_URL}"))?;
+    parse_composer_catalogue(&json)
+}
+
+/// Read the lines out of `/versions`.
+///
+/// The index keys each line by name (`stable`, `2.2` for LTS, `preview`,
+/// `snapshot`) to an array newest-first. `stable` is the one that must be
+/// there; a document without it is not the index this understands. The rest are
+/// taken if present and skipped if not -- a missing `preview` is not an error,
+/// just a line nobody can ask for today.
+fn parse_composer_catalogue(json: &str) -> Result<ComposerCatalogue> {
+    let root: serde_json::Value =
+        serde_json::from_str(json).context("the Composer version index is not valid JSON")?;
+
+    let stable = read_line(&root, "stable", ComposerLine::Stable);
+    if stable.is_empty() {
+        bail!(
+            "the Composer version index at {COMPOSER_VERSIONS_URL} lists no stable \
+             releases; its format has probably changed"
+        );
+    }
+
+    Ok(ComposerCatalogue {
+        stable,
+        lts: read_line(&root, "2.2", ComposerLine::Lts).into_iter().next(),
+        preview: read_line(&root, "preview", ComposerLine::Preview).into_iter().next(),
+        snapshot: read_line(&root, "snapshot", ComposerLine::Snapshot).into_iter().next(),
+    })
+}
+
+/// Pull one keyed array of releases out of the index, in its own order.
+fn read_line(root: &serde_json::Value, key: &str, line: ComposerLine) -> Vec<ComposerRelease> {
+    root.get(key)
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let version = entry.get("version").and_then(|v| v.as_str())?;
+            let path = entry.get("path").and_then(|v| v.as_str())?;
+            Some(ComposerRelease {
+                version: version.to_string(),
+                path: path.to_string(),
+                min_php: entry.get("min-php").and_then(|v| v.as_u64()).map(|n| n as u32),
+                line,
+            })
+        })
+        .collect()
+}
+
+impl ComposerRelease {
+    /// The archive to fetch, with the sha256 filled from the release's sidecar.
+    ///
+    /// Unlike PHP's [`PhpRelease::download`] and nginx's, this makes a network
+    /// call: the hash is not in the catalogue, so it is fetched from
+    /// `<version>/composer.phar.sha256sum` here. The cached file carries the
+    /// version (`composer-2.10.2.phar`) so two versions do not collide in
+    /// `_downloads\`, even though every release's phar is named `composer.phar`
+    /// at the vendor.
+    pub fn download(&self) -> Result<Download> {
+        let sha256 = fetch_composer_sha256(&self.version)?;
+        Ok(Download {
+            url: format!("https://getcomposer.org{}", self.path),
+            file_name: format!("composer-{}.phar", self.version),
+            sha256: Some(sha256),
+        })
+    }
+}
+
+/// Fetch and read the sha256 sidecar for one Composer version.
+fn fetch_composer_sha256(version: &str) -> Result<String> {
+    let url = format!("{COMPOSER_DOWNLOAD_URL}{version}/composer.phar.sha256sum");
+    let mut response = agent()
+        .get(&url)
+        .call()
+        .with_context(|| format!("fetching the Composer checksum from {url}"))?;
+    let text = response
+        .body_mut()
+        .read_to_string()
+        .with_context(|| format!("reading the Composer checksum from {url}"))?;
+    parse_sha256sum(&text)
+        .with_context(|| format!("the checksum sidecar at {url} was not in the expected form"))
+}
+
+/// The one field of a `sha256sum` line: `<64 hex>  composer.phar`.
+fn parse_sha256sum(text: &str) -> Result<String> {
+    let hash = text.split_whitespace().next().unwrap_or("");
+    if hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        Ok(hash.to_ascii_lowercase())
+    } else {
+        bail!("expected a sha256 and a file name, got {text:?}")
+    }
+}
+
 /// Download an archive into `dir`, check it, and hand back the path.
 ///
 /// The transfer is written to a `.part` file and hashed as it streams; only a
@@ -594,6 +773,77 @@ mod tests {
         // nginx publishes no hash, and that has to be visible rather than
         // faked -- it is what decides whether the transfer can be verified.
         assert_eq!(download.sha256, None);
+    }
+
+    /// Shaped like `/versions`: each line keyed to a newest-first array, with
+    /// the LTS line under `2.2` and lines the stack does not offer (`2`, `1`)
+    /// alongside.
+    const VERSIONS: &str = r#"{
+        "stable": [
+            {"path": "/download/2.10.2/composer.phar", "version": "2.10.2", "min-php": 70205, "lts": false},
+            {"path": "/download/2.10.1/composer.phar", "version": "2.10.1", "min-php": 70205},
+            {"path": "/download/2.7.1/composer.phar",  "version": "2.7.1",  "min-php": 70205}
+        ],
+        "preview": [
+            {"path": "/download/2.11.0-RC1/composer.phar", "version": "2.11.0-RC1", "min-php": 70205}
+        ],
+        "snapshot": [
+            {"path": "/download/snapshot/composer.phar", "version": "snapshot"}
+        ],
+        "2.2": [
+            {"path": "/download/2.2.29/composer.phar", "version": "2.2.29", "min-php": 50309, "lts": true}
+        ],
+        "2": [{"path": "/download/2.10.2/composer.phar", "version": "2.10.2", "min-php": 70205}],
+        "1": [{"path": "/download/1.10.27/composer.phar", "version": "1.10.27", "min-php": 50302}]
+    }"#;
+
+    #[test]
+    fn the_composer_catalogue_keeps_the_lines_it_offers() {
+        let catalogue = parse_composer_catalogue(VERSIONS).unwrap();
+        // Every stable entry the index carries, kept in its order.
+        let stable: Vec<&str> = catalogue.stable.iter().map(|r| r.version.as_str()).collect();
+        assert_eq!(stable, ["2.10.2", "2.10.1", "2.7.1"]);
+        assert_eq!(catalogue.latest_stable().unwrap().version, "2.10.2");
+        assert_eq!(catalogue.latest_stable().unwrap().min_php, Some(70205));
+
+        // The LTS line comes from the `2.2` key, the dev lines from theirs.
+        assert_eq!(catalogue.lts.as_ref().unwrap().version, "2.2.29");
+        assert_eq!(catalogue.lts.as_ref().unwrap().line, ComposerLine::Lts);
+        assert_eq!(catalogue.preview.as_ref().unwrap().version, "2.11.0-RC1");
+        assert_eq!(catalogue.snapshot.as_ref().unwrap().version, "snapshot");
+    }
+
+    #[test]
+    fn a_versions_document_without_a_stable_line_is_an_error() {
+        let err = parse_composer_catalogue(r#"{"preview": []}"#).unwrap_err();
+        assert!(err.to_string().contains("format has probably changed"), "{err}");
+        assert!(parse_composer_catalogue("not json").is_err());
+    }
+
+    /// A line the index does not carry is absent, not an error -- there is just
+    /// nothing to install by that name.
+    #[test]
+    fn a_missing_line_is_simply_none() {
+        let catalogue =
+            parse_composer_catalogue(r#"{"stable": [{"path": "/download/2.10.2/composer.phar", "version": "2.10.2"}]}"#)
+                .unwrap();
+        assert!(catalogue.lts.is_none());
+        assert!(catalogue.preview.is_none());
+        assert_eq!(catalogue.stable[0].min_php, None);
+    }
+
+    #[test]
+    fn the_sha256_is_the_first_field_of_the_sidecar_line() {
+        let hash = "5ee7125f8a30a34d246cefdc0bc85b8a783b28f2aec968994118512350d28027";
+        assert_eq!(parse_sha256sum(&format!("{hash}  composer.phar")).unwrap(), hash);
+        assert_eq!(parse_sha256sum(&format!("{hash}  composer.phar\n")).unwrap(), hash);
+        // Whatever case it arrives in, kept lowercase like PHP's.
+        assert_eq!(parse_sha256sum(&format!("{}  composer.phar", hash.to_uppercase())).unwrap(), hash);
+
+        // Not a 404 page, an empty file, or a truncated hash.
+        assert!(parse_sha256sum("<html>404</html>").is_err());
+        assert!(parse_sha256sum("").is_err());
+        assert!(parse_sha256sum("abc123  composer.phar").is_err());
     }
 
     #[test]
