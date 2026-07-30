@@ -1750,6 +1750,18 @@ fn node_from_archive(
         let _ = std::fs::write(&npmrc, text);
     }
 
+    let receipt = Receipt {
+        runtime: Runtime::Node.as_str().to_string(),
+        version: version.clone(),
+        release: version.clone(),
+        thread_safe: None,
+        source_archive: file_name,
+        source_bytes: std::fs::metadata(archive_path).map(|m| m.len()).unwrap_or(0),
+        source_sha256,
+        files: extracted.files,
+    };
+    write_receipt(&dest, &receipt)?;
+
     Ok(Installed {
         runtime: Runtime::Node,
         version: version.clone(),
@@ -1811,6 +1823,18 @@ fn bun_from_archive(
 
     std::fs::rename(&valid_dir, &dest)?;
     let _ = std::fs::remove_dir_all(&staging);
+
+    let receipt = Receipt {
+        runtime: Runtime::Bun.as_str().to_string(),
+        version: version.clone(),
+        release: version.clone(),
+        thread_safe: None,
+        source_archive: file_name,
+        source_bytes: std::fs::metadata(archive_path).map(|m| m.len()).unwrap_or(0),
+        source_sha256,
+        files: extracted.files,
+    };
+    write_receipt(&dest, &receipt)?;
 
     Ok(Installed {
         runtime: Runtime::Bun,

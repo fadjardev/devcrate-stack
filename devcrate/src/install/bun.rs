@@ -5,13 +5,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct BunInstalled {
-    pub version: String,
-    pub target: PathBuf,
-}
+use anyhow::{Result, bail};
 
 pub fn version_from_file_name(name: &str) -> Option<String> {
     let name = name.trim_end_matches(".zip");
@@ -45,19 +39,7 @@ pub fn validate(staging_dir: &Path) -> Result<PathBuf> {
     )
 }
 
-pub fn finish(staging_dir: &Path, version: &str, bun_root: &Path) -> Result<BunInstalled> {
-    let valid_dir = validate(staging_dir)?;
-    let target = bun_root.join(format!("v{version}"));
 
-    if target.exists() {
-        let _ = fs::remove_dir_all(&target);
-    }
-
-    fs::rename(&valid_dir, &target)
-        .with_context(|| format!("moving bun into {}", target.display()))?;
-
-    Ok(BunInstalled { version: version.to_string(), target })
-}
 
 #[cfg(test)]
 mod tests {

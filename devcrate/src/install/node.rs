@@ -6,13 +6,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct NodeInstalled {
-    pub version: String,
-    pub target: PathBuf,
-}
+use anyhow::{Result, bail};
 
 pub fn version_from_file_name(name: &str) -> Option<String> {
     let name = name.trim_end_matches(".zip");
@@ -53,36 +47,7 @@ pub fn validate(staging_dir: &Path) -> Result<PathBuf> {
     )
 }
 
-pub fn finish(staging_dir: &Path, version: &str, node_root: &Path) -> Result<NodeInstalled> {
-    let valid_dir = validate(staging_dir)?;
-    let target = node_root.join(format!("v{version}"));
 
-    if target.exists() {
-        let _ = fs::remove_dir_all(&target);
-    }
-
-    fs::rename(&valid_dir, &target)
-        .with_context(|| format!("moving node into {}", target.display()))?;
-
-    // Create portable npm-global & npm-cache inside node_root
-    let npm_global = node_root.join("npm-global");
-    let npm_cache = node_root.join("npm-cache");
-    let _ = fs::create_dir_all(&npm_global);
-    let _ = fs::create_dir_all(&npm_cache);
-
-    // Create default .npmrc in target
-    let npmrc = target.join(".npmrc");
-    if !npmrc.exists() {
-        let text = format!(
-            "prefix={}\ncache={}\n",
-            npm_global.display().to_string().replace('\\', "/"),
-            npm_cache.display().to_string().replace('\\', "/")
-        );
-        let _ = fs::write(&npmrc, text);
-    }
-
-    Ok(NodeInstalled { version: version.to_string(), target })
-}
 
 #[cfg(test)]
 mod tests {

@@ -81,6 +81,7 @@ pub fn switch(stack: &Stack, wanted: &str) -> Result<u8> {
 }
 
 /// Detect required Node version from .nvmrc or package.json's engines.node.
+#[allow(dead_code)]
 pub fn detect_node_version(project_dir: &Path) -> Option<String> {
     let nvmrc = project_dir.join(".nvmrc");
     if let Ok(text) = std::fs::read_to_string(&nvmrc) {

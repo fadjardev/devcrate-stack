@@ -464,6 +464,7 @@ fn check_host(host: &str) -> Result<&str> {
 }
 
 /// `api.mygroup.test` -> `mygroup.test`, the domain a wildcard has to cover.
+#[allow(dead_code)]
 pub fn parent_domain(host: &str) -> &str {
     crate::mkcert::parent_domain(host)
 }
@@ -482,6 +483,7 @@ fn default_php<'a>(stack: &'a Stack) -> Result<&'a crate::config::Service> {
     }
 }
 
+#[allow(dead_code)]
 fn conf_text(host: &str, php_name: &str, php_id: &str, port: u16) -> String {
     conf_text_custom(
         host,
