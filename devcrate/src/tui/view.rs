@@ -353,20 +353,65 @@ fn render_modal(frame: &mut Frame, app: &App, modal: &Modal) {
             text.push_line(Line::from("y confirm     any other key cancels".fg(MUTED)));
             popup(frame, "Confirm", text, 64, 9);
         }
-        Modal::NewSite { host } => {
-            let mut text = Text::from(Line::from(vec![
-                Span::raw("Hostname:  "),
-                Span::styled(host.clone(), Style::new().fg(ACCENT)),
-                Span::styled("_", Style::new().add_modifier(Modifier::SLOW_BLINK)),
-            ]));
-            text.push_line(Line::from(""));
-            text.push_line(Line::from(
-                "Enter chooses the PHP version next.  Esc cancels.".fg(MUTED),
-            ));
-            text.push_line(Line::from(
-                "The hosts-file entry stays manual -- it needs elevation.".fg(MUTED),
-            ));
-            popup(frame, "New vhost", text, 62, 9);
+        Modal::NewSite(form) => {
+            let versions = app.php_versions();
+            let php_label = if form.php_index == 0 {
+                "Auto-detect (composer.json / default)".to_string()
+            } else if let Some((_, name)) = versions.get(form.php_index - 1) {
+                name.clone()
+            } else {
+                "Auto-detect".to_string()
+            };
+
+            let f_style = |idx| {
+                if form.active_field == idx {
+                    Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::new().fg(Color::Reset)
+                }
+            };
+
+            let cursor = |idx| {
+                if form.active_field == idx {
+                    Span::styled("_", Style::new().add_modifier(Modifier::SLOW_BLINK))
+                } else {
+                    Span::raw("")
+                }
+            };
+
+            let text = Text::from(vec![
+                Line::from(vec![
+                    Span::styled("Hostname:        ", f_style(0)),
+                    Span::styled(&form.host, f_style(0)),
+                    cursor(0),
+                ]),
+                Line::from(vec![
+                    Span::styled("Project Path:    ", f_style(1)),
+                    Span::styled(if form.path.is_empty() { "(Default: projects/<host>)" } else { &form.path }, f_style(1)),
+                    cursor(1),
+                ]),
+                Line::from(vec![
+                    Span::styled("PHP Version:     < ", f_style(2)),
+                    Span::styled(&php_label, f_style(2)),
+                    Span::styled(" >", f_style(2)),
+                ]),
+                Line::from(vec![
+                    Span::styled("Hosts File:      ", f_style(3)),
+                    Span::styled(if form.update_hosts { "[x] Auto-add to Windows hosts" } else { "[ ] Skip hosts update" }, f_style(3)),
+                ]),
+                Line::from(vec![
+                    Span::styled("TLS Certificate: ", f_style(4)),
+                    Span::styled(if form.issue_tls { "[x] Auto-issue wildcard SSL (mkcert)" } else { "[ ] Skip TLS certificate" }, f_style(4)),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::raw("                "),
+                    Span::styled(" [ Create Site ] ", if form.active_field == 5 { Style::new().bg(ACCENT).fg(Color::Black).add_modifier(Modifier::BOLD) } else { Style::new().fg(ACCENT) }),
+                ]),
+                Line::from(""),
+                Line::from("Tab/j/k: navigate fields • Space/Arrows: toggle • Esc: cancel".fg(MUTED)),
+            ]);
+            popup(frame, "Create New Site (vhost)", text, 68, 14);
         }
         Modal::PhpPicker { purpose, index } => {
             let versions = app.php_versions();

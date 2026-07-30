@@ -43,12 +43,35 @@ pub enum Modal {
     PhpPicker { purpose: PhpPurpose, index: usize },
     /// Choose a runtime/service to install from the TUI.
     InstallPicker { index: usize },
-    /// Type a hostname for a new vhost.
-    NewSite { host: String },
+    /// Type details for a new vhost.
+    NewSite(NewSiteForm),
     /// Confirm something that cannot be undone.
     Confirm { question: String, job: Job },
     /// The full output of the last job, when it was more than one line.
     Output { title: String, lines: Vec<String>, failed: bool },
+}
+
+#[derive(Debug, Clone)]
+pub struct NewSiteForm {
+    pub host: String,
+    pub path: String,
+    pub php_index: usize, // 0 = Auto-detect, 1.. = PHP versions
+    pub update_hosts: bool,
+    pub issue_tls: bool,
+    pub active_field: usize, // 0: host, 1: path, 2: php, 3: hosts, 4: tls, 5: submit button
+}
+
+impl NewSiteForm {
+    pub fn new() -> Self {
+        Self {
+            host: String::new(),
+            path: String::new(),
+            php_index: 0,
+            update_hosts: true,
+            issue_tls: true,
+            active_field: 0,
+        }
+    }
 }
 
 pub const INSTALL_OPTIONS: [(&'static str, &'static str, Option<&'static str>); 8] = [
@@ -68,6 +91,7 @@ pub enum PhpPurpose {
     /// Repoint a vhost's `fastcgi_pass`.
     Site(String),
     /// Choose the version for a vhost about to be created.
+    #[allow(dead_code)]
     NewSite(String),
 }
 
@@ -336,7 +360,7 @@ impl App {
     fn sites_key(&mut self, key: KeyEvent) -> Option<Job> {
         match key.code {
             KeyCode::Char('n') => {
-                self.modal = Some(Modal::NewSite { host: String::new() });
+                self.modal = Some(Modal::NewSite(NewSiteForm::new()));
                 None
             }
             KeyCode::Char('p') => {
@@ -383,27 +407,60 @@ impl App {
     }
 
     fn modal_key(&mut self, key: KeyEvent) -> Option<Job> {
-        // Typing a hostname has to come first: every printable character is
-        // input, not a shortcut.
-        if let Some(Modal::NewSite { host }) = &mut self.modal {
+        let versions = self.php_versions();
+        if let Some(Modal::NewSite(form)) = &mut self.modal {
             match key.code {
                 KeyCode::Esc => self.modal = None,
-                KeyCode::Backspace => {
-                    host.pop();
+                KeyCode::Tab | KeyCode::Down => form.active_field = (form.active_field + 1) % 6,
+                KeyCode::BackTab | KeyCode::Up => {
+                    form.active_field = if form.active_field == 0 { 5 } else { form.active_field - 1 };
                 }
-                KeyCode::Char(c) => host.push(c),
                 KeyCode::Enter => {
-                    let host = host.trim().to_string();
-                    if host.is_empty() {
-                        self.modal = None;
+                    if form.active_field == 5 || (!form.host.trim().is_empty() && (form.active_field == 0 || form.active_field == 1)) {
+                        let host = form.host.trim().to_string();
+                        if !host.is_empty() {
+                            let path = if form.path.trim().is_empty() { None } else { Some(form.path.trim().to_string()) };
+                            let php = if form.php_index == 0 { None } else { versions.get(form.php_index - 1).map(|v| v.0.clone()) };
+                            let job = Job::SiteAdd {
+                                host,
+                                path,
+                                php,
+                                no_hosts: !form.update_hosts,
+                                no_tls: !form.issue_tls,
+                            };
+                            self.modal = None;
+                            return self.submit(job);
+                        }
                     } else {
-                        // Which version it runs is the next question.
-                        self.modal = Some(Modal::PhpPicker {
-                            purpose: PhpPurpose::NewSite(host),
-                            index: 0,
-                        });
+                        form.active_field = (form.active_field + 1) % 6;
                     }
                 }
+                KeyCode::Backspace => match form.active_field {
+                    0 => { form.host.pop(); }
+                    1 => { form.path.pop(); }
+                    _ => {}
+                },
+                KeyCode::Left => match form.active_field {
+                    2 => form.php_index = form.php_index.saturating_sub(1),
+                    3 => form.update_hosts = !form.update_hosts,
+                    4 => form.issue_tls = !form.issue_tls,
+                    _ => {}
+                },
+                KeyCode::Right | KeyCode::Char(' ') => match form.active_field {
+                    2 => {
+                        if form.php_index < versions.len() {
+                            form.php_index += 1;
+                        }
+                    }
+                    3 => form.update_hosts = !form.update_hosts,
+                    4 => form.issue_tls = !form.issue_tls,
+                    _ => {}
+                },
+                KeyCode::Char(c) => match form.active_field {
+                    0 => form.host.push(c),
+                    1 => form.path.push(c),
+                    _ => {}
+                },
                 _ => {}
             }
             return None;
@@ -428,7 +485,13 @@ impl App {
                             self.submit(Job::SiteSetPhp { host, version: chosen })
                         }
                         PhpPurpose::NewSite(host) => {
-                            self.submit(Job::SiteAdd { host, php: Some(chosen) })
+                            self.submit(Job::SiteAdd {
+                                host,
+                                path: None,
+                                php: Some(chosen),
+                                no_hosts: false,
+                                no_tls: false,
+                            })
                         }
                     };
                 }

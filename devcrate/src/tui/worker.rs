@@ -55,7 +55,13 @@ pub enum Job {
     Stop(Option<String>),
     Restart(Option<String>),
     PhpUse(String),
-    SiteAdd { host: String, php: Option<String> },
+    SiteAdd {
+        host: String,
+        path: Option<String>,
+        php: Option<String>,
+        no_hosts: bool,
+        no_tls: bool,
+    },
     SiteSetPhp { host: String, version: String },
     SiteRemove(String),
     Install { runtime: String, version: Option<String> },
@@ -294,8 +300,9 @@ fn run(stack: &Stack, job: Job) -> JobResult {
             Err(err) => failure(label, err),
         },
 
-        Job::SiteAdd { host, php } => {
-            match site::create(stack, &host, None, php.as_deref(), false, false, false) {
+        Job::SiteAdd { host, path, php, no_hosts, no_tls } => {
+            let p = path.as_ref().map(Path::new);
+            match site::create(stack, &host, p, php.as_deref(), no_hosts, no_tls, false) {
                 Ok(made) => {
                     let mut lines = vec![
                         format!("wrote {}", made.conf),
