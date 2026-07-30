@@ -66,9 +66,45 @@ pub enum Command {
     /// Stop, then start again.
     Restart(ServiceArgs),
 
+    /// Node.js versions.
+    #[command(subcommand)]
+    Node(NodeCommand),
+
+    /// Bun versions.
+    #[command(subcommand)]
+    Bun(BunCommand),
+
     /// Install a runtime: download it from the vendor and verify it, or use
     /// --from for an archive already on disk.
     Install(InstallArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum NodeCommand {
+    /// List installed Node.js versions.
+    List,
+    /// Select which installed Node.js version CLI `node` resolves to.
+    Use(NodeUseArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct NodeUseArgs {
+    /// Version to select: 22, 22.11.0, or v22.11.0.
+    pub version: String,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum BunCommand {
+    /// List installed Bun versions.
+    List,
+    /// Select which installed Bun version CLI `bun` resolves to.
+    Use(BunUseArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct BunUseArgs {
+    /// Version to select: 1.2, 1.2.2, or v1.2.2.
+    pub version: String,
 }
 
 #[derive(Debug, Args)]

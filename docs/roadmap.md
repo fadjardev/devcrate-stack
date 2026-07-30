@@ -13,7 +13,7 @@ stack for you.
 | 2 | Built-in runtime downloader / installer with version selection | done — PHP, Nginx, Composer, MariaDB, RabbitMQ, and Erlang/OTP done end to end |
 | 3 | Runs from any terminal, scriptable as well as interactive | done — see [cli.md](cli.md) |
 | 4 | Open an existing project: vhost + hosts entry + mkcert TLS, in one step | done — automated hosts block editing with UAC elevation, mkcert TLS issuance, smart web root & composer PHP constraint detection |
-| 5 | Node.js and Bun as managed runtimes | planned |
+| 5 | Node.js and Bun as managed runtimes | done — Node.js & Bun installer, version switcher, npm isolation, and smart .nvmrc / package.json detection |
 
 ---
 

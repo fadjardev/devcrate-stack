@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Node.js & Bun Managed Runtimes (`devcrate install node`, `devcrate install bun`, `devcrate node`, `devcrate bun`)** — Implemented Roadmap Item 5: portable JavaScript runtimes and version management.
+  - Downloads Node.js zip distributions from `nodejs.org/dist/` into `node/v<version>/` and Bun from GitHub Releases into `bun/v<version>/`.
+  - Configures `npm-global` and `npm-cache` inside `node/` so global NPM packages and cache stay inside the stack root without cluttering `%AppData%`.
+  - Version switching via `devcrate node use <version>` and `devcrate bun use <version>` using `node/current` and `bun/current` junctions.
+  - Smart Node version detection from `.nvmrc` and `package.json` (`engines.node`).
 - **Automated Hosts & TLS Management (`devcrate site add`)** — Implemented Roadmap Item 4: one-step project onboarding with automated Windows `hosts` file modification and `mkcert` TLS certificate issuance.
   - Modifies `C:\Windows\System32\drivers\etc\hosts` inside isolated `# --- devcrate begin/end ---` marker blocks, with automatic UAC elevation fallback via PowerShell when permissions are denied.
   - Automatically issues wildcard TLS certificates (`_wildcard.<domain>.pem`) into `nginx/conf/certs/` using `mkcert`.

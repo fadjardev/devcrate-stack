@@ -19,11 +19,13 @@
 //! same function and must never write to the screen it just drew.
 
 mod archive;
+mod bun;
 mod composer;
 mod download;
 mod erlang;
 mod mariadb;
 mod nginx;
+mod node;
 mod php;
 mod rabbitmq;
 
@@ -45,6 +47,8 @@ pub enum Runtime {
     MariaDb,
     RabbitMq,
     Erlang,
+    Node,
+    Bun,
 }
 
 impl Runtime {
@@ -57,8 +61,10 @@ impl Runtime {
             "mariadb" => Ok(Runtime::MariaDb),
             "rabbitmq" => Ok(Runtime::RabbitMq),
             "erlang" => Ok(Runtime::Erlang),
+            "node" => Ok(Runtime::Node),
+            "bun" => Ok(Runtime::Bun),
             other => bail!(
-                "{other:?} is not a runtime devcrate manages.\nKnown: php, nginx, composer, mariadb, rabbitmq, erlang"
+                "{other:?} is not a runtime devcrate manages.\nKnown: php, nginx, composer, mariadb, rabbitmq, erlang, node, bun"
             ),
         }
     }
@@ -72,6 +78,8 @@ impl Runtime {
             Runtime::MariaDb => "mariadb",
             Runtime::RabbitMq => "rabbitmq",
             Runtime::Erlang => "erlang",
+            Runtime::Node => "node",
+            Runtime::Bun => "bun",
         }
     }
 
@@ -84,6 +92,8 @@ impl Runtime {
             Runtime::MariaDb => "MariaDB",
             Runtime::RabbitMq => "RabbitMQ",
             Runtime::Erlang => "Erlang/OTP",
+            Runtime::Node => "Node.js",
+            Runtime::Bun => "Bun",
         }
     }
 }
@@ -140,6 +150,19 @@ pub enum Details {
     MariaDb(MariaDbInstalled),
     RabbitMq(RabbitMqInstalled),
     Erlang(ErlangInstalled),
+    Node(NodeInstalledDetails),
+    Bun(BunInstalledDetails),
+}
+
+#[derive(Debug)]
+pub struct NodeInstalledDetails {
+    pub dir: String,
+    pub global_dir: String,
+}
+
+#[derive(Debug)]
+pub struct BunInstalledDetails {
+    pub dir: String,
 }
 
 #[derive(Debug)]
@@ -218,6 +241,8 @@ pub fn from_archive(
         Runtime::MariaDb => mariadb_from_archive(stack, archive_path, opts, progress),
         Runtime::RabbitMq => rabbitmq_from_archive(stack, archive_path, opts, progress),
         Runtime::Erlang => erlang_from_archive(stack, archive_path, opts, progress),
+        Runtime::Node => node_from_archive(stack, archive_path, opts, progress),
+        Runtime::Bun => bun_from_archive(stack, archive_path, opts, progress),
     }
 }
 
@@ -1054,6 +1079,8 @@ fn install_by_download(
         Runtime::MariaDb => choose_mariadb(stack, version)?,
         Runtime::RabbitMq => choose_rabbitmq(stack, version)?,
         Runtime::Erlang => choose_erlang(stack, version)?,
+        Runtime::Node => choose_node(stack, version)?,
+        Runtime::Bun => choose_bun(stack, version)?,
     };
     // Nothing chosen means the catalogue was printed instead.
     let Some(Chosen { download: source, dest, replace_freely }) = chosen else {
@@ -1346,11 +1373,12 @@ fn report_transfer(
     let against = match runtime {
         Runtime::Php => "the release list",
         Runtime::Composer => "getcomposer.org's checksum",
-        // nginx publishes none, so this arm is never the verified one.
         Runtime::Nginx => "the vendor's checksum",
         Runtime::MariaDb => "the vendor's archive",
         Runtime::RabbitMq => "GitHub releases",
         Runtime::Erlang => "GitHub releases",
+        Runtime::Node => "nodejs.org releases index",
+        Runtime::Bun => "GitHub releases",
     };
     match (fetched.cached, fetched.verified) {
         (true, true) => println!(
@@ -1507,6 +1535,8 @@ impl Reporter {
                 Runtime::MariaDb => self.line("generating my.ini"),
                 Runtime::RabbitMq => self.line("configuring rabbitmq plugins"),
                 Runtime::Erlang => self.line("configuring erlang environment"),
+                Runtime::Node => self.line("configuring portable npm environment"),
+                Runtime::Bun => self.line("preparing bun environment"),
             },
             Progress::Installing => self.line("moving it into place"),
         }
@@ -1562,7 +1592,237 @@ fn print_installed(done: &Installed) {
         Details::MariaDb(mariadb) => print_mariadb_installed(done, mariadb),
         Details::RabbitMq(rabbitmq) => print_rabbitmq_installed(done, rabbitmq),
         Details::Erlang(erlang) => print_erlang_installed(done, erlang),
+        Details::Node(node) => print_node_installed(done, node),
+        Details::Bun(bun) => print_bun_installed(done, bun),
     }
+}
+
+fn print_node_installed(done: &Installed, node: &NodeInstalledDetails) {
+    println!("  Node.js v{} installed into {}", done.version, node.dir);
+    println!("  NPM global prefix set to {}", node.global_dir);
+    println!();
+    println!("Use `devcrate node use {}` to activate it.", done.version);
+}
+
+fn print_bun_installed(done: &Installed, bun: &BunInstalledDetails) {
+    println!("  Bun v{} installed into {}", done.version, bun.dir);
+    println!();
+    println!("Use `devcrate bun use {}` to activate it.", done.version);
+}
+
+fn choose_node(stack: &Stack, version: Option<&str>) -> Result<Option<Chosen>> {
+    println!("  fetching release index from nodejs.org");
+    let catalogue = download::fetch_node_catalogue()?;
+
+    let Some(wanted) = version else {
+        print_node_catalogue(&catalogue);
+        return Ok(None);
+    };
+
+    let wanted_clean = wanted.trim_start_matches('v');
+    let Some(release) = catalogue.releases.iter().find(|r| r.version == wanted_clean || r.version.starts_with(wanted_clean)) else {
+        bail!(
+            "Node.js {wanted:?} is not on nodejs.org's release list.\n\
+             An archive can still be installed with --from."
+        );
+    };
+
+    let dl = download::Download {
+        url: release.url.clone(),
+        file_name: release.archive_name.clone(),
+        sha256: None,
+    };
+
+    Ok(Some(Chosen {
+        download: dl,
+        dest: stack.root.join("node").join(format!("v{}", release.version)),
+        replace_freely: false,
+    }))
+}
+
+fn print_node_catalogue(catalogue: &download::NodeCatalogue) {
+    println!("\nNode.js releases available on nodejs.org:");
+    for (i, rel) in catalogue.releases.iter().take(15).enumerate() {
+        let lts_tag = rel.lts.as_ref().map(|l| format!(" [{l}]")).unwrap_or_default();
+        println!("  {:2}. v{}{lts_tag}", i + 1, rel.version);
+    }
+    println!("\nRun `devcrate install node <version>` to install one.");
+}
+
+fn choose_bun(stack: &Stack, version: Option<&str>) -> Result<Option<Chosen>> {
+    println!("  fetching Bun releases from GitHub");
+    let catalogue = download::fetch_bun_catalogue()?;
+
+    let Some(wanted) = version else {
+        print_bun_catalogue(&catalogue);
+        return Ok(None);
+    };
+
+    let wanted_clean = wanted.trim_start_matches('v');
+    let Some(release) = catalogue.releases.iter().find(|r| r.version == wanted_clean || r.version.starts_with(wanted_clean)) else {
+        bail!(
+            "Bun {wanted:?} is not on GitHub release list.\n\
+             An archive can still be installed with --from."
+        );
+    };
+
+    let dl = download::Download {
+        url: release.url.clone(),
+        file_name: release.archive_name.clone(),
+        sha256: None,
+    };
+
+    Ok(Some(Chosen {
+        download: dl,
+        dest: stack.root.join("bun").join(format!("v{}", release.version)),
+        replace_freely: false,
+    }))
+}
+
+fn print_bun_catalogue(catalogue: &download::BunCatalogue) {
+    println!("\nBun releases available on GitHub:");
+    for (i, rel) in catalogue.releases.iter().take(15).enumerate() {
+        println!("  {:2}. v{}", i + 1, rel.version);
+    }
+    println!("\nRun `devcrate install bun <version>` to install one.");
+}
+
+fn node_from_archive(
+    stack: &Stack,
+    archive_path: &Path,
+    opts: &Options,
+    progress: &mut dyn FnMut(Progress),
+) -> Result<Installed> {
+    if !archive_path.is_file() {
+        bail!("{} is not a file", archive_path.display());
+    }
+    let file_name = archive_path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    let source_sha256 = download::sha256_of(archive_path)
+        .with_context(|| format!("hashing {}", archive_path.display()))?;
+
+    let version = opts
+        .version
+        .clone()
+        .or_else(|| node::version_from_file_name(&file_name))
+        .unwrap_or_else(|| "22.11.0".to_string());
+
+    let node_root = stack.root.join("node");
+    let dest = node_root.join(format!("v{version}"));
+
+    if dest.exists() && !opts.force {
+        bail!("{} already exists; pass --force to replace it", stack.rel(&dest));
+    }
+
+    let staging = stack.root.join(staging_name("node"));
+    if staging.exists() {
+        let _ = std::fs::remove_dir_all(&staging);
+    }
+    std::fs::create_dir_all(&staging)?;
+
+    let extracted = archive::extract(archive_path, &staging, &mut |done, total| {
+        progress(Progress::Extracting { done, total });
+    })?;
+
+    progress(Progress::Validating);
+    let valid_dir = node::validate(&staging)?;
+
+    progress(Progress::Installing);
+    std::fs::create_dir_all(&node_root)?;
+    if dest.exists() {
+        let _ = std::fs::remove_dir_all(&dest);
+    }
+
+    std::fs::rename(&valid_dir, &dest)?;
+    let _ = std::fs::remove_dir_all(&staging);
+
+    let npm_global = node_root.join("npm-global");
+    let npm_cache = node_root.join("npm-cache");
+    let _ = std::fs::create_dir_all(&npm_global);
+    let _ = std::fs::create_dir_all(&npm_cache);
+
+    let npmrc = dest.join(".npmrc");
+    if !npmrc.exists() {
+        let text = format!(
+            "prefix={}\ncache={}\n",
+            npm_global.display().to_string().replace('\\', "/"),
+            npm_cache.display().to_string().replace('\\', "/")
+        );
+        let _ = std::fs::write(&npmrc, text);
+    }
+
+    Ok(Installed {
+        runtime: Runtime::Node,
+        version: version.clone(),
+        release: version,
+        dir: stack.rel(&dest),
+        files: extracted.files,
+        replaced: false,
+        details: Details::Node(NodeInstalledDetails {
+            dir: stack.rel(&dest),
+            global_dir: stack.rel(&npm_global),
+        }),
+    })
+}
+
+fn bun_from_archive(
+    stack: &Stack,
+    archive_path: &Path,
+    opts: &Options,
+    progress: &mut dyn FnMut(Progress),
+) -> Result<Installed> {
+    if !archive_path.is_file() {
+        bail!("{} is not a file", archive_path.display());
+    }
+    let file_name = archive_path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    let source_sha256 = download::sha256_of(archive_path)
+        .with_context(|| format!("hashing {}", archive_path.display()))?;
+
+    let version = opts
+        .version
+        .clone()
+        .or_else(|| bun::version_from_file_name(&file_name))
+        .unwrap_or_else(|| "1.2.2".to_string());
+
+    let bun_root = stack.root.join("bun");
+    let dest = bun_root.join(format!("v{version}"));
+
+    if dest.exists() && !opts.force {
+        bail!("{} already exists; pass --force to replace it", stack.rel(&dest));
+    }
+
+    let staging = stack.root.join(staging_name("bun"));
+    if staging.exists() {
+        let _ = std::fs::remove_dir_all(&staging);
+    }
+    std::fs::create_dir_all(&staging)?;
+
+    let extracted = archive::extract(archive_path, &staging, &mut |done, total| {
+        progress(Progress::Extracting { done, total });
+    })?;
+
+    progress(Progress::Validating);
+    let valid_dir = bun::validate(&staging)?;
+
+    progress(Progress::Installing);
+    std::fs::create_dir_all(&bun_root)?;
+    if dest.exists() {
+        let _ = std::fs::remove_dir_all(&dest);
+    }
+
+    std::fs::rename(&valid_dir, &dest)?;
+    let _ = std::fs::remove_dir_all(&staging);
+
+    Ok(Installed {
+        runtime: Runtime::Bun,
+        version: version.clone(),
+        release: version,
+        dir: stack.rel(&dest),
+        files: extracted.files,
+        replaced: false,
+        details: Details::Bun(BunInstalledDetails {
+            dir: stack.rel(&dest),
+        }),
+    })
 }
 
 fn print_mariadb_installed(done: &Installed, mariadb: &MariaDbInstalled) {

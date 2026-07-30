@@ -6,6 +6,7 @@
 //! nginx end to end. What is left of installing is MariaDB, RabbitMQ, Erlang,
 //! and Composer.
 
+mod bun;
 mod cli;
 mod config;
 mod control;
@@ -14,6 +15,7 @@ mod install;
 mod junction;
 mod mkcert;
 mod nginx;
+mod node;
 mod php;
 mod probe;
 mod root;
@@ -27,7 +29,7 @@ use std::process::ExitCode;
 use anyhow::Result;
 use clap::Parser;
 
-use crate::cli::{Cli, Command, ConfigCommand, NginxCommand, PhpCommand, SiteCommand};
+use crate::cli::{BunCommand, Cli, Command, ConfigCommand, NginxCommand, NodeCommand, PhpCommand, SiteCommand};
 use crate::config::Stack;
 
 /// Exit codes. 2 is clap's own code for a usage error. 3 used to mean "not
@@ -108,6 +110,18 @@ fn run(cli: Cli) -> Result<u8> {
         }
         Command::Site(SiteCommand::Remove(args)) => site::remove(&stack, &args.host),
 
+        Command::Node(NodeCommand::List) => {
+            node_list(&stack);
+            Ok(exit::OK)
+        }
+        Command::Node(NodeCommand::Use(args)) => node::switch(&stack, &args.version),
+
+        Command::Bun(BunCommand::List) => {
+            bun_list(&stack);
+            Ok(exit::OK)
+        }
+        Command::Bun(BunCommand::Use(args)) => bun::switch(&stack, &args.version),
+
         Command::Start(args) => control::start(&stack, args.service.as_deref()),
         Command::Stop(args) => control::stop(&stack, args.service.as_deref()),
         Command::Restart(args) => control::restart(&stack, args.service.as_deref()),
@@ -118,6 +132,32 @@ fn run(cli: Cli) -> Result<u8> {
             args.from.as_deref(),
             args.force,
         ),
+    }
+}
+
+fn node_list(stack: &Stack) {
+    let installed = node::list_installed(stack);
+    if installed.is_empty() {
+        println!("No Node.js versions installed under node\\");
+        return;
+    }
+    println!("Node.js versions:");
+    for v in installed {
+        let active = if v.active { " (active)" } else { "" };
+        println!("  v{}{active}", v.version);
+    }
+}
+
+fn bun_list(stack: &Stack) {
+    let installed = bun::list_installed(stack);
+    if installed.is_empty() {
+        println!("No Bun versions installed under bun\\");
+        return;
+    }
+    println!("Bun versions:");
+    for v in installed {
+        let active = if v.active { " (active)" } else { "" };
+        println!("  v{}{active}", v.version);
     }
 }
 
