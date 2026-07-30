@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`devcrate install mariadb`, `rabbitmq`, and `erlang`** — Built-in automated installers and archive unpackers for MariaDB, RabbitMQ Server, and Erlang/OTP, completing Roadmap Item 2 end-to-end.
+  - MariaDB creates a default `my.ini` and `data/` directory.
+  - RabbitMQ sets up `data/` directory and enables `rabbitmq_management` plugin.
+  - Erlang/OTP installs silently into `erlang/` for RabbitMQ dependency.
+
 ### Changed
 
 - **The nginx directory is now a stable prefix with the versions inside it.**

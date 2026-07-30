@@ -175,8 +175,7 @@ pub struct ServiceArgs {
 
 #[derive(Debug, Args)]
 pub struct InstallArgs {
-    /// Runtime to install: `php`, `nginx`, or `composer`. mariadb, rabbitmq,
-    /// and erlang are named but not installable yet.
+    /// Runtime to install: `php`, `nginx`, `composer`, `mariadb`, `rabbitmq`, or `erlang`.
     pub runtime: String,
     /// Version to install: 8.4, 84, and php-8.4 for PHP; 1.31.3 or the series
     /// 1.31 for nginx; a line (stable, lts) or an exact version for Composer.

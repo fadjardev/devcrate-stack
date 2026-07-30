@@ -143,6 +143,114 @@ impl NginxRelease {
     }
 }
 
+/// One installable MariaDB release.
+#[derive(Debug, Clone)]
+pub struct MariaDbRelease {
+    pub version: String,
+    pub file_name: String,
+    pub sha256: Option<String>,
+}
+
+impl MariaDbRelease {
+    pub fn download(&self) -> Download {
+        Download {
+            url: format!(
+                "https://archive.mariadb.org/mariadb-{}/winx64-packages/{}",
+                self.version, self.file_name
+            ),
+            file_name: self.file_name.clone(),
+            sha256: self.sha256.clone(),
+        }
+    }
+}
+
+pub fn mariadb_catalogue() -> Result<Vec<MariaDbRelease>> {
+    Ok(vec![
+        MariaDbRelease {
+            version: "11.4.5".to_string(),
+            file_name: "mariadb-11.4.5-winx64.zip".to_string(),
+            sha256: None,
+        },
+        MariaDbRelease {
+            version: "10.11.11".to_string(),
+            file_name: "mariadb-10.11.11-winx64.zip".to_string(),
+            sha256: None,
+        },
+    ])
+}
+
+/// One installable RabbitMQ release.
+#[derive(Debug, Clone)]
+pub struct RabbitMqRelease {
+    pub version: String,
+    pub file_name: String,
+    pub sha256: Option<String>,
+}
+
+impl RabbitMqRelease {
+    pub fn download(&self) -> Download {
+        Download {
+            url: format!(
+                "https://github.com/rabbitmq/rabbitmq-server/releases/download/v{}/{}",
+                self.version, self.file_name
+            ),
+            file_name: self.file_name.clone(),
+            sha256: self.sha256.clone(),
+        }
+    }
+}
+
+pub fn rabbitmq_catalogue() -> Result<Vec<RabbitMqRelease>> {
+    Ok(vec![
+        RabbitMqRelease {
+            version: "4.0.5".to_string(),
+            file_name: "rabbitmq-server-windows-4.0.5.zip".to_string(),
+            sha256: None,
+        },
+        RabbitMqRelease {
+            version: "4.0.0".to_string(),
+            file_name: "rabbitmq-server-windows-4.0.0.zip".to_string(),
+            sha256: None,
+        },
+    ])
+}
+
+/// One installable Erlang/OTP release.
+#[derive(Debug, Clone)]
+pub struct ErlangRelease {
+    pub version: String,
+    pub file_name: String,
+    pub sha256: Option<String>,
+}
+
+impl ErlangRelease {
+    pub fn download(&self) -> Download {
+        Download {
+            url: format!(
+                "https://github.com/erlang/otp/releases/download/OTP-{}/{}",
+                self.version, self.file_name
+            ),
+            file_name: self.file_name.clone(),
+            sha256: self.sha256.clone(),
+        }
+    }
+}
+
+pub fn erlang_catalogue() -> Result<Vec<ErlangRelease>> {
+    Ok(vec![
+        ErlangRelease {
+            version: "27.2".to_string(),
+            file_name: "otp_win64_27.2.exe".to_string(),
+            sha256: None,
+        },
+        ErlangRelease {
+            version: "26.2.5.5".to_string(),
+            file_name: "otp_win64_26.2.5.5.exe".to_string(),
+            sha256: None,
+        },
+    ])
+}
+
 /// An archive on disk, ready for [`super::from_archive`].
 #[derive(Debug)]
 pub struct Fetched {

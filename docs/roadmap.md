@@ -10,7 +10,7 @@ stack for you.
 | # | Item | Status |
 | --- | --- | --- |
 | 1 | Rust TUI (`ratatui`), shipped as a single executable | done — see [tui.md](tui.md) |
-| 2 | Built-in runtime downloader / installer with version selection | in progress — PHP, nginx, and Composer done end to end; MariaDB, RabbitMQ, Erlang to come |
+| 2 | Built-in runtime downloader / installer with version selection | done — PHP, Nginx, Composer, MariaDB, RabbitMQ, and Erlang/OTP done end to end |
 | 3 | Runs from any terminal, scriptable as well as interactive | done — see [cli.md](cli.md) |
 | 4 | Open an existing project: vhost + hosts entry + mkcert TLS, in one step | planned |
 | 5 | Node.js and Bun as managed runtimes | planned |

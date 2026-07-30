@@ -21,8 +21,11 @@
 mod archive;
 mod composer;
 mod download;
+mod erlang;
+mod mariadb;
 mod nginx;
 mod php;
+mod rabbitmq;
 
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -34,19 +37,15 @@ use crate::config::{self, Stack};
 use crate::{exit, junction};
 
 /// Runtimes `install` knows how to name.
-///
-/// The ones that cannot be installed yet are still listed, so that naming one
-/// gets "not built yet, here is what does it" rather than "unknown runtime" --
-/// the difference between a missing feature and a typo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Runtime {
     Php,
     Nginx,
     Composer,
+    MariaDb,
+    RabbitMq,
+    Erlang,
 }
-
-/// Named in `devcrate install --help`, installable in the order issue #2 sets.
-const PLANNED: [&str; 3] = ["mariadb", "rabbitmq", "erlang"];
 
 impl Runtime {
     pub fn parse(name: &str) -> Result<Runtime> {
@@ -55,14 +54,11 @@ impl Runtime {
             "php" => Ok(Runtime::Php),
             "nginx" => Ok(Runtime::Nginx),
             "composer" => Ok(Runtime::Composer),
-            other if PLANNED.contains(&other) => bail!(
-                "installing {other} is not built yet -- PHP, nginx, and Composer \
-                 are the runtimes that are (docs/roadmap.md item 2).\n\
-                 Unpack it by hand for now: docs/installation.md"
-            ),
+            "mariadb" => Ok(Runtime::MariaDb),
+            "rabbitmq" => Ok(Runtime::RabbitMq),
+            "erlang" => Ok(Runtime::Erlang),
             other => bail!(
-                "{other:?} is not a runtime devcrate manages.\nKnown: php, nginx, composer, {}",
-                PLANNED.join(", ")
+                "{other:?} is not a runtime devcrate manages.\nKnown: php, nginx, composer, mariadb, rabbitmq, erlang"
             ),
         }
     }
@@ -73,6 +69,9 @@ impl Runtime {
             Runtime::Php => "php",
             Runtime::Nginx => "nginx",
             Runtime::Composer => "composer",
+            Runtime::MariaDb => "mariadb",
+            Runtime::RabbitMq => "rabbitmq",
+            Runtime::Erlang => "erlang",
         }
     }
 
@@ -82,6 +81,9 @@ impl Runtime {
             Runtime::Php => "PHP",
             Runtime::Nginx => "nginx",
             Runtime::Composer => "Composer",
+            Runtime::MariaDb => "MariaDB",
+            Runtime::RabbitMq => "RabbitMQ",
+            Runtime::Erlang => "Erlang/OTP",
         }
     }
 }
@@ -135,6 +137,9 @@ pub enum Details {
     Php(PhpInstalled),
     Nginx(NginxInstalled),
     Composer(ComposerInstalled),
+    MariaDb(MariaDbInstalled),
+    RabbitMq(RabbitMqInstalled),
+    Erlang(ErlangInstalled),
 }
 
 #[derive(Debug)]
@@ -179,6 +184,25 @@ pub struct ComposerInstalled {
     pub run: Option<composer::Run>,
 }
 
+#[derive(Debug)]
+pub struct MariaDbInstalled {
+    pub dir: String,
+    pub config_created: bool,
+    pub data_dir_created: bool,
+}
+
+#[derive(Debug)]
+pub struct RabbitMqInstalled {
+    pub dir: String,
+    pub data_dir_created: bool,
+    pub plugins_file_created: bool,
+}
+
+#[derive(Debug)]
+pub struct ErlangInstalled {
+    pub dir: String,
+}
+
 /// Install a runtime from an archive already on disk.
 pub fn from_archive(
     stack: &Stack,
@@ -191,7 +215,234 @@ pub fn from_archive(
         Runtime::Php => php_from_archive(stack, archive_path, opts, progress),
         Runtime::Nginx => nginx_from_archive(stack, archive_path, opts, progress),
         Runtime::Composer => composer_from_phar(stack, archive_path, opts, progress),
+        Runtime::MariaDb => mariadb_from_archive(stack, archive_path, opts, progress),
+        Runtime::RabbitMq => rabbitmq_from_archive(stack, archive_path, opts, progress),
+        Runtime::Erlang => erlang_from_archive(stack, archive_path, opts, progress),
     }
+}
+
+fn mariadb_from_archive(
+    stack: &Stack,
+    archive_path: &Path,
+    opts: &Options,
+    progress: &mut dyn FnMut(Progress),
+) -> Result<Installed> {
+    if !archive_path.is_file() {
+        bail!("{} is not a file", archive_path.display());
+    }
+    let file_name = archive_path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    let source_sha256 = download::sha256_of(archive_path)
+        .with_context(|| format!("hashing {}", archive_path.display()))?;
+
+    let version = opts
+        .version
+        .clone()
+        .or_else(|| mariadb::version_from_file_name(&file_name))
+        .unwrap_or_else(|| "11.4.5".to_string());
+
+    let dest = stack.root.join("mariadb");
+
+    if dest.exists() && !opts.force {
+        bail!("{} already exists; pass --force to replace it", stack.rel(&dest));
+    }
+
+    let staging = stack.root.join(staging_name("mariadb"));
+    if staging.exists() {
+        let _ = std::fs::remove_dir_all(&staging);
+    }
+    std::fs::create_dir_all(&staging)?;
+
+    progress(Progress::Extracting { done: 0, total: 1 });
+    let extracted = archive::extract(archive_path, &staging, &mut |done, total| {
+        progress(Progress::Extracting { done, total });
+    })?;
+
+    progress(Progress::Validating);
+    mariadb::check(&staging, archive_path)?;
+
+    progress(Progress::Configuring);
+    let configured = mariadb::configure(&staging)?;
+
+    progress(Progress::Installing);
+    let replaced = swap_into_place(stack, &stack.root, &staging, &dest, "mariadb")?;
+
+    let receipt = Receipt {
+        runtime: Runtime::MariaDb.as_str().to_string(),
+        version: version.clone(),
+        release: version.clone(),
+        thread_safe: None,
+        source_archive: file_name,
+        source_bytes: std::fs::metadata(archive_path).map(|m| m.len()).unwrap_or(0),
+        source_sha256,
+        files: extracted.files,
+    };
+    write_receipt(&dest, &receipt)?;
+
+    Ok(Installed {
+        runtime: Runtime::MariaDb,
+        version: version.clone(),
+        release: version,
+        dir: stack.rel(&dest),
+        files: extracted.files,
+        replaced,
+        details: Details::MariaDb(MariaDbInstalled {
+            dir: stack.rel(&dest),
+            config_created: configured.config_created,
+            data_dir_created: configured.data_dir_created,
+        }),
+    })
+}
+
+fn rabbitmq_from_archive(
+    stack: &Stack,
+    archive_path: &Path,
+    opts: &Options,
+    progress: &mut dyn FnMut(Progress),
+) -> Result<Installed> {
+    if !archive_path.is_file() {
+        bail!("{} is not a file", archive_path.display());
+    }
+    let file_name = archive_path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    let source_sha256 = download::sha256_of(archive_path)
+        .with_context(|| format!("hashing {}", archive_path.display()))?;
+
+    let version = opts
+        .version
+        .clone()
+        .or_else(|| rabbitmq::version_from_file_name(&file_name))
+        .unwrap_or_else(|| "4.0.5".to_string());
+
+    let dest = stack.root.join("rabbitmq");
+
+    if dest.exists() && !opts.force {
+        bail!("{} already exists; pass --force to replace it", stack.rel(&dest));
+    }
+
+    let staging = stack.root.join(staging_name("rabbitmq"));
+    if staging.exists() {
+        let _ = std::fs::remove_dir_all(&staging);
+    }
+    std::fs::create_dir_all(&staging)?;
+
+    progress(Progress::Extracting { done: 0, total: 1 });
+    let extracted = archive::extract(archive_path, &staging, &mut |done, total| {
+        progress(Progress::Extracting { done, total });
+    })?;
+
+    progress(Progress::Validating);
+    rabbitmq::check(&staging, archive_path)?;
+
+    progress(Progress::Configuring);
+    let configured = rabbitmq::configure(&staging)?;
+
+    progress(Progress::Installing);
+    let replaced = swap_into_place(stack, &stack.root, &staging, &dest, "rabbitmq")?;
+
+    let receipt = Receipt {
+        runtime: Runtime::RabbitMq.as_str().to_string(),
+        version: version.clone(),
+        release: version.clone(),
+        thread_safe: None,
+        source_archive: file_name,
+        source_bytes: std::fs::metadata(archive_path).map(|m| m.len()).unwrap_or(0),
+        source_sha256,
+        files: extracted.files,
+    };
+    write_receipt(&dest, &receipt)?;
+
+    Ok(Installed {
+        runtime: Runtime::RabbitMq,
+        version: version.clone(),
+        release: version,
+        dir: stack.rel(&dest),
+        files: extracted.files,
+        replaced,
+        details: Details::RabbitMq(RabbitMqInstalled {
+            dir: stack.rel(&dest),
+            data_dir_created: configured.data_dir_created,
+            plugins_file_created: configured.plugins_file_created,
+        }),
+    })
+}
+
+fn erlang_from_archive(
+    stack: &Stack,
+    archive_path: &Path,
+    opts: &Options,
+    progress: &mut dyn FnMut(Progress),
+) -> Result<Installed> {
+    if !archive_path.is_file() {
+        bail!("{} is not a file", archive_path.display());
+    }
+    let file_name = archive_path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    let source_sha256 = download::sha256_of(archive_path)
+        .with_context(|| format!("hashing {}", archive_path.display()))?;
+
+    let version = opts
+        .version
+        .clone()
+        .or_else(|| erlang::version_from_file_name(&file_name))
+        .unwrap_or_else(|| "27.2".to_string());
+
+    let dest = stack.root.join("erlang");
+
+    if dest.exists() && !opts.force {
+        bail!("{} already exists; pass --force to replace it", stack.rel(&dest));
+    }
+
+    let staging = stack.root.join(staging_name("erlang"));
+    if staging.exists() {
+        let _ = std::fs::remove_dir_all(&staging);
+    }
+    std::fs::create_dir_all(&staging)?;
+
+    let files_count = if file_name.ends_with(".exe") {
+        progress(Progress::Installing);
+        let status = std::process::Command::new(archive_path)
+            .args(["/S", &format!("/D={}", staging.display())])
+            .status()
+            .with_context(|| format!("running silent installer {}", archive_path.display()))?;
+        if !status.success() {
+            bail!("installer {} failed with exit code {:?}", archive_path.display(), status.code());
+        }
+        100
+    } else {
+        progress(Progress::Extracting { done: 0, total: 1 });
+        let extracted = archive::extract(archive_path, &staging, &mut |done, total| {
+            progress(Progress::Extracting { done, total });
+        })?;
+        extracted.files
+    };
+
+    progress(Progress::Validating);
+    erlang::check(&staging, archive_path)?;
+
+    progress(Progress::Installing);
+    let replaced = swap_into_place(stack, &stack.root, &staging, &dest, "erlang")?;
+
+    let receipt = Receipt {
+        runtime: Runtime::Erlang.as_str().to_string(),
+        version: version.clone(),
+        release: version.clone(),
+        thread_safe: None,
+        source_archive: file_name,
+        source_bytes: std::fs::metadata(archive_path).map(|m| m.len()).unwrap_or(0),
+        source_sha256,
+        files: files_count,
+    };
+    write_receipt(&dest, &receipt)?;
+
+    Ok(Installed {
+        runtime: Runtime::Erlang,
+        version: version.clone(),
+        release: version,
+        dir: stack.rel(&dest),
+        files: files_count,
+        replaced,
+        details: Details::Erlang(ErlangInstalled {
+            dir: stack.rel(&dest),
+        }),
+    })
 }
 
 /// Where an install is assembled before it is put in place.
@@ -800,6 +1051,9 @@ fn install_by_download(
         Runtime::Php => choose_php(stack, version)?,
         Runtime::Nginx => choose_nginx(stack, version)?,
         Runtime::Composer => choose_composer(stack, version)?,
+        Runtime::MariaDb => choose_mariadb(stack, version)?,
+        Runtime::RabbitMq => choose_rabbitmq(stack, version)?,
+        Runtime::Erlang => choose_erlang(stack, version)?,
     };
     // Nothing chosen means the catalogue was printed instead.
     let Some(Chosen { download: source, dest, replace_freely }) = chosen else {
@@ -913,6 +1167,90 @@ fn choose_composer(stack: &Stack, version: Option<&str>) -> Result<Option<Chosen
     }))
 }
 
+fn choose_mariadb(stack: &Stack, version: Option<&str>) -> Result<Option<Chosen>> {
+    println!("  fetching the MariaDB release list");
+    let catalogue = download::mariadb_catalogue()?;
+
+    let Some(wanted) = version else {
+        println!("\n  Available MariaDB releases:");
+        for rel in &catalogue {
+            println!("    mariadb {} ({})", rel.version, rel.file_name);
+        }
+        println!("\n  Pass a version to install: `devcrate install mariadb 11.4.5`");
+        return Ok(None);
+    };
+
+    let release = catalogue
+        .iter()
+        .find(|r| r.version == wanted || r.version.starts_with(wanted))
+        .ok_or_else(|| anyhow!("no MariaDB release matching {wanted:?}"))?;
+
+    let download = release.download();
+    let dest = stack.root.join("mariadb");
+
+    Ok(Some(Chosen {
+        download,
+        dest,
+        replace_freely: false,
+    }))
+}
+
+fn choose_rabbitmq(stack: &Stack, version: Option<&str>) -> Result<Option<Chosen>> {
+    println!("  fetching the RabbitMQ release list");
+    let catalogue = download::rabbitmq_catalogue()?;
+
+    let Some(wanted) = version else {
+        println!("\n  Available RabbitMQ releases:");
+        for rel in &catalogue {
+            println!("    rabbitmq {} ({})", rel.version, rel.file_name);
+        }
+        println!("\n  Pass a version to install: `devcrate install rabbitmq 4.0.5`");
+        return Ok(None);
+    };
+
+    let release = catalogue
+        .iter()
+        .find(|r| r.version == wanted || r.version.starts_with(wanted))
+        .ok_or_else(|| anyhow!("no RabbitMQ release matching {wanted:?}"))?;
+
+    let download = release.download();
+    let dest = stack.root.join("rabbitmq");
+
+    Ok(Some(Chosen {
+        download,
+        dest,
+        replace_freely: false,
+    }))
+}
+
+fn choose_erlang(stack: &Stack, version: Option<&str>) -> Result<Option<Chosen>> {
+    println!("  fetching the Erlang release list");
+    let catalogue = download::erlang_catalogue()?;
+
+    let Some(wanted) = version else {
+        println!("\n  Available Erlang/OTP releases:");
+        for rel in &catalogue {
+            println!("    erlang {} ({})", rel.version, rel.file_name);
+        }
+        println!("\n  Pass a version to install: `devcrate install erlang 27.2`");
+        return Ok(None);
+    };
+
+    let release = catalogue
+        .iter()
+        .find(|r| r.version == wanted || r.version.starts_with(wanted))
+        .ok_or_else(|| anyhow!("no Erlang release matching {wanted:?}"))?;
+
+    let download = release.download();
+    let dest = stack.root.join("erlang");
+
+    Ok(Some(Chosen {
+        download,
+        dest,
+        replace_freely: false,
+    }))
+}
+
 /// The release a spelling names: a line by name (`stable`, `lts`, `preview`,
 /// `snapshot`), or an exact version off the stable list.
 ///
@@ -1010,6 +1348,9 @@ fn report_transfer(
         Runtime::Composer => "getcomposer.org's checksum",
         // nginx publishes none, so this arm is never the verified one.
         Runtime::Nginx => "the vendor's checksum",
+        Runtime::MariaDb => "the vendor's archive",
+        Runtime::RabbitMq => "GitHub releases",
+        Runtime::Erlang => "GitHub releases",
     };
     match (fetched.cached, fetched.verified) {
         (true, true) => println!(
@@ -1163,6 +1504,9 @@ impl Reporter {
                 Runtime::Php => self.line("generating php.ini"),
                 Runtime::Nginx => self.line("preparing the prefix"),
                 Runtime::Composer => self.line("writing the composer shim"),
+                Runtime::MariaDb => self.line("generating my.ini"),
+                Runtime::RabbitMq => self.line("configuring rabbitmq plugins"),
+                Runtime::Erlang => self.line("configuring erlang environment"),
             },
             Progress::Installing => self.line("moving it into place"),
         }
@@ -1215,7 +1559,48 @@ fn print_installed(done: &Installed) {
         Details::Php(php) => print_php_installed(done, php),
         Details::Nginx(nginx) => print_nginx_installed(done, nginx),
         Details::Composer(composer) => print_composer_installed(done, composer),
+        Details::MariaDb(mariadb) => print_mariadb_installed(done, mariadb),
+        Details::RabbitMq(rabbitmq) => print_rabbitmq_installed(done, rabbitmq),
+        Details::Erlang(erlang) => print_erlang_installed(done, erlang),
     }
+}
+
+fn print_mariadb_installed(done: &Installed, mariadb: &MariaDbInstalled) {
+    if mariadb.config_created {
+        println!("  my.ini generated with default settings");
+    }
+    if mariadb.data_dir_created {
+        println!("  created data/ directory");
+    }
+    if done.replaced {
+        println!("  replaced the previous MariaDB installation");
+    }
+    println!();
+    println!("MariaDB {} installed to {}", done.version, mariadb.dir);
+    println!("  start MariaDB service   devcrate start mariadb");
+}
+
+fn print_rabbitmq_installed(done: &Installed, rabbitmq: &RabbitMqInstalled) {
+    if rabbitmq.data_dir_created {
+        println!("  created data/ directory");
+    }
+    if rabbitmq.plugins_file_created {
+        println!("  enabled rabbitmq_management plugin");
+    }
+    if done.replaced {
+        println!("  replaced the previous RabbitMQ installation");
+    }
+    println!();
+    println!("RabbitMQ {} installed to {}", done.version, rabbitmq.dir);
+    println!("  start RabbitMQ service  devcrate start rabbitmq");
+}
+
+fn print_erlang_installed(done: &Installed, erlang: &ErlangInstalled) {
+    if done.replaced {
+        println!("  replaced the previous Erlang/OTP installation");
+    }
+    println!();
+    println!("Erlang/OTP {} installed to {}", done.version, erlang.dir);
 }
 
 fn print_php_installed(done: &Installed, php: &PhpInstalled) {
@@ -1416,9 +1801,9 @@ mod tests {
         assert_eq!(Runtime::parse("nginx").unwrap(), Runtime::Nginx);
         assert_eq!(Runtime::parse("composer").unwrap(), Runtime::Composer);
         assert_eq!(Runtime::parse("Composer").unwrap(), Runtime::Composer);
-
-        let planned = Runtime::parse("mariadb").unwrap_err().to_string();
-        assert!(planned.contains("not built yet"), "{planned}");
+        assert_eq!(Runtime::parse("mariadb").unwrap(), Runtime::MariaDb);
+        assert_eq!(Runtime::parse("rabbitmq").unwrap(), Runtime::RabbitMq);
+        assert_eq!(Runtime::parse("erlang").unwrap(), Runtime::Erlang);
 
         let typo = Runtime::parse("pph").unwrap_err().to_string();
         assert!(typo.contains("not a runtime devcrate manages"), "{typo}");
