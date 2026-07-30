@@ -476,6 +476,9 @@ fn start_service(stack: &Stack, service: &Service) -> Started {
     if !running(service).is_empty() {
         return Started::AlreadyRunning;
     }
+    if service.kind == ServiceKind::Node || service.kind == ServiceKind::Bun {
+        return Started::Listening(Duration::ZERO);
+    }
     // Preflight: ours is not running, so anything already on one of its ports
     // belongs to somebody else and starting would just fail to bind.
     if let Some(&port) = service.ports.iter().find(|&&port| probe::is_listening(port)) {
@@ -670,6 +673,9 @@ pub fn describe_start(service_kind: ServiceKind, outcome: &Started) -> String {
     match outcome {
         Started::AlreadyRunning => "already running".into(),
         Started::NotInstalled(path) => format!("skipped, not installed ({path})"),
+        Started::Listening(_) if service_kind == ServiceKind::Node || service_kind == ServiceKind::Bun => {
+            "ready (CLI runtime)".into()
+        }
         Started::Listening(took) => format!("listening in {:.1}s", took.as_secs_f32()),
         Started::Silent(grace) => {
             format!("FAILED: running, but no port answered within {}s", grace.as_secs())
