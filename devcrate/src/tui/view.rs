@@ -391,6 +391,23 @@ fn render_modal(frame: &mut Frame, app: &App, modal: &Modal) {
                 &mut state,
             );
         }
+        Modal::InstallPicker { index } => {
+            let items: Vec<ListItem> = crate::tui::app::INSTALL_OPTIONS
+                .iter()
+                .map(|(_, label, _)| ListItem::new(*label))
+                .collect();
+            let height = (items.len() + 2).max(3) as u16;
+            let area = centred(frame.area(), 46, height);
+            frame.render_widget(Clear, area);
+            let mut state = ListState::default().with_selected(Some(*index));
+            frame.render_stateful_widget(
+                List::new(items)
+                    .block(bordered("Install Service / Runtime"))
+                    .highlight_style(Style::new().add_modifier(Modifier::REVERSED)),
+                area,
+                &mut state,
+            );
+        }
     }
 }
 
@@ -403,6 +420,7 @@ fn help_text() -> Text<'static> {
         Line::from("Services".fg(ACCENT)),
         Line::from("  s / x / t     start / stop / restart the selected service"),
         Line::from("  S / X / T     ...the whole stack, in dependency order"),
+        Line::from("  i             install service or runtime (Node, Bun, PHP, etc)"),
         Line::from("  u             repoint php\\current (the CLI version)"),
         Line::from(""),
         Line::from("Sites".fg(ACCENT)),
@@ -412,9 +430,6 @@ fn help_text() -> Text<'static> {
         Line::from("Logs".fg(ACCENT)),
         Line::from("  f             follow on/off       Home/End  top / bottom"),
         Line::from("  PgUp PgDn     scroll"),
-        Line::from(""),
-        Line::from("Not done here: installing runtimes, editing the hosts file,".fg(MUTED)),
-        Line::from("issuing certificates. See docs/roadmap.md items 2 and 4.".fg(MUTED)),
     ])
 }
 

@@ -41,6 +41,8 @@ pub enum Modal {
     Help,
     /// Pick a PHP version. The choice is applied to whatever asked for it.
     PhpPicker { purpose: PhpPurpose, index: usize },
+    /// Choose a runtime/service to install from the TUI.
+    InstallPicker { index: usize },
     /// Type a hostname for a new vhost.
     NewSite { host: String },
     /// Confirm something that cannot be undone.
@@ -48,6 +50,17 @@ pub enum Modal {
     /// The full output of the last job, when it was more than one line.
     Output { title: String, lines: Vec<String>, failed: bool },
 }
+
+pub const INSTALL_OPTIONS: [(&'static str, &'static str, Option<&'static str>); 8] = [
+    ("node", "Node.js (v22.11.0)", Some("22.11.0")),
+    ("bun", "Bun (Latest)", None),
+    ("php", "PHP 8.4", Some("8.4")),
+    ("php", "PHP 8.3", Some("8.3")),
+    ("php", "PHP 8.2", Some("8.2")),
+    ("mariadb", "MariaDB Server", None),
+    ("rabbitmq", "RabbitMQ + Erlang", None),
+    ("composer", "Composer (Latest)", None),
+];
 
 pub enum PhpPurpose {
     /// Repoint `php\current`.
@@ -312,6 +325,10 @@ impl App {
                 self.modal = Some(Modal::PhpPicker { purpose: PhpPurpose::Cli, index: 0 });
                 None
             }
+            KeyCode::Char('i') => {
+                self.modal = Some(Modal::InstallPicker { index: 0 });
+                None
+            }
             _ => None,
         }
     }
@@ -414,6 +431,23 @@ impl App {
                             self.submit(Job::SiteAdd { host, php: Some(chosen) })
                         }
                     };
+                }
+                _ => {}
+            },
+            Some(Modal::InstallPicker { index }) => match key.code {
+                KeyCode::Esc => self.modal = None,
+                KeyCode::Up | KeyCode::Char('k') => *index = index.saturating_sub(1),
+                KeyCode::Down | KeyCode::Char('j') => {
+                    *index = (*index + 1).min(INSTALL_OPTIONS.len().saturating_sub(1));
+                }
+                KeyCode::Enter => {
+                    let (runtime, _label, version) = INSTALL_OPTIONS[*index];
+                    let job = Job::Install {
+                        runtime: runtime.to_string(),
+                        version: version.map(|v| v.to_string()),
+                    };
+                    self.modal = None;
+                    return self.submit(job);
                 }
                 _ => {}
             },

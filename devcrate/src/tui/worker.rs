@@ -58,6 +58,7 @@ pub enum Job {
     SiteAdd { host: String, php: Option<String> },
     SiteSetPhp { host: String, version: String },
     SiteRemove(String),
+    Install { runtime: String, version: Option<String> },
 }
 
 impl Job {
@@ -75,6 +76,12 @@ impl Job {
             Job::SiteAdd { host, .. } => format!("Creating {host}"),
             Job::SiteSetPhp { host, version } => format!("Pointing {host} at PHP {version}"),
             Job::SiteRemove(host) => format!("Removing {host}"),
+            Job::Install { runtime, version } => {
+                format!(
+                    "Downloading & installing {runtime}{}",
+                    version.as_ref().map(|v| format!(" {v}")).unwrap_or_default()
+                )
+            }
         }
     }
 
@@ -346,6 +353,18 @@ fn run(stack: &Stack, job: Job) -> JobResult {
             },
             Err(err) => failure(label, err),
         },
+
+        Job::Install { runtime, version } => {
+            match crate::install::install(stack, &runtime, version.as_deref(), None, true) {
+                Ok(_) => JobResult {
+                    label,
+                    lines: vec![format!("Successfully installed {runtime}!")],
+                    failed: false,
+                    sites_changed: false,
+                },
+                Err(err) => failure(label, err),
+            }
+        }
     }
 }
 
