@@ -36,12 +36,24 @@ const BACKGROUND: u32 = 0x0000_0200 /* CREATE_NEW_PROCESS_GROUP */ | 0x0800_0000
 const DETACHED: u32 = 0x0000_0008 /* DETACHED_PROCESS */;
 
 /// The order things may safely be brought down in.
-const SHUTDOWN: [ServiceKind; 4] =
-    [ServiceKind::Nginx, ServiceKind::Php, ServiceKind::RabbitMq, ServiceKind::MariaDb];
+const SHUTDOWN: [ServiceKind; 6] = [
+    ServiceKind::Nginx,
+    ServiceKind::Php,
+    ServiceKind::Node,
+    ServiceKind::Bun,
+    ServiceKind::RabbitMq,
+    ServiceKind::MariaDb,
+];
 
 /// ...and up in.
-const STARTUP: [ServiceKind; 4] =
-    [ServiceKind::MariaDb, ServiceKind::Php, ServiceKind::RabbitMq, ServiceKind::Nginx];
+const STARTUP: [ServiceKind; 6] = [
+    ServiceKind::MariaDb,
+    ServiceKind::Php,
+    ServiceKind::Node,
+    ServiceKind::Bun,
+    ServiceKind::RabbitMq,
+    ServiceKind::Nginx,
+];
 
 /// How often to re-check whether a service has finished going away.
 const POLL: Duration = Duration::from_millis(200);
@@ -152,7 +164,7 @@ fn subject(targets: &[&Service], only: Option<&str>) -> String {
 fn select<'a>(
     stack: &'a Stack,
     only: Option<&str>,
-    order: [ServiceKind; 4],
+    order: [ServiceKind; 6],
 ) -> Result<Vec<&'a Service>> {
     let ordered: Vec<&Service> = order
         .into_iter()
