@@ -56,7 +56,7 @@ fn grace(kind: ServiceKind) -> Duration {
         ServiceKind::Nginx => Duration::from_secs(10),
         // A FastCGI pool has no shutdown command; it is terminated outright,
         // exactly as stop.bat does. No point waiting for something to happen.
-        ServiceKind::Php => Duration::ZERO,
+        ServiceKind::Php | ServiceKind::Node | ServiceKind::Bun => Duration::ZERO,
         ServiceKind::RabbitMq => Duration::from_secs(30),
         ServiceKind::MariaDb => Duration::from_secs(30),
     }
@@ -282,8 +282,8 @@ fn ask_nicely(stack: &Stack, service: &Service) -> Result<()> {
             .arg("-p")
             .arg(&stack.nginx_prefix)
             .args(["-s", "quit"])),
-        // No shutdown command exists for a php-cgi FastCGI listener.
-        ServiceKind::Php => Ok(()),
+        // No shutdown command exists for a php-cgi FastCGI listener or CLI runtimes.
+        ServiceKind::Php | ServiceKind::Node | ServiceKind::Bun => Ok(()),
         ServiceKind::RabbitMq => {
             let sbin = parent(&service.install_marker)?;
             let ctl = sbin.join("rabbitmqctl.bat");
@@ -379,6 +379,7 @@ fn boot(kind: ServiceKind) -> Duration {
         ServiceKind::MariaDb => Duration::from_secs(45),
         // A cold Erlang node with the management plugin is the slow one here.
         ServiceKind::RabbitMq => Duration::from_secs(90),
+        ServiceKind::Node | ServiceKind::Bun => Duration::ZERO,
     }
 }
 
@@ -575,6 +576,8 @@ fn launch(stack: &Stack, service: &Service) -> Result<()> {
             command.arg("-p").arg(&stack.nginx_prefix).args(["-c", "conf/nginx.conf"]);
             background(&mut command)
         }
+
+        ServiceKind::Node | ServiceKind::Bun => Ok(()),
     }
 }
 

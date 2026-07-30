@@ -99,6 +99,8 @@ pub enum ServiceKind {
     Php,
     MariaDb,
     RabbitMq,
+    Node,
+    Bun,
 }
 
 impl ServiceKind {
@@ -108,6 +110,8 @@ impl ServiceKind {
             ServiceKind::Php => "php",
             ServiceKind::MariaDb => "mariadb",
             ServiceKind::RabbitMq => "rabbitmq",
+            ServiceKind::Node => "node",
+            ServiceKind::Bun => "bun",
         }
     }
 }
@@ -135,7 +139,22 @@ pub struct Service {
 
 impl Service {
     pub fn is_installed(&self) -> bool {
-        self.install_marker.exists()
+        if self.kind == ServiceKind::Node || self.kind == ServiceKind::Bun {
+            if self.install_marker.exists() {
+                return true;
+            }
+            if let Ok(entries) = std::fs::read_dir(&self.process_prefix) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if name.starts_with('v') && entry.path().is_dir() {
+                        return true;
+                    }
+                }
+            }
+            false
+        } else {
+            self.install_marker.exists()
+        }
     }
 }
 
@@ -222,6 +241,28 @@ impl Stack {
                 config.rabbitmq.port.unwrap_or(5672),
                 config.rabbitmq.management_port.unwrap_or(15672),
             ],
+        });
+
+        let node_dir = base.join("node");
+        services.push(Service {
+            id: "node".into(),
+            name: "Node.js".into(),
+            kind: ServiceKind::Node,
+            install_marker: node_dir.join("current").join("node.exe"),
+            process_prefix: node_dir,
+            exclude_names: Vec::new(),
+            ports: Vec::new(),
+        });
+
+        let bun_dir = base.join("bun");
+        services.push(Service {
+            id: "bun".into(),
+            name: "Bun".into(),
+            kind: ServiceKind::Bun,
+            install_marker: bun_dir.join("current").join("bun.exe"),
+            process_prefix: bun_dir,
+            exclude_names: Vec::new(),
+            ports: Vec::new(),
         });
 
         Ok(Stack {
