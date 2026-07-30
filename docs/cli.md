@@ -14,8 +14,7 @@ commands. `install` goes further than any script does: `devcrate install php
 the vendor's own feed, and installs it, `devcrate install nginx 1.31.3` does the
 equivalent from nginx.org, and `devcrate install composer` fetches the phar from
 getcomposer.org and verifies it against the checksum the vendor publishes beside
-it; `--from` does the same from an archive already on disk. MariaDB, RabbitMQ,
-and Erlang are not installable yet.
+it; `--from` does the same from an archive already on disk. MariaDB, RabbitMQ, Erlang, Node.js, and Bun are all fully installable end to end.
 
 The batch scripts stay in the repo and keep working; nothing about them has
 changed.

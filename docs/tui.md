@@ -56,6 +56,7 @@ a rescan rather than waiting for the next one.
 | --- | --- |
 | `s` `x` `t` | Start / stop / restart the **selected** service |
 | `S` `X` `T` | ...the **whole stack**, in dependency order |
+| `i` | Open the **Install Service / Runtime** picker (Node.js, Bun, PHP, MariaDB, RabbitMQ, Composer, Nginx) |
 | `u` | Repoint `php\current` — the CLI PHP version |
 
 Start and stop go through the same order, the same graceful commands, and the

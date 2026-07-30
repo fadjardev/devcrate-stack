@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Interactive TUI Install Modal (Key `i`)** — Added one-click service & runtime downloader modal directly inside the TUI dashboard for Node.js, Bun, PHP, MariaDB, RabbitMQ, Composer, and Nginx.
 - **Node.js & Bun Managed Runtimes (`devcrate install node`, `devcrate install bun`, `devcrate node`, `devcrate bun`)** — Implemented Roadmap Item 5: portable JavaScript runtimes and version management.
   - Downloads Node.js zip distributions from `nodejs.org/dist/` into `node/v<version>/` and Bun from GitHub Releases into `bun/v<version>/`.
   - Configures `npm-global` and `npm-cache` inside `node/` so global NPM packages and cache stay inside the stack root without cluttering `%AppData%`.
