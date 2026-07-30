@@ -12,7 +12,7 @@ stack for you.
 | 1 | Rust TUI (`ratatui`), shipped as a single executable | done — see [tui.md](tui.md) |
 | 2 | Built-in runtime downloader / installer with version selection | done — PHP, Nginx, Composer, MariaDB, RabbitMQ, and Erlang/OTP done end to end |
 | 3 | Runs from any terminal, scriptable as well as interactive | done — see [cli.md](cli.md) |
-| 4 | Open an existing project: vhost + hosts entry + mkcert TLS, in one step | planned |
+| 4 | Open an existing project: vhost + hosts entry + mkcert TLS, in one step | done — automated hosts block editing with UAC elevation, mkcert TLS issuance, smart web root & composer PHP constraint detection |
 | 5 | Node.js and Bun as managed runtimes | planned |
 
 ---

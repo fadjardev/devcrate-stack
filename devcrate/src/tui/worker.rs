@@ -287,23 +287,22 @@ fn run(stack: &Stack, job: Job) -> JobResult {
             Err(err) => failure(label, err),
         },
 
-        Job::SiteAdd { host, php } => match site::create(stack, &host, php.as_deref(), false) {
-            Ok(made) => {
-                let mut lines = vec![
-                    format!("wrote {}", made.conf),
-                    format!("https://{} -> {} (fastcgi {})", made.host, made.php_name, made.port),
-                    made.reload.note(),
-                    format!("add `127.0.0.1  {}` to your hosts file as Administrator", made.host),
-                ];
-                if let Some(domain) = made.needs_wildcard {
-                    lines.push(format!(
-                        "{} is third-level: the *.test wildcard does not cover it, issue *.{domain}",
-                        made.host
-                    ));
+        Job::SiteAdd { host, php } => {
+            match site::create(stack, &host, None, php.as_deref(), false, false, false) {
+                Ok(made) => {
+                    let mut lines = vec![
+                        format!("wrote {}", made.conf),
+                        format!("https://{} -> {} (fastcgi {})", made.host, made.php_name, made.port),
+                        made.reload.note(),
+                    ];
+                    if made.hosts_updated {
+                        lines.push("hosts updated C:\\Windows\\System32\\drivers\\etc\\hosts".to_string());
+                    }
+                    lines.push(format!("SSL cert: {}", made.cert_name));
+                    JobResult { label, lines, failed: false, sites_changed: true }
                 }
-                JobResult { label, lines, failed: false, sites_changed: true }
+                Err(err) => failure(label, err),
             }
-            Err(err) => failure(label, err),
         },
 
         Job::SiteSetPhp { host, version } => {

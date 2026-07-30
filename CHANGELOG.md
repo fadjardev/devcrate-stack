@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Automated Hosts & TLS Management (`devcrate site add`)** — Implemented Roadmap Item 4: one-step project onboarding with automated Windows `hosts` file modification and `mkcert` TLS certificate issuance.
+  - Modifies `C:\Windows\System32\drivers\etc\hosts` inside isolated `# --- devcrate begin/end ---` marker blocks, with automatic UAC elevation fallback via PowerShell when permissions are denied.
+  - Automatically issues wildcard TLS certificates (`_wildcard.<domain>.pem`) into `nginx/conf/certs/` using `mkcert`.
+  - Smart web root detection (`public/` directory for Laravel, CodeIgniter 4, Symfony).
+  - Smart PHP version detection from `composer.json` (`require.php` constraint parsing).
+  - Out-of-tree project support via `--path <DIR>` with automatic junction creation under `projects/`.
 - **`devcrate install mariadb`, `rabbitmq`, and `erlang`** — Built-in automated installers and archive unpackers for MariaDB, RabbitMQ Server, and Erlang/OTP, completing Roadmap Item 2 end-to-end.
   - MariaDB creates a default `my.ini` and `data/` directory.
   - RabbitMQ sets up `data/` directory and enables `rabbitmq_management` plugin.

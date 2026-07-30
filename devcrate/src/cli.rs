@@ -143,9 +143,18 @@ pub enum SiteCommand {
 pub struct SiteAddArgs {
     /// Hostname, e.g. myapp.test.
     pub host: String,
-    /// PHP version to serve it with, e.g. 8.5. Defaults to the CLI version.
+    /// Optional path to an existing project directory.
+    #[arg(long, value_name = "PATH")]
+    pub path: Option<PathBuf>,
+    /// PHP version to serve it with, e.g. 8.5. Defaults to detection or CLI version.
     #[arg(long)]
     pub php: Option<String>,
+    /// Skip automatic hosts file update.
+    #[arg(long)]
+    pub no_hosts: bool,
+    /// Skip automatic TLS certificate generation via mkcert.
+    #[arg(long)]
+    pub no_tls: bool,
     /// Overwrite the conf if one already exists for this host.
     #[arg(long)]
     pub force: bool,

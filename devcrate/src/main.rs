@@ -9,8 +9,10 @@
 mod cli;
 mod config;
 mod control;
+mod hosts;
 mod install;
 mod junction;
+mod mkcert;
 mod nginx;
 mod php;
 mod probe;
@@ -91,7 +93,15 @@ fn run(cli: Cli) -> Result<u8> {
             Ok(exit::OK)
         }
         Command::Site(SiteCommand::Add(args)) => {
-            site::add(&stack, &args.host, args.php.as_deref(), args.force)
+            site::add(
+                &stack,
+                &args.host,
+                args.path.as_deref(),
+                args.php.as_deref(),
+                args.no_hosts,
+                args.no_tls,
+                args.force,
+            )
         }
         Command::Site(SiteCommand::SetPhp(args)) => {
             site::set_php(&stack, &args.host, &args.version)
