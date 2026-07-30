@@ -58,7 +58,7 @@ pub struct NewSiteForm {
     pub php_index: usize, // 0 = Auto-detect, 1.. = PHP versions
     pub update_hosts: bool,
     pub issue_tls: bool,
-    pub active_field: usize, // 0: host, 1: path, 2: php, 3: hosts, 4: tls, 5: submit button
+    pub active_field: usize, // 0: host, 1: path, 2: browse button, 3: php, 4: hosts, 5: tls, 6: submit button
 }
 
 impl NewSiteForm {
@@ -72,6 +72,26 @@ impl NewSiteForm {
             active_field: 0,
         }
     }
+}
+
+pub fn pick_project_folder() -> Option<String> {
+    #[cfg(windows)]
+    {
+        let output = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                "$f = (New-Object -ComObject Shell.Application).BrowseForFolder(0, 'Select Project Directory', 0, 0); if ($f) { [Console]::Write($f.Self.Path) }",
+            ])
+            .output();
+        if let Ok(out) = output {
+            let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !path.is_empty() {
+                return Some(path);
+            }
+        }
+    }
+    None
 }
 
 pub const INSTALL_OPTIONS: [(&'static str, &'static str, Option<&'static str>); 8] = [
@@ -411,12 +431,31 @@ impl App {
         if let Some(Modal::NewSite(form)) = &mut self.modal {
             match key.code {
                 KeyCode::Esc => self.modal = None,
-                KeyCode::Tab | KeyCode::Down => form.active_field = (form.active_field + 1) % 6,
+                KeyCode::Tab | KeyCode::Down => form.active_field = (form.active_field + 1) % 7,
                 KeyCode::BackTab | KeyCode::Up => {
-                    form.active_field = if form.active_field == 0 { 5 } else { form.active_field - 1 };
+                    form.active_field = if form.active_field == 0 { 6 } else { form.active_field - 1 };
+                }
+                KeyCode::Char('b') if form.active_field != 0 && form.active_field != 1 => {
+                    if let Some(picked) = pick_project_folder() {
+                        form.path = picked.clone();
+                        if form.host.trim().is_empty() {
+                            if let Some(name) = std::path::Path::new(&picked).file_name() {
+                                form.host = format!("{}.test", name.to_string_lossy());
+                            }
+                        }
+                    }
                 }
                 KeyCode::Enter => {
-                    if form.active_field == 5 || (!form.host.trim().is_empty() && (form.active_field == 0 || form.active_field == 1)) {
+                    if form.active_field == 2 {
+                        if let Some(picked) = pick_project_folder() {
+                            form.path = picked.clone();
+                            if form.host.trim().is_empty() {
+                                if let Some(name) = std::path::Path::new(&picked).file_name() {
+                                    form.host = format!("{}.test", name.to_string_lossy());
+                                }
+                            }
+                        }
+                    } else if form.active_field == 6 || (!form.host.trim().is_empty() && (form.active_field == 0 || form.active_field == 1)) {
                         let host = form.host.trim().to_string();
                         if !host.is_empty() {
                             let path = if form.path.trim().is_empty() { None } else { Some(form.path.trim().to_string()) };
@@ -432,7 +471,7 @@ impl App {
                             return self.submit(job);
                         }
                     } else {
-                        form.active_field = (form.active_field + 1) % 6;
+                        form.active_field = (form.active_field + 1) % 7;
                     }
                 }
                 KeyCode::Backspace => match form.active_field {
@@ -441,19 +480,29 @@ impl App {
                     _ => {}
                 },
                 KeyCode::Left => match form.active_field {
-                    2 => form.php_index = form.php_index.saturating_sub(1),
-                    3 => form.update_hosts = !form.update_hosts,
-                    4 => form.issue_tls = !form.issue_tls,
+                    3 => form.php_index = form.php_index.saturating_sub(1),
+                    4 => form.update_hosts = !form.update_hosts,
+                    5 => form.issue_tls = !form.issue_tls,
                     _ => {}
                 },
                 KeyCode::Right | KeyCode::Char(' ') => match form.active_field {
                     2 => {
+                        if let Some(picked) = pick_project_folder() {
+                            form.path = picked.clone();
+                            if form.host.trim().is_empty() {
+                                if let Some(name) = std::path::Path::new(&picked).file_name() {
+                                    form.host = format!("{}.test", name.to_string_lossy());
+                                }
+                            }
+                        }
+                    }
+                    3 => {
                         if form.php_index < versions.len() {
                             form.php_index += 1;
                         }
                     }
-                    3 => form.update_hosts = !form.update_hosts,
-                    4 => form.issue_tls = !form.issue_tls,
+                    4 => form.update_hosts = !form.update_hosts,
+                    5 => form.issue_tls = !form.issue_tls,
                     _ => {}
                 },
                 KeyCode::Char(c) => match form.active_field {

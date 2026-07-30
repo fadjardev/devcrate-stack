@@ -391,27 +391,31 @@ fn render_modal(frame: &mut Frame, app: &App, modal: &Modal) {
                     cursor(1),
                 ]),
                 Line::from(vec![
-                    Span::styled("PHP Version:     < ", f_style(2)),
-                    Span::styled(&php_label, f_style(2)),
-                    Span::styled(" >", f_style(2)),
+                    Span::raw("                 "),
+                    Span::styled(" [ Browse Folder... ] ", if form.active_field == 2 { Style::new().bg(ACCENT).fg(Color::Black).add_modifier(Modifier::BOLD) } else { Style::new().fg(ACCENT) }),
                 ]),
                 Line::from(vec![
-                    Span::styled("Hosts File:      ", f_style(3)),
-                    Span::styled(if form.update_hosts { "[x] Auto-add to Windows hosts" } else { "[ ] Skip hosts update" }, f_style(3)),
+                    Span::styled("PHP Version:     < ", f_style(3)),
+                    Span::styled(&php_label, f_style(3)),
+                    Span::styled(" >", f_style(3)),
                 ]),
                 Line::from(vec![
-                    Span::styled("TLS Certificate: ", f_style(4)),
-                    Span::styled(if form.issue_tls { "[x] Auto-issue wildcard SSL (mkcert)" } else { "[ ] Skip TLS certificate" }, f_style(4)),
+                    Span::styled("Hosts File:      ", f_style(4)),
+                    Span::styled(if form.update_hosts { "[x] Auto-add to Windows hosts" } else { "[ ] Skip hosts update" }, f_style(4)),
+                ]),
+                Line::from(vec![
+                    Span::styled("TLS Certificate: ", f_style(5)),
+                    Span::styled(if form.issue_tls { "[x] Auto-issue wildcard SSL (mkcert)" } else { "[ ] Skip TLS certificate" }, f_style(5)),
                 ]),
                 Line::from(""),
                 Line::from(vec![
                     Span::raw("                "),
-                    Span::styled(" [ Create Site ] ", if form.active_field == 5 { Style::new().bg(ACCENT).fg(Color::Black).add_modifier(Modifier::BOLD) } else { Style::new().fg(ACCENT) }),
+                    Span::styled(" [ Create Site ] ", if form.active_field == 6 { Style::new().bg(ACCENT).fg(Color::Black).add_modifier(Modifier::BOLD) } else { Style::new().fg(ACCENT) }),
                 ]),
                 Line::from(""),
-                Line::from("Tab/j/k: navigate fields • Space/Arrows: toggle • Esc: cancel".fg(MUTED)),
+                Line::from("Tab/j/k: navigate fields • Enter/b: browse • Esc: cancel".fg(MUTED)),
             ]);
-            popup(frame, "Create New Site (vhost)", text, 68, 14);
+            popup(frame, "Create New Site (vhost)", text, 68, 15);
         }
         Modal::PhpPicker { purpose, index } => {
             let versions = app.php_versions();
