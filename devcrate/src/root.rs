@@ -235,6 +235,15 @@ pub(crate) mod tests {
 
     /// A throwaway directory tree. Paths are given as `dir/file` strings; a
     /// trailing `/` means "directory", anything else is an empty file.
+    ///
+    /// The base comes back through [`clean`], the same canonicalization the
+    /// lookups apply to what they return, so a test can compare the two
+    /// directly. Without it the sides are the same directory spelled two ways
+    /// and the comparison turns on the machine: `TEMP` is an 8.3 short name on
+    /// some Windows accounts (`IT-PRO~1`), which `canonicalize` expands to the
+    /// long one, so `nginx_exe`'s result and a bare `base.join(..)` disagreed
+    /// on a path they both pointed at. Cleaning here rather than at each
+    /// `assert_eq!` keeps the next test from re-learning it.
     pub(crate) fn tree(label: &str, entries: &[&str]) -> PathBuf {
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -242,6 +251,7 @@ pub(crate) mod tests {
             .as_nanos();
         let base = std::env::temp_dir().join(format!("devcrate-{label}-{unique}"));
         let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
         for entry in entries {
             let path = base.join(entry);
             if entry.ends_with('/') {
@@ -251,7 +261,9 @@ pub(crate) mod tests {
                 std::fs::write(&path, "").unwrap();
             }
         }
-        base
+        // Canonicalization needs the directory to exist, which is why it is
+        // created above rather than left to the entries to bring into being.
+        clean(&base).unwrap_or(base)
     }
 
     /// The restructured layout: one stable prefix, versions inside it.
