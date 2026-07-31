@@ -41,13 +41,69 @@ pub enum Modal {
     Help,
     /// Pick a PHP version. The choice is applied to whatever asked for it.
     PhpPicker { purpose: PhpPurpose, index: usize },
-    /// Type a hostname for a new vhost.
-    NewSite { host: String },
+    /// Choose a runtime/service to install from the TUI.
+    InstallPicker { index: usize },
+    /// Type details for a new vhost.
+    NewSite(NewSiteForm),
     /// Confirm something that cannot be undone.
     Confirm { question: String, job: Job },
     /// The full output of the last job, when it was more than one line.
     Output { title: String, lines: Vec<String>, failed: bool },
 }
+
+#[derive(Debug, Clone)]
+pub struct NewSiteForm {
+    pub host: String,
+    pub path: String,
+    pub php_index: usize, // 0 = Auto-detect, 1.. = PHP versions
+    pub update_hosts: bool,
+    pub issue_tls: bool,
+    pub active_field: usize, // 0: host, 1: path, 2: browse button, 3: php, 4: hosts, 5: tls, 6: submit button
+}
+
+impl NewSiteForm {
+    pub fn new() -> Self {
+        Self {
+            host: String::new(),
+            path: String::new(),
+            php_index: 0,
+            update_hosts: true,
+            issue_tls: true,
+            active_field: 0,
+        }
+    }
+}
+
+pub fn pick_project_folder() -> Option<String> {
+    #[cfg(windows)]
+    {
+        let output = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                "$f = (New-Object -ComObject Shell.Application).BrowseForFolder(0, 'Select Project Directory', 0, 0); if ($f) { [Console]::Write($f.Self.Path) }",
+            ])
+            .output();
+        if let Ok(out) = output {
+            let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !path.is_empty() {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+pub const INSTALL_OPTIONS: [(&'static str, &'static str, Option<&'static str>); 8] = [
+    ("node", "Node.js (v22.11.0)", Some("22.11.0")),
+    ("bun", "Bun (Latest)", None),
+    ("php", "PHP 8.4", Some("8.4")),
+    ("php", "PHP 8.3", Some("8.3")),
+    ("php", "PHP 8.2", Some("8.2")),
+    ("mariadb", "MariaDB Server", None),
+    ("rabbitmq", "RabbitMQ + Erlang", None),
+    ("composer", "Composer (Latest)", None),
+];
 
 pub enum PhpPurpose {
     /// Repoint `php\current`.
@@ -55,6 +111,7 @@ pub enum PhpPurpose {
     /// Repoint a vhost's `fastcgi_pass`.
     Site(String),
     /// Choose the version for a vhost about to be created.
+    #[allow(dead_code)]
     NewSite(String),
 }
 
@@ -312,6 +369,10 @@ impl App {
                 self.modal = Some(Modal::PhpPicker { purpose: PhpPurpose::Cli, index: 0 });
                 None
             }
+            KeyCode::Char('i') => {
+                self.modal = Some(Modal::InstallPicker { index: 0 });
+                None
+            }
             _ => None,
         }
     }
@@ -319,7 +380,7 @@ impl App {
     fn sites_key(&mut self, key: KeyEvent) -> Option<Job> {
         match key.code {
             KeyCode::Char('n') => {
-                self.modal = Some(Modal::NewSite { host: String::new() });
+                self.modal = Some(Modal::NewSite(NewSiteForm::new()));
                 None
             }
             KeyCode::Char('p') => {
@@ -366,27 +427,89 @@ impl App {
     }
 
     fn modal_key(&mut self, key: KeyEvent) -> Option<Job> {
-        // Typing a hostname has to come first: every printable character is
-        // input, not a shortcut.
-        if let Some(Modal::NewSite { host }) = &mut self.modal {
+        let versions = self.php_versions();
+        if let Some(Modal::NewSite(form)) = &mut self.modal {
             match key.code {
                 KeyCode::Esc => self.modal = None,
-                KeyCode::Backspace => {
-                    host.pop();
+                KeyCode::Tab | KeyCode::Down => form.active_field = (form.active_field + 1) % 7,
+                KeyCode::BackTab | KeyCode::Up => {
+                    form.active_field = if form.active_field == 0 { 6 } else { form.active_field - 1 };
                 }
-                KeyCode::Char(c) => host.push(c),
-                KeyCode::Enter => {
-                    let host = host.trim().to_string();
-                    if host.is_empty() {
-                        self.modal = None;
-                    } else {
-                        // Which version it runs is the next question.
-                        self.modal = Some(Modal::PhpPicker {
-                            purpose: PhpPurpose::NewSite(host),
-                            index: 0,
-                        });
+                KeyCode::Char('b') if form.active_field != 0 && form.active_field != 1 => {
+                    if let Some(picked) = pick_project_folder() {
+                        form.path = picked.clone();
+                        if form.host.trim().is_empty() {
+                            if let Some(name) = std::path::Path::new(&picked).file_name() {
+                                form.host = format!("{}.test", name.to_string_lossy());
+                            }
+                        }
                     }
                 }
+                KeyCode::Enter => {
+                    if form.active_field == 2 {
+                        if let Some(picked) = pick_project_folder() {
+                            form.path = picked.clone();
+                            if form.host.trim().is_empty() {
+                                if let Some(name) = std::path::Path::new(&picked).file_name() {
+                                    form.host = format!("{}.test", name.to_string_lossy());
+                                }
+                            }
+                        }
+                    } else if form.active_field == 6 || (!form.host.trim().is_empty() && (form.active_field == 0 || form.active_field == 1)) {
+                        let host = form.host.trim().to_string();
+                        if !host.is_empty() {
+                            let path = if form.path.trim().is_empty() { None } else { Some(form.path.trim().to_string()) };
+                            let php = if form.php_index == 0 { None } else { versions.get(form.php_index - 1).map(|v| v.0.clone()) };
+                            let job = Job::SiteAdd {
+                                host,
+                                path,
+                                php,
+                                no_hosts: !form.update_hosts,
+                                no_tls: !form.issue_tls,
+                            };
+                            self.modal = None;
+                            return self.submit(job);
+                        }
+                    } else {
+                        form.active_field = (form.active_field + 1) % 7;
+                    }
+                }
+                KeyCode::Backspace => match form.active_field {
+                    0 => { form.host.pop(); }
+                    1 => { form.path.pop(); }
+                    _ => {}
+                },
+                KeyCode::Left => match form.active_field {
+                    3 => form.php_index = form.php_index.saturating_sub(1),
+                    4 => form.update_hosts = !form.update_hosts,
+                    5 => form.issue_tls = !form.issue_tls,
+                    _ => {}
+                },
+                KeyCode::Right | KeyCode::Char(' ') => match form.active_field {
+                    2 => {
+                        if let Some(picked) = pick_project_folder() {
+                            form.path = picked.clone();
+                            if form.host.trim().is_empty() {
+                                if let Some(name) = std::path::Path::new(&picked).file_name() {
+                                    form.host = format!("{}.test", name.to_string_lossy());
+                                }
+                            }
+                        }
+                    }
+                    3 => {
+                        if form.php_index < versions.len() {
+                            form.php_index += 1;
+                        }
+                    }
+                    4 => form.update_hosts = !form.update_hosts,
+                    5 => form.issue_tls = !form.issue_tls,
+                    _ => {}
+                },
+                KeyCode::Char(c) => match form.active_field {
+                    0 => form.host.push(c),
+                    1 => form.path.push(c),
+                    _ => {}
+                },
                 _ => {}
             }
             return None;
@@ -411,9 +534,32 @@ impl App {
                             self.submit(Job::SiteSetPhp { host, version: chosen })
                         }
                         PhpPurpose::NewSite(host) => {
-                            self.submit(Job::SiteAdd { host, php: Some(chosen) })
+                            self.submit(Job::SiteAdd {
+                                host,
+                                path: None,
+                                php: Some(chosen),
+                                no_hosts: false,
+                                no_tls: false,
+                            })
                         }
                     };
+                }
+                _ => {}
+            },
+            Some(Modal::InstallPicker { index }) => match key.code {
+                KeyCode::Esc => self.modal = None,
+                KeyCode::Up | KeyCode::Char('k') => *index = index.saturating_sub(1),
+                KeyCode::Down | KeyCode::Char('j') => {
+                    *index = (*index + 1).min(INSTALL_OPTIONS.len().saturating_sub(1));
+                }
+                KeyCode::Enter => {
+                    let (runtime, _label, version) = INSTALL_OPTIONS[*index];
+                    let job = Job::Install {
+                        runtime: runtime.to_string(),
+                        version: version.map(|v| v.to_string()),
+                    };
+                    self.modal = None;
+                    return self.submit(job);
                 }
                 _ => {}
             },

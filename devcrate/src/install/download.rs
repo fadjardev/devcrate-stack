@@ -256,6 +256,99 @@ impl PythonRelease {
     }
 }
 
+/// One installable MariaDB release.
+#[derive(Debug, Clone)]
+pub struct MariaDbRelease {
+    pub version: String,
+    pub file_name: String,
+    pub sha256: Option<String>,
+}
+
+impl MariaDbRelease {
+    pub fn download(&self) -> Download {
+        Download {
+            url: format!(
+                "https://archive.mariadb.org/mariadb-{}/winx64-packages/{}",
+                self.version, self.file_name
+            ),
+            file_name: self.file_name.clone(),
+            sha256: self.sha256.clone(),
+        }
+    }
+}
+
+pub fn mariadb_catalogue() -> Result<Vec<MariaDbRelease>> {
+    Ok(vec![
+        MariaDbRelease {
+            version: "11.4.5".to_string(),
+            file_name: "mariadb-11.4.5-winx64.zip".to_string(),
+            sha256: None,
+        },
+        MariaDbRelease {
+            version: "10.11.11".to_string(),
+            file_name: "mariadb-10.11.11-winx64.zip".to_string(),
+            sha256: None,
+        },
+    ])
+}
+
+/// One installable RabbitMQ release.
+#[derive(Debug, Clone)]
+pub struct RabbitMqRelease {
+    pub version: String,
+    pub file_name: String,
+    pub sha256: Option<String>,
+}
+
+impl RabbitMqRelease {
+    pub fn download(&self) -> Download {
+        Download {
+            url: format!(
+                "https://github.com/rabbitmq/rabbitmq-server/releases/download/v{}/{}",
+                self.version, self.file_name
+            ),
+            file_name: self.file_name.clone(),
+            sha256: self.sha256.clone(),
+        }
+    }
+}
+
+pub fn rabbitmq_catalogue() -> Result<Vec<RabbitMqRelease>> {
+    Ok(vec![
+        RabbitMqRelease {
+            version: "4.0.5".to_string(),
+            file_name: "rabbitmq-server-windows-4.0.5.zip".to_string(),
+            sha256: None,
+        },
+        RabbitMqRelease {
+            version: "4.0.0".to_string(),
+            file_name: "rabbitmq-server-windows-4.0.0.zip".to_string(),
+            sha256: None,
+        },
+    ])
+}
+
+/// One installable Erlang/OTP release.
+#[derive(Debug, Clone)]
+pub struct ErlangRelease {
+    pub version: String,
+    pub file_name: String,
+    pub sha256: Option<String>,
+}
+
+impl ErlangRelease {
+    pub fn download(&self) -> Download {
+        Download {
+            url: format!(
+                "https://github.com/erlang/otp/releases/download/OTP-{}/{}",
+                self.version, self.file_name
+            ),
+            file_name: self.file_name.clone(),
+            sha256: self.sha256.clone(),
+        }
+    }
+}
+
 fn embed_release(branch: &str, release: &str) -> PythonRelease {
     PythonRelease {
         version: branch.to_string(),
@@ -313,6 +406,21 @@ fn is_postgres_minor(version: &str) -> bool {
     let parts: Vec<&str> = version.split('.').collect();
     parts.len() == 2
         && parts.iter().all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
+}
+
+pub fn erlang_catalogue() -> Result<Vec<ErlangRelease>> {
+    Ok(vec![
+        ErlangRelease {
+            version: "27.2".to_string(),
+            file_name: "otp_win64_27.2.exe".to_string(),
+            sha256: None,
+        },
+        ErlangRelease {
+            version: "26.2.5.5".to_string(),
+            file_name: "otp_win64_26.2.5.5.exe".to_string(),
+            sha256: None,
+        },
+    ])
 }
 
 /// An archive on disk, ready for [`super::from_archive`].
@@ -1081,4 +1189,168 @@ mod tests {
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
     }
+
+    #[test]
+    fn test_parse_node_catalogue() {
+        let json = r#"[
+            {"version": "v22.11.0", "lts": "Jod", "files": ["win-x64-zip", "tar.gz"]},
+            {"version": "v20.18.0", "lts": true, "files": ["win-x64-zip"]},
+            {"version": "v0.1.0", "lts": false, "files": ["src"]}
+        ]"#;
+        let cat = parse_node_catalogue(json).unwrap();
+        assert_eq!(cat.releases.len(), 2);
+        assert_eq!(cat.releases[0].version, "22.11.0");
+        assert_eq!(cat.releases[0].lts.as_deref(), Some("Jod"));
+        assert_eq!(cat.releases[0].url, "https://nodejs.org/dist/v22.11.0/node-v22.11.0-win-x64.zip");
+    }
+
+    #[test]
+    fn test_parse_bun_catalogue() {
+        let json = r#"[
+            {"tag_name": "bun-v1.2.2", "draft": false, "prerelease": false},
+            {"tag_name": "bun-v1.2.0-canary.1", "draft": false, "prerelease": true}
+        ]"#;
+        let cat = parse_bun_catalogue(json).unwrap();
+        assert_eq!(cat.releases.len(), 1);
+        assert_eq!(cat.releases[0].version, "1.2.2");
+        assert_eq!(cat.releases[0].url, "https://github.com/oven-sh/bun/releases/download/bun-v1.2.2/bun-windows-x64.zip");
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct NodeCatalogue {
+    pub releases: Vec<NodeRelease>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NodeRelease {
+    pub version: String,
+    pub lts: Option<String>,
+    pub url: String,
+    pub archive_name: String,
+}
+
+pub fn parse_node_catalogue(json_text: &str) -> Result<NodeCatalogue> {
+    let val: serde_json::Value = serde_json::from_str(json_text)
+        .context("parsing nodejs index.json")?;
+    let Some(arr) = val.as_array() else {
+        bail!("nodejs index.json is not an array");
+    };
+
+    let mut releases = Vec::new();
+    for item in arr {
+        let version = match item.get("version").and_then(|v| v.as_str()) {
+            Some(v) => v.trim_start_matches('v').to_string(),
+            None => continue,
+        };
+        let files = item.get("files").and_then(|f| f.as_array());
+        let is_win_zip = files.map_or(false, |arr| {
+            arr.iter().any(|f| f.as_str() == Some("win-x64-zip"))
+        });
+
+        if !is_win_zip {
+            continue;
+        }
+
+        let lts = item.get("lts").and_then(|l| {
+            if l.is_string() {
+                l.as_str().map(|s| s.to_string())
+            } else if l.as_bool() == Some(true) {
+                Some("LTS".to_string())
+            } else {
+                None
+            }
+        });
+
+        let archive_name = format!("node-v{version}-win-x64.zip");
+        let url = format!("https://nodejs.org/dist/v{version}/{archive_name}");
+
+        releases.push(NodeRelease {
+            version,
+            lts,
+            url,
+            archive_name,
+        });
+    }
+
+    if releases.is_empty() {
+        bail!("nodejs index.json carried no win-x64-zip releases");
+    }
+
+    Ok(NodeCatalogue { releases })
+}
+
+pub fn fetch_node_catalogue() -> Result<NodeCatalogue> {
+    let url = "https://nodejs.org/dist/index.json";
+    let mut response = agent()
+        .get(url)
+        .call()
+        .with_context(|| format!("fetching Node.js releases index from {url}"))?;
+    let text = response
+        .body_mut()
+        .read_to_string()
+        .with_context(|| format!("reading Node.js releases index from {url}"))?;
+    parse_node_catalogue(&text)
+}
+
+#[derive(Debug, Clone)]
+pub struct BunCatalogue {
+    pub releases: Vec<BunRelease>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BunRelease {
+    pub version: String,
+    pub url: String,
+    pub archive_name: String,
+}
+
+pub fn parse_bun_catalogue(json_text: &str) -> Result<BunCatalogue> {
+    let val: serde_json::Value = serde_json::from_str(json_text)
+        .context("parsing bun releases json")?;
+    let Some(arr) = val.as_array() else {
+        bail!("bun releases json is not an array");
+    };
+
+    let mut releases = Vec::new();
+    for item in arr {
+        let tag = match item.get("tag_name").and_then(|v| v.as_str()) {
+            Some(v) => v,
+            None => continue,
+        };
+        if item.get("draft").and_then(|d| d.as_bool()).unwrap_or(false)
+            || item.get("prerelease").and_then(|p| p.as_bool()).unwrap_or(false)
+        {
+            continue;
+        }
+
+        let version = tag.trim_start_matches("bun-v").trim_start_matches('v').to_string();
+        let archive_name = "bun-windows-x64.zip".to_string();
+        let url = format!("https://github.com/oven-sh/bun/releases/download/{tag}/bun-windows-x64.zip");
+
+        releases.push(BunRelease {
+            version,
+            url,
+            archive_name,
+        });
+    }
+
+    if releases.is_empty() {
+        bail!("bun releases json carried no releases");
+    }
+
+    Ok(BunCatalogue { releases })
+}
+
+pub fn fetch_bun_catalogue() -> Result<BunCatalogue> {
+    let url = "https://api.github.com/repos/oven-sh/bun/releases";
+    let mut response = agent()
+        .get(url)
+        .call()
+        .with_context(|| format!("fetching Bun releases from {url}"))?;
+    let text = response
+        .body_mut()
+        .read_to_string()
+        .with_context(|| format!("reading Bun releases from {url}"))?;
+    parse_bun_catalogue(&text)
 }

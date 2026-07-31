@@ -55,9 +55,16 @@ pub enum Job {
     Stop(Option<String>),
     Restart(Option<String>),
     PhpUse(String),
-    SiteAdd { host: String, php: Option<String> },
+    SiteAdd {
+        host: String,
+        path: Option<String>,
+        php: Option<String>,
+        no_hosts: bool,
+        no_tls: bool,
+    },
     SiteSetPhp { host: String, version: String },
     SiteRemove(String),
+    Install { runtime: String, version: Option<String> },
 }
 
 impl Job {
@@ -75,6 +82,12 @@ impl Job {
             Job::SiteAdd { host, .. } => format!("Creating {host}"),
             Job::SiteSetPhp { host, version } => format!("Pointing {host} at PHP {version}"),
             Job::SiteRemove(host) => format!("Removing {host}"),
+            Job::Install { runtime, version } => {
+                format!(
+                    "Downloading & installing {runtime}{}",
+                    version.as_ref().map(|v| format!(" {v}")).unwrap_or_default()
+                )
+            }
         }
     }
 
@@ -287,23 +300,23 @@ fn run(stack: &Stack, job: Job) -> JobResult {
             Err(err) => failure(label, err),
         },
 
-        Job::SiteAdd { host, php } => match site::create(stack, &host, php.as_deref(), false) {
-            Ok(made) => {
-                let mut lines = vec![
-                    format!("wrote {}", made.conf),
-                    format!("https://{} -> {} (fastcgi {})", made.host, made.php_name, made.port),
-                    made.reload.note(),
-                    format!("add `127.0.0.1  {}` to your hosts file as Administrator", made.host),
-                ];
-                if let Some(domain) = made.needs_wildcard {
-                    lines.push(format!(
-                        "{} is third-level: the *.test wildcard does not cover it, issue *.{domain}",
-                        made.host
-                    ));
+        Job::SiteAdd { host, path, php, no_hosts, no_tls } => {
+            let p = path.as_ref().map(Path::new);
+            match site::create(stack, &host, p, php.as_deref(), no_hosts, no_tls, false) {
+                Ok(made) => {
+                    let mut lines = vec![
+                        format!("wrote {}", made.conf),
+                        format!("https://{} -> {} (fastcgi {})", made.host, made.php_name, made.port),
+                        made.reload.note(),
+                    ];
+                    if made.hosts_updated {
+                        lines.push("hosts updated C:\\Windows\\System32\\drivers\\etc\\hosts".to_string());
+                    }
+                    lines.push(format!("SSL cert: {}", made.cert_name));
+                    JobResult { label, lines, failed: false, sites_changed: true }
                 }
-                JobResult { label, lines, failed: false, sites_changed: true }
+                Err(err) => failure(label, err),
             }
-            Err(err) => failure(label, err),
         },
 
         Job::SiteSetPhp { host, version } => {
@@ -347,6 +360,18 @@ fn run(stack: &Stack, job: Job) -> JobResult {
             },
             Err(err) => failure(label, err),
         },
+
+        Job::Install { runtime, version } => {
+            match crate::install::install(stack, &runtime, version.as_deref(), None, true) {
+                Ok(_) => JobResult {
+                    label,
+                    lines: vec![format!("Successfully installed {runtime}!")],
+                    failed: false,
+                    sites_changed: false,
+                },
+                Err(err) => failure(label, err),
+            }
+        }
     }
 }
 

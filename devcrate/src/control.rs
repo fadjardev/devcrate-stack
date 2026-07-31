@@ -38,9 +38,15 @@ const DETACHED: u32 = 0x0000_0008 /* DETACHED_PROCESS */;
 /// The order things may safely be brought down in. Databases go last -- they
 /// have the most to flush, and nothing above them should still be talking to one
 /// by the time it is asked to stop.
+///
+/// A slice rather than a fixed-length array: the length is the number of
+/// `ServiceKind`s, and spelling it out meant editing the type every time one
+/// was added. The test below is what holds the two orders to the same set.
 const SHUTDOWN: &[ServiceKind] = &[
     ServiceKind::Nginx,
     ServiceKind::Php,
+    ServiceKind::Node,
+    ServiceKind::Bun,
     ServiceKind::RabbitMq,
     ServiceKind::Postgres,
     ServiceKind::MariaDb,
@@ -52,6 +58,8 @@ const STARTUP: &[ServiceKind] = &[
     ServiceKind::MariaDb,
     ServiceKind::Postgres,
     ServiceKind::Php,
+    ServiceKind::Node,
+    ServiceKind::Bun,
     ServiceKind::RabbitMq,
     ServiceKind::Nginx,
 ];
@@ -69,7 +77,7 @@ fn grace(kind: ServiceKind) -> Duration {
         ServiceKind::Nginx => Duration::from_secs(10),
         // A FastCGI pool has no shutdown command; it is terminated outright,
         // exactly as stop.bat does. No point waiting for something to happen.
-        ServiceKind::Php => Duration::ZERO,
+        ServiceKind::Php | ServiceKind::Node | ServiceKind::Bun => Duration::ZERO,
         ServiceKind::RabbitMq => Duration::from_secs(30),
         ServiceKind::MariaDb => Duration::from_secs(30),
         // `pg_ctl stop -m fast` rolls back open transactions and disconnects
@@ -300,8 +308,8 @@ fn ask_nicely(stack: &Stack, service: &Service) -> Result<()> {
             .arg("-p")
             .arg(&stack.nginx_prefix)
             .args(["-s", "quit"])),
-        // No shutdown command exists for a php-cgi FastCGI listener.
-        ServiceKind::Php => Ok(()),
+        // No shutdown command exists for a php-cgi FastCGI listener or CLI runtimes.
+        ServiceKind::Php | ServiceKind::Node | ServiceKind::Bun => Ok(()),
         ServiceKind::RabbitMq => {
             let sbin = parent(&service.install_marker)?;
             let ctl = sbin.join("rabbitmqctl.bat");
@@ -413,6 +421,7 @@ fn boot(kind: ServiceKind) -> Duration {
         ServiceKind::Postgres => Duration::from_secs(30),
         // A cold Erlang node with the management plugin is the slow one here.
         ServiceKind::RabbitMq => Duration::from_secs(90),
+        ServiceKind::Node | ServiceKind::Bun => Duration::ZERO,
     }
 }
 
@@ -496,6 +505,9 @@ fn start_service(stack: &Stack, service: &Service) -> Started {
     }
     if !running(service).is_empty() {
         return Started::AlreadyRunning;
+    }
+    if service.kind == ServiceKind::Node || service.kind == ServiceKind::Bun {
+        return Started::Listening(Duration::ZERO);
     }
     // Preflight: ours is not running, so anything already on one of its ports
     // belongs to somebody else and starting would just fail to bind.
@@ -630,6 +642,8 @@ fn launch(stack: &Stack, service: &Service) -> Result<()> {
             command.arg("-p").arg(&stack.nginx_prefix).args(["-c", "conf/nginx.conf"]);
             background(&mut command)
         }
+
+        ServiceKind::Node | ServiceKind::Bun => Ok(()),
     }
 }
 
@@ -710,6 +724,9 @@ pub fn describe_start(service_kind: ServiceKind, outcome: &Started) -> String {
     match outcome {
         Started::AlreadyRunning => "already running".into(),
         Started::NotInstalled(path) => format!("skipped, not installed ({path})"),
+        Started::Listening(_) if service_kind == ServiceKind::Node || service_kind == ServiceKind::Bun => {
+            "ready (CLI runtime)".into()
+        }
         Started::Listening(took) => format!("listening in {:.1}s", took.as_secs_f32()),
         Started::Silent(grace) => {
             format!("FAILED: running, but no port answered within {}s", grace.as_secs())
@@ -785,6 +802,8 @@ mod tests {
         let all = [
             ServiceKind::Nginx,
             ServiceKind::Php,
+            ServiceKind::Node,
+            ServiceKind::Bun,
             ServiceKind::MariaDb,
             ServiceKind::Postgres,
             ServiceKind::RabbitMq,

@@ -99,20 +99,58 @@ pub struct Created {
     pub public: String,
     pub public_existed: bool,
     pub reload: Reload,
-    /// The domain a new wildcard certificate would have to cover, when the
-    /// `*.test` one does not reach this host.
-    pub needs_wildcard: Option<String>,
+    pub cert_name: String,
+    pub hosts_updated: bool,
+    pub hosts_note: Option<String>,
 }
 
-/// Create a vhost: web root, conf, junction, reload. What `new-vhost.bat` does.
-pub fn create(stack: &Stack, host: &str, want_php: Option<&str>, force: bool) -> Result<Created> {
+/// Detect PHP version constraint from composer.json.
+pub fn detect_composer_php(project_dir: &Path) -> Option<String> {
+    let composer_file = project_dir.join("composer.json");
+    let text = std::fs::read_to_string(&composer_file).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let req = json.get("require")?.get("php")?.as_str()?;
+
+    let mut version = String::new();
+    for c in req.chars() {
+        if c.is_ascii_digit() || c == '.' {
+            version.push(c);
+        } else if !version.is_empty() {
+            break;
+        }
+    }
+    if !version.is_empty() {
+        Some(version)
+    } else {
+        None
+    }
+}
+
+/// Create a vhost: web root, conf, junction, reload.
+pub fn create(
+    stack: &Stack,
+    host: &str,
+    project_path: Option<&Path>,
+    want_php: Option<&str>,
+    no_hosts: bool,
+    no_tls: bool,
+    force: bool,
+) -> Result<Created> {
     let host = check_host(host)?;
 
-    // Resolve the PHP version through the same matcher `php use` uses, so
-    // `--php 8.5`, `--php 85`, and `--php php-8.5` all work, against whatever
-    // is installed rather than a port map written into the caller.
-    let service = match want_php {
-        Some(wanted) => php::find(stack, wanted)?,
+    let (project_dir, in_tree) = if let Some(path) = project_path {
+        let abs = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        (abs, false)
+    } else {
+        (stack.root.join("projects").join(host), true)
+    };
+
+    let php_hint = want_php
+        .map(|s| s.to_string())
+        .or_else(|| detect_composer_php(&project_dir));
+
+    let service = match php_hint {
+        Some(wanted) => php::find(stack, &wanted)?,
         None => default_php(stack)?,
     };
     let port = service
@@ -129,7 +167,22 @@ pub fn create(stack: &Stack, host: &str, want_php: Option<&str>, force: bool) ->
         ));
     }
 
-    let public = stack.root.join("projects").join(host).join("public");
+    let target_projects_dir = stack.root.join("projects").join(host);
+    if !in_tree {
+        if target_projects_dir.exists() {
+            let _ = std::fs::remove_file(&target_projects_dir);
+            let _ = std::fs::remove_dir_all(&target_projects_dir);
+        }
+        crate::junction::create(&target_projects_dir, &project_dir)
+            .with_context(|| format!("creating junction for {}", target_projects_dir.display()))?;
+    }
+
+    let (public, root_rel) = if project_dir.join("public").is_dir() {
+        (target_projects_dir.join("public"), format!("projects/{host}/public"))
+    } else {
+        (target_projects_dir.clone(), format!("projects/{host}"))
+    };
+
     let public_existed = public.is_dir();
     if !public_existed {
         std::fs::create_dir_all(&public)
@@ -142,13 +195,33 @@ pub fn create(stack: &Stack, host: &str, want_php: Option<&str>, force: bool) ->
             .with_context(|| format!("writing {}", index.display()))?;
     }
 
+    let cert_name = if !no_tls {
+        crate::mkcert::ensure_cert_for_host(stack, host)?
+            .unwrap_or_else(|| "_wildcard.test.pem".to_string())
+    } else {
+        "_wildcard.test.pem".to_string()
+    };
+
+    let (hosts_updated, hosts_note) = if !no_hosts {
+        match crate::hosts::add_entry(host) {
+            Ok(crate::hosts::HostsResult::Updated) => (true, None),
+            Ok(crate::hosts::HostsResult::Unchanged) => (true, None),
+            Ok(crate::hosts::HostsResult::FallbackManual(why)) => (false, Some(why)),
+            Err(err) => (false, Some(err.to_string())),
+        }
+    } else {
+        (false, None)
+    };
+
     let sites_dir = stack.sites_dir();
     std::fs::create_dir_all(&sites_dir)
         .with_context(|| format!("creating {}", sites_dir.display()))?;
-    std::fs::write(&conf, conf_text(host, &service.name, &service.id, port))
-        .with_context(|| format!("writing {}", conf.display()))?;
+    std::fs::write(
+        &conf,
+        conf_text_custom(host, &service.name, &service.id, port, &root_rel, &cert_name),
+    )
+    .with_context(|| format!("writing {}", conf.display()))?;
 
-    // The conf's `root projects/<host>/public` resolves through this.
     control::ensure_projects_junction(stack)?;
 
     Ok(Created {
@@ -159,22 +232,35 @@ pub fn create(stack: &Stack, host: &str, want_php: Option<&str>, force: bool) ->
         public: stack.rel(&public),
         public_existed,
         reload: Reload::of(stack),
-        needs_wildcard: (host.matches('.').count() > 1)
-            .then(|| parent_domain(host).to_string()),
+        cert_name,
+        hosts_updated,
+        hosts_note,
     })
 }
 
-pub fn add(stack: &Stack, host: &str, want_php: Option<&str>, force: bool) -> Result<u8> {
-    let made = create(stack, host, want_php, force)?;
+pub fn add(
+    stack: &Stack,
+    host: &str,
+    project_path: Option<&Path>,
+    want_php: Option<&str>,
+    no_hosts: bool,
+    no_tls: bool,
+    force: bool,
+) -> Result<u8> {
+    let made = create(stack, host, project_path, want_php, no_hosts, no_tls, force)?;
 
     let verb = if made.public_existed { "exists  " } else { "created " };
     println!("  {verb} {}", made.public);
     println!("  wrote    {}", made.conf);
 
+    if made.hosts_updated {
+        println!("  hosts    updated C:\\Windows\\System32\\drivers\\etc\\hosts");
+    } else if let Some(note) = &made.hosts_note {
+        println!("  hosts    failed to update: {note}");
+        println!("           Add `127.0.0.1   {host}` to hosts file manually as Administrator.");
+    }
+
     if let Reload::Failed(why) = &made.reload {
-        // The conf is written either way, so this is worth reporting loudly
-        // rather than swallowing -- most likely a syntax error in some other
-        // conf, which blocks the reload of all of them.
         println!("  FAILED to reload nginx: {why}");
         println!("  the vhost is written; fix the error and run `devcrate restart nginx`");
         return Ok(exit::ERROR);
@@ -183,18 +269,7 @@ pub fn add(stack: &Stack, host: &str, want_php: Option<&str>, force: bool) -> Re
 
     println!();
     println!("https://{} -> {} (fastcgi {})", made.host, made.php_name, made.port);
-    println!();
-    println!("Two manual steps remain, as with new-vhost.bat:");
-    println!("  1. Add this line to C:\\Windows\\System32\\drivers\\etc\\hosts as Administrator:");
-    println!("       127.0.0.1   {}", made.host);
-    match &made.needs_wildcard {
-        Some(domain) => {
-            println!("  2. {} is a third-level domain, so the *.test wildcard does not", made.host);
-            println!("     cover it. Issue a cert for *.{domain} with mkcert and update the");
-            println!("     ssl_certificate lines in the generated conf.");
-        }
-        None => println!("  2. Nothing else -- the existing *.test wildcard certificate covers it."),
-    }
+    println!("  SSL cert: {}", made.cert_name);
     Ok(exit::OK)
 }
 
@@ -364,12 +439,13 @@ pub fn remove(stack: &Stack, host: &str) -> Result<u8> {
     let gone = delete(stack, host)?;
     println!("  removed  {}", gone.conf);
     println!("  {}", gone.reload.note());
+
+    if let Ok(crate::hosts::HostsResult::Updated) = crate::hosts::remove_entry(&gone.host) {
+        println!("  hosts    removed {} from C:\\Windows\\System32\\drivers\\etc\\hosts", gone.host);
+    }
+
     println!();
     println!("The project folder under projects\\{} was left alone.", gone.host);
-    println!(
-        "Remove the `127.0.0.1  {}` line from your hosts file if you are done with it.",
-        gone.host
-    );
     Ok(exit::OK)
 }
 
@@ -388,8 +464,9 @@ fn check_host(host: &str) -> Result<&str> {
 }
 
 /// `api.mygroup.test` -> `mygroup.test`, the domain a wildcard has to cover.
-fn parent_domain(host: &str) -> &str {
-    host.split_once('.').map(|(_, rest)| rest).unwrap_or(host)
+#[allow(dead_code)]
+pub fn parent_domain(host: &str) -> &str {
+    crate::mkcert::parent_domain(host)
 }
 
 /// Default to whatever the CLI resolves to, so `site add myapp.test` picks the
@@ -406,18 +483,32 @@ fn default_php<'a>(stack: &'a Stack) -> Result<&'a crate::config::Service> {
     }
 }
 
-/// The conf `new-vhost.bat` writes, byte for byte in structure.
-///
-/// Every path in it is relative, and to two different bases: `root` and the
-/// logs resolve against the nginx *prefix*, `ssl_certificate` against the
-/// *conf directory*. That is nginx's rule, not a choice made here -- see
-/// docs/nginx-vhosts.md.
+#[allow(dead_code)]
 fn conf_text(host: &str, php_name: &str, php_id: &str, port: u16) -> String {
+    conf_text_custom(
+        host,
+        php_name,
+        php_id,
+        port,
+        &format!("projects/{host}/public"),
+        "_wildcard.test.pem",
+    )
+}
+
+fn conf_text_custom(
+    host: &str,
+    php_name: &str,
+    php_id: &str,
+    port: u16,
+    root_rel: &str,
+    cert_name: &str,
+) -> String {
+    let key_name = cert_name.replace(".pem", "-key.pem");
     format!(
         "# Auto-generated by devcrate site add\n\
          # Domain  : {host}\n\
          # PHP     : {php_id} ({php_name}) -> 127.0.0.1:{port}\n\
-         # Cert    : _wildcard.test  (edit below if using a sub-group domain)\n\
+         # Cert    : {cert_name}\n\
          # Paths: root/logs are prefix-relative, certs are conf-relative.\n\
          \n\
          server {{\n\
@@ -430,11 +521,11 @@ fn conf_text(host: &str, php_name: &str, php_id: &str, port: u16) -> String {
          \x20   listen       443 ssl;\n\
          \x20   server_name  {host};\n\
          \n\
-         \x20   root   projects/{host}/public;\n\
+         \x20   root   {root_rel};\n\
          \x20   index  index.php index.html;\n\
          \n\
-         \x20   ssl_certificate      certs/_wildcard.test.pem;\n\
-         \x20   ssl_certificate_key  certs/_wildcard.test-key.pem;\n\
+         \x20   ssl_certificate      certs/{cert_name};\n\
+         \x20   ssl_certificate_key  certs/{key_name};\n\
          \n\
          \x20   access_log  logs/{host}.access.log  main;\n\
          \x20   error_log   logs/{host}.error.log   warn;\n\
@@ -515,7 +606,7 @@ mod tests {
     #[test]
     fn wildcard_advice_targets_the_parent_domain() {
         assert_eq!(parent_domain("api.mygroup.test"), "mygroup.test");
-        assert_eq!(parent_domain("myapp.test"), "test");
+        assert_eq!(parent_domain("myapp.test"), "myapp.test");
     }
 
     /// The whole point of editing rather than regenerating: everything the
@@ -550,13 +641,21 @@ mod tests {
         assert_eq!(edited, static_site);
     }
 
-    /// A `fastcgi_pass` aimed somewhere other than the local FastCGI listeners
-    /// is a deliberate choice; swapping its port would break it.
     #[test]
     fn only_loopback_fastcgi_passes_are_repointed() {
         let remote = "server {\n    fastcgi_pass   backend.internal:9000;\n}\n";
         let (edited, changed) = repoint(remote, "PHP 8.5", "php-8.5", 9085);
         assert_eq!(changed, 0);
         assert_eq!(edited, remote);
+    }
+
+    #[test]
+    fn test_detect_composer_php() {
+        let dir = std::env::temp_dir().join("devcrate-site-composer");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("composer.json"), r#"{"require": {"php": "^8.2"}}"#).unwrap();
+
+        assert_eq!(detect_composer_php(&dir).as_deref(), Some("8.2"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -26,6 +26,8 @@ erl_crash.dump
 /rabbitmq/
 /composer/
 /tools/
+/node/
+/bun/
 
 # --- PostgreSQL: binaries AND the data\ cluster it carries ---
 # One un-versioned directory, like mariadb\: the cluster's on-disk format is

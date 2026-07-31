@@ -18,7 +18,8 @@ it. `devcrate install postgres 13.23` downloads EDB's binaries zip and runs
 `initdb` (a database service beside MariaDB), and `devcrate install python 3.8`
 fetches the embeddable zip from python.org and bootstraps pip (a toolchain on
 `PATH`, switched by `python use`). `--from` does the same from an archive already
-on disk. MariaDB, RabbitMQ, and Erlang are not installable yet.
+on disk. MariaDB, RabbitMQ, Erlang, Node.js, and Bun are all installable end to
+end too.
 
 The batch scripts stay in the repo and keep working; nothing about them has
 changed.
