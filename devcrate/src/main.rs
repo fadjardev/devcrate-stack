@@ -2,9 +2,9 @@
 //!
 //! Two front ends over one core: the subcommands below, and the dashboard in
 //! [`tui`] that runs when none is given. Every batch script in the stack root
-//! has an equivalent in both, and `install` downloads and installs PHP and
-//! nginx end to end. What is left of installing is MariaDB, RabbitMQ, Erlang,
-//! and Composer.
+//! has an equivalent in both, and `install` downloads and installs PHP, nginx,
+//! Composer, PostgreSQL, and Python end to end. What is left of installing is
+//! MariaDB, RabbitMQ, and Erlang.
 
 mod cli;
 mod config;
@@ -14,6 +14,7 @@ mod junction;
 mod nginx;
 mod php;
 mod probe;
+mod python;
 mod root;
 mod site;
 mod status;
@@ -25,7 +26,9 @@ use std::process::ExitCode;
 use anyhow::Result;
 use clap::Parser;
 
-use crate::cli::{Cli, Command, ConfigCommand, NginxCommand, PhpCommand, SiteCommand};
+use crate::cli::{
+    Cli, Command, ConfigCommand, NginxCommand, PhpCommand, PythonCommand, SiteCommand,
+};
 use crate::config::Stack;
 
 /// Exit codes. 2 is clap's own code for a usage error. 3 used to mean "not
@@ -79,6 +82,9 @@ fn run(cli: Cli) -> Result<u8> {
             Ok(exit::OK)
         }
         Command::Php(PhpCommand::Use(args)) => php::switch(&stack, &args.version),
+
+        Command::Python(PythonCommand::List) => python::list(&stack),
+        Command::Python(PythonCommand::Use(args)) => python::switch(&stack, &args.version),
 
         Command::Nginx(NginxCommand::List) => nginx::list(&stack),
         Command::Nginx(NginxCommand::Use(args)) => nginx::switch(&stack, &args.version),

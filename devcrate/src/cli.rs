@@ -49,6 +49,10 @@ pub enum Command {
     #[command(subcommand)]
     Php(PhpCommand),
 
+    /// Python versions (a toolchain on PATH, not a service).
+    #[command(subcommand)]
+    Python(PythonCommand),
+
     /// nginx versions and the layout of its prefix.
     #[command(subcommand)]
     Nginx(NginxCommand),
@@ -100,6 +104,20 @@ pub enum PhpCommand {
 #[derive(Debug, Args)]
 pub struct PhpUseArgs {
     /// Version to switch to: 8.5, 85, and php-8.5 all mean the same thing.
+    pub version: String,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PythonCommand {
+    /// List installed Python versions and the one the CLI resolves to.
+    List,
+    /// Switch the CLI Python version by repointing the python\current junction.
+    Use(PythonUseArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct PythonUseArgs {
+    /// Version to switch to: 3.8, 38, and python-3.8 all mean the same thing.
     pub version: String,
 }
 
@@ -175,11 +193,12 @@ pub struct ServiceArgs {
 
 #[derive(Debug, Args)]
 pub struct InstallArgs {
-    /// Runtime to install: `php`, `nginx`, or `composer`. mariadb, rabbitmq,
-    /// and erlang are named but not installable yet.
+    /// Runtime to install: `php`, `nginx`, `composer`, `postgres`, or `python`.
+    /// mariadb, rabbitmq, and erlang are named but not installable yet.
     pub runtime: String,
     /// Version to install: 8.4, 84, and php-8.4 for PHP; 1.31.3 or the series
-    /// 1.31 for nginx; a line (stable, lts) or an exact version for Composer.
+    /// 1.31 for nginx; a line (stable, lts) or an exact version for Composer; an
+    /// exact minor (13.23) for PostgreSQL; 3.8 for Python.
     /// Omitted without --from: list the versions available for download.
     /// Omitted with --from: read from the archive's file name.
     pub version: Option<String>,

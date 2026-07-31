@@ -10,7 +10,7 @@ stack for you.
 | # | Item | Status |
 | --- | --- | --- |
 | 1 | Rust TUI (`ratatui`), shipped as a single executable | done — see [tui.md](tui.md) |
-| 2 | Built-in runtime downloader / installer with version selection | in progress — PHP, nginx, and Composer done end to end; MariaDB, RabbitMQ, Erlang to come |
+| 2 | Built-in runtime downloader / installer with version selection | in progress — PHP, nginx, Composer, PostgreSQL, and Python done end to end; MariaDB, RabbitMQ, Erlang to come |
 | 3 | Runs from any terminal, scriptable as well as interactive | done — see [cli.md](cli.md) |
 | 4 | Open an existing project: vhost + hosts entry + mkcert TLS, in one step | planned |
 | 5 | Node.js and Bun as managed runtimes | planned |
@@ -89,7 +89,8 @@ and structured results cover it.
 Right now every runtime is fetched manually from a website and extracted by
 hand ([installation.md](installation.md)). Devcrate should do that itself.
 
-**Managed runtimes:** PHP, Nginx, MariaDB, RabbitMQ, Erlang/OTP, Composer.
+**Managed runtimes:** PHP, Nginx, MariaDB, PostgreSQL, RabbitMQ, Erlang/OTP,
+Composer, Python.
 
 **Built for PHP, end to end.** `devcrate install php 8.4` fetches the
 catalogue from windows.php.net, downloads the thread-safe x64 zip, verifies
@@ -160,6 +161,17 @@ Composer's trust root is *not* `installer.sig`. That file is the SHA-384 of the
 hashes the phar the stack actually installs, which is both stronger and needs no
 PHP to check. What the vendor publishes decided it, as ever.
 
+**Built for PostgreSQL and Python too.** `devcrate install postgres 13.23`
+downloads EDB's Windows binaries zip, unpacks it, and runs `initdb` to create
+the cluster — a database *service* beside MariaDB (port 5432, one `postgres\`
+directory, because a cluster's on-disk format is version-specific), whose
+`data\` a `--force` reinstall carries across rather than destroys. `devcrate
+install python 3.8` fetches the embeddable zip from python.org, enables `import
+site`, and bootstraps pip — a *toolchain* like the planned Node/Bun (item 5), no
+port and no service, switched by a `python\current` junction. Both vendors
+publish no sha256 and no version index, so both downloads are length/TLS-checked
+like nginx, and a version is named rather than a catalogue listed.
+
 **Still to build:** uninstall, and MariaDB, RabbitMQ, and Erlang.
 
 **What it should do**
@@ -171,6 +183,8 @@ PHP to check. What the vendor publishes decided it, as ever.
   | --- | --- |
   | PHP | **built** — `releases.json` on `windows.php.net/downloads/releases/`, which carries every branch and its sha256; `/archives/` turned out not to be needed |
   | Nginx | **built** — `nginx.org/en/download.html`, parsed, because there is no machine-readable index; no checksums published, only PGP |
+  | PostgreSQL | **built** — EDB's Windows x64 binaries zip on `get.enterprisedb.com`, a predictable per-release URL; no index and no checksum published, so length/TLS-checked like nginx and an exact minor is named |
+  | Python | **built** — python.org's release archive (`www.python.org/ftp/python/`); MD5/GPG only (no sha256) and no index, so length/TLS-checked and a branch resolved by probing which patches ship an embeddable zip |
   | MariaDB | MariaDB downloads REST API |
   | RabbitMQ | GitHub releases (`rabbitmq/rabbitmq-server`) |
   | Erlang/OTP | GitHub releases (`erlang/otp`) - Windows installer / portable |

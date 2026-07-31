@@ -14,8 +14,11 @@ commands. `install` goes further than any script does: `devcrate install php
 the vendor's own feed, and installs it, `devcrate install nginx 1.31.3` does the
 equivalent from nginx.org, and `devcrate install composer` fetches the phar from
 getcomposer.org and verifies it against the checksum the vendor publishes beside
-it; `--from` does the same from an archive already on disk. MariaDB, RabbitMQ,
-and Erlang are not installable yet.
+it. `devcrate install postgres 13.23` downloads EDB's binaries zip and runs
+`initdb` (a database service beside MariaDB), and `devcrate install python 3.8`
+fetches the embeddable zip from python.org and bootstraps pip (a toolchain on
+`PATH`, switched by `python use`). `--from` does the same from an archive already
+on disk. MariaDB, RabbitMQ, and Erlang are not installable yet.
 
 The batch scripts stay in the repo and keep working; nothing about them has
 changed.
@@ -101,6 +104,8 @@ visible rather than mysterious.
 | `devcrate stop [service]` | **works** — graceful shutdown in the safe order |
 | `devcrate restart [service]` | **works** — stop, then start |
 | `devcrate php use <version>` | **works** — repoints `php\current` |
+| `devcrate python list` | **works** — installed Python versions, and the active CLI one |
+| `devcrate python use <version>` | **works** — repoints `python\current` |
 | `devcrate nginx list` | **works** — nginx versions in the prefix, and the active one |
 | `devcrate nginx use <version>` | **works** — repoints `nginx\current` |
 | `devcrate nginx migrate` | **works** — moves a pre-restructure stack into the current layout |
@@ -113,15 +118,18 @@ visible rather than mysterious.
 | `devcrate install nginx` (no version) | **works** — lists the builds nginx.org offers |
 | `devcrate install composer <line\|version>` | **works** — downloads the phar, verifies sha256, installs it into `composer\` |
 | `devcrate install composer` (no version) | **works** — lists the lines getcomposer.org offers |
+| `devcrate install postgres <minor>` | **works** — downloads EDB's binaries zip (length/TLS), unpacks, runs `initdb` |
+| `devcrate install python <branch\|release>` | **works** — downloads the embeddable zip (length/TLS), enables site, bootstraps pip |
 | `devcrate install <runtime> --from <file>` | **works** — the same install from an archive or phar on disk |
-| `devcrate install <other runtime>` | not built — see [installation.md](installation.md) |
+| `devcrate install <other runtime>` | not built (mariadb, rabbitmq, erlang) — see [installation.md](installation.md) |
 
 `--root` is accepted on every command.
 
 Wherever a PHP version is named — `php use`, `site add --php`, `site set-php`,
 and the service argument to `start` / `stop` / `restart` — it is matched on its
 digits, so `8.5`, `85`, `php-8.5`, and the older `php85` all mean the same
-version. nginx versions are matched differently, on the dotted prefix; see
+version. Python versions match the same way (`3.8`, `38`, `python-3.8`). nginx
+versions are matched differently, on the dotted prefix; see
 [`devcrate nginx`](#devcrate-nginx) for why.
 
 Colour is used only as a second channel for the state column and is turned off
@@ -350,6 +358,30 @@ anything.
 The version is matched on its digits, so `8.5`, `85`, `php-8.5`, and the older
 `php85` folder naming are all equivalent. `phpuse.bat` now does the same.
 
+### `devcrate python`
+
+```
+devcrate python list             REM installed versions, and the active CLI one
+devcrate python use 3.8          REM 3.8, 38, or python-3.8
+```
+
+```
+CLI Python -> 3.8 (python\python-3.8)
+  Python 3.8.10
+```
+
+Python is a **toolchain, not a service** — it has no long-lived listener, so it
+is never started, stopped, or shown in the `status` service table (it appears
+there as a one-line `Python 3.8 (via python\current)` instead). `python use` is
+the exact analogue of `php use`: it repoints the `python\current` junction that
+sits on `PATH`, so `python` and `pip` resolve to the chosen build. Put
+`python\current` and its `Scripts\` on `PATH` once, the way `php\current` was
+added.
+
+Versions live in `python\python-<X.Y>` and are matched on their digits, so `3.8`,
+`38`, and `python-3.8` are one version. Install one with
+[`devcrate install python`](#devcrate-install).
+
 ### `devcrate nginx`
 
 ```
@@ -527,6 +559,15 @@ devcrate install composer                         REM list the lines on offer
 devcrate install composer stable                  REM download, verify, install the current stable
 devcrate install composer lts                     REM ...or the 2.2 LTS line
 devcrate install composer --from C:\downloads\composer.phar
+
+devcrate install postgres                         REM how to name a version (no index to list)
+devcrate install postgres 13.23                   REM download EDB's binaries zip, unpack, initdb
+devcrate install postgres --from C:\downloads\postgresql-13.23-1-windows-x64-binaries.zip
+
+devcrate install python                           REM how to name a version (no index to list)
+devcrate install python 3.8                       REM newest 3.8.x Windows build, then bootstrap pip
+devcrate install python 3.8.10                    REM ...or an exact release
+devcrate install python --from C:\downloads\python-3.8.10-embed-amd64.zip
 ```
 
 The version is a positional argument, not a flag: `devcrate install php 8.4
@@ -551,7 +592,7 @@ PHP 8.4.23 installed as php-8.4 (fastcgi 9084)
   start its worker       devcrate start php-8.4
 ```
 
-**Three runtimes.** Naming one that is planned but not built (`mariadb`,
+**Five runtimes.** Naming one that is planned but not built (`mariadb`,
 `rabbitmq`, `erlang`) says so and points at
 [installation.md](installation.md); naming one that does not exist at all reads
 differently, so a typo is not mistaken for a missing feature.
@@ -565,7 +606,10 @@ unpacked, and nginx prepares the *prefix* the build is about to sit in.
 Composer is the third shape and shares neither half: it is a single phar, not
 an archive, and a tool the stack runs rather than a version it serves with, so
 there is nothing to extract and nothing versioned — see [Composer](#composer)
-below.
+below. **PostgreSQL** is a fourth: a database service whose single `postgres\`
+directory holds a version-specific data cluster the install must never destroy.
+**Python** is a fifth: a language toolchain, versioned like PHP but with no port
+and no service — switched by a `python\current` junction, never started.
 
 #### PHP
 
@@ -792,6 +836,115 @@ running anything.
 on `PATH` can run this release. A failure there (an old PHP, or none) is a
 warning, never a reason to undo the install, the same way nginx's `-t` is. With
 no PHP installed yet, the install still completes and says Composer needs one.
+
+#### PostgreSQL
+
+```
+  locating PostgreSQL 13.23 on get.enterprisedb.com
+  PostgreSQL 13.23 -> postgresql-13.23-1-windows-x64-binaries.zip
+  downloading  100%  295.2 MB / 295.2 MB
+  sha256 6e...  (EDB publishes no checksum; the transfer was checked
+   against its declared length over TLS to the download host)
+  extracting   100%
+  checking the build
+  initialising the cluster (initdb)
+  moving it into place
+
+  ... files into postgres
+  cluster created in postgres\data (initdb)
+
+PostgreSQL 13.23 installed as postgres
+  superuser  postgres / postgres  (local dev default)
+  change it  ALTER USER postgres PASSWORD '...';
+  start it   devcrate start postgres        (listens on 5432)
+  connect    psql -U postgres -h 127.0.0.1 -p 5432
+  stop it    devcrate stop postgres
+```
+
+**There is no catalogue to list.** EDB serves the Windows x64 *binaries* zip
+(the archive without the installer) from a predictable mirror URL, but publishes
+no machine-readable index of versions and no checksum for the files. So
+`devcrate install postgres` with no version does not print a list — it explains
+how to name one, and notes that PostgreSQL 13 is end-of-life (final **13.23**,
+2025-11-13). A named minor resolves to a URL directly; EDB's packaging build
+number (`-1`, occasionally `-2`) is discovered by asking the mirror rather than
+guessed.
+
+**The download is length/TLS-checked, like nginx.** With no published hash,
+there is nothing to verify the bytes against, so the transfer is checked against
+its declared `Content-Length` over TLS and the sha256 computed locally and
+recorded — never claimed as vendor-verified.
+
+**One directory, and the cluster inside it must survive.** Unlike PHP, a
+PostgreSQL data directory is written in a version-specific on-disk format, so
+the builds cannot coexist — `postgres\` holds one version and its `data\`
+cluster. The install protects that cluster: `--force` replaces the *binaries*,
+and the swap lifts `data\` across to the new ones rather than letting it go with
+the retired folder. A running server is refused rather than replaced underneath,
+and a reinstall over an existing cluster (found by its `data\PG_VERSION`) leaves
+it untouched.
+
+**First-run `initdb` is part of installing.** A fresh install creates the
+cluster with a localhost-development auth setup — `trust` for local connections,
+`scram-sha-256` over TCP — and a default `postgres` / `postgres` superuser whose
+password is printed rather than hidden. Change it with `ALTER USER` for anything
+that leaves the machine. `initdb` needs no network, so `--from` installs it
+offline too.
+
+**It is a service, driven like MariaDB.** `devcrate start` / `stop` / `status`
+and the dashboard treat it as one, on port 5432, in the database layer of the
+start/stop order. It is launched by running `postgres.exe -D data` directly and
+stopped with `pg_ctl stop -m fast`.
+
+#### Python
+
+```
+  locating Python 3.8 on python.org
+  Python 3.8.10 -> python-3.8.10-embed-amd64.zip
+  downloading  100%  8.2 MB / 8.2 MB
+  sha256 ab...  (python.org publishes no checksum; the transfer was checked
+   against its declared length over TLS to python.org)
+  checking the build
+  enabling site (for pip)
+  moving it into place
+
+  32 files into python\python-3.8
+  enabled `import site` (so pip can be installed and found)
+
+Python 3.8.10 installed as python-3.8
+  pip installed
+  make it the CLI Python   devcrate python use 3.8
+  then                     python --version
+```
+
+**A toolchain, not a service.** Python has no port and no long-lived listener,
+so it is never started or stopped and never appears in the `status` service
+table (it shows as a `Python 3.8 (via python\current)` line). It is versioned
+like PHP — `python\python-<X.Y>` folders, matched on the digits — and activated
+by [`devcrate python use`](#devcrate-python), which repoints `python\current` on
+`PATH`. Installing is not activating.
+
+**There is no catalogue to list**, and the download is length/TLS-checked.
+python.org publishes MD5 and GPG for these files, not sha256, and serves no
+version index. So `devcrate install python` with no version explains how to name
+one; a branch (`3.8`) is resolved to its newest Windows build by asking
+python.org's archive which patch levels still ship an embeddable zip (3.8 ends
+at **3.8.10** — later 3.8.x are source-only), and an exact release (`3.8.10`) is
+fetched directly.
+
+**The embeddable distribution is made pip-capable.** It ships with `import site`
+commented out in its `._pth`, which disables `site-packages` and pip; the
+install uncomments that line, then fetches the *branch-specific*
+`bootstrap.pypa.io/pip/3.8/get-pip.py` (the generic script targets the newest
+Python and fails on 3.8) and runs it. Bootstrapping pip is the one networked
+step, so it degrades to a message rather than a failure when there is none — the
+Python is installed and usable, and pip can be finished later. Put
+`python\current` **and its `Scripts\`** on `PATH` once, the way `php\current`
+was added.
+
+> Python 3.8 is end-of-life (final Windows build 3.8.10, May 2021). It is
+> supported here for legacy projects locked to it; prefer a maintained branch
+> (`devcrate install python 3.12`) for anything new.
 
 #### Both PHP and nginx
 

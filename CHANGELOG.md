@@ -90,6 +90,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **PostgreSQL 13 is a managed service.** `devcrate install postgres 13.23`
+  downloads EDB's Windows x64 *binaries* zip, unpacks it into `postgres\`, and
+  runs `initdb` to create the cluster; `devcrate start` / `stop` / `status` and
+  the dashboard then drive it beside MariaDB, on port 5432.
+  - **A near-twin of MariaDB, and placed the same way.** A new `ServiceKind`,
+    started by running `postgres.exe -D data` directly (not `pg_ctl`, which forks
+    the server and exits, so the process left to supervise is not the one
+    serving), stopped gracefully with `pg_ctl stop -m fast`. It joins the
+    database layer of the start/stop order - up before PHP and nginx, down after
+    them.
+  - **One directory, not versions side by side.** A PostgreSQL data directory is
+    written in a version-specific on-disk format, so the builds cannot coexist
+    the way PHP's do; `postgres\` holds one version and its `data\` cluster. The
+    install is careful never to walk over an existing cluster: `--force` replaces
+    the *binaries*, and the swap lifts `data\` across to the new ones rather than
+    letting it go with the retired folder. A running server is refused rather
+    than replaced underneath.
+  - **First-run `initdb` is part of installing.** A fresh install creates the
+    cluster with a localhost-development auth setup - `trust` for local
+    connections, `scram-sha-256` over TCP with a default `postgres` / `postgres`
+    superuser whose password is printed, not hidden. A reinstall finds the
+    existing cluster (by its `PG_VERSION` marker) and leaves it untouched.
+  - **The download is length/TLS-verified, and says so.** EDB serves these zips
+    from a predictable mirror URL but publishes no checksum and no machine-
+    readable index, so - like nginx - the transfer is checked against its
+    declared `Content-Length` over TLS and the sha256 is computed locally and
+    recorded, never claimed as vendor-verified. With no index to list, `devcrate
+    install postgres` names an exact minor to fetch (its packaging build number
+    is discovered by asking the mirror) rather than printing a catalogue. Note in
+    the output: PostgreSQL 13 reached end-of-life on 2025-11-13, final 13.23.
+  - `--from <zip>` installs from an EDB binaries zip already on disk, the same
+    pipeline offline; `initdb` needs no network.
+
+- **Python 3.8 is a managed toolchain.** `devcrate install python 3.8` fetches
+  the embeddable amd64 zip from python.org, enables `import site`, and
+  bootstraps pip; `devcrate python use 3.8` puts it on `PATH` by repointing a
+  `python\current` junction.
+  - **A toolchain, not a service - like the planned Node/Bun.** Python has no
+    long-lived listener to start, stop, or watch on a port, so it is *not* a
+    `ServiceKind`. The whole of "using" a version is which one sits on `PATH`,
+    switched exactly as `php\current` is; `devcrate status` reports the active
+    one as a line ("Python 3.8 (via python\current)") rather than a row in the
+    service table. Versions are `python\python-<X.Y>` folders, matched on the
+    digits like PHP - `3.8`, `38`, and `python-3.8` are one version.
+  - **The embeddable distribution is made pip-capable.** It ships with `import
+    site` commented out in its `._pth`, which means no `site-packages` and no
+    pip; the install uncomments that line, then fetches the branch-specific
+    `get-pip.py` (`bootstrap.pypa.io/pip/3.8/…` - the generic script targets the
+    newest Python and would fail on 3.8) and runs it. pip's bootstrap is the one
+    step that needs the network, so it degrades to a message rather than a
+    failure when there is none: the Python is installed and usable, and pip can
+    be finished later.
+  - **The download is length/TLS-verified.** python.org publishes MD5 and GPG for
+    these files, not sha256, so - like nginx and EDB - the transfer is checked
+    against its declared length over TLS and the sha256 recorded, not claimed as
+    verified. There is no version index either, so a branch (`3.8`) is resolved
+    to its newest Windows build by asking python.org's archive which patch levels
+    still ship an embeddable zip (3.8 ends at 3.8.10; later 3.8.x are
+    source-only). An exact release (`3.8.10`) is fetched directly.
+  - **Installing is not activating**, as with PHP: `install python 3.8` unpacks
+    the version; `python use 3.8` makes it the one on `PATH`. Add `python\current`
+    and its `Scripts\` to `PATH` once, the way `php\current` was added.
+  - `--from <zip>` installs from an embeddable zip already on disk; site is
+    enabled offline, and pip is bootstrapped if there is a network to fetch it.
+  - Note: Python 3.8 is end-of-life (final Windows build 3.8.10, May 2021); it is
+    supported here for legacy projects locked to it.
+
 - **`devcrate install composer` downloads and installs Composer** into
   `composer\`, verified against the checksum getcomposer.org publishes beside the
   phar. `devcrate install composer` with no version lists the lines on offer -

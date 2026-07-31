@@ -3,7 +3,9 @@
 A portable, multi-PHP development stack for Windows. Nginx 1.31.1 + PHP 7.4 /
 8.2 / 8.5 as `php-cgi.exe` FastCGI workers (ports 9074 / 9082 / 9085) + MariaDB
 12.3 + RabbitMQ 4.3.2 (Erlang/OTP 27), serving per-project `.test` vhosts over
-HTTPS with mkcert wildcard certificates.
+HTTPS with mkcert wildcard certificates. PostgreSQL 13 (port 5432) is a managed
+service beside MariaDB; Python (`python\current` on `PATH`) is a managed
+toolchain beside PHP — both installable through the binary.
 
 Two ways to drive it, both kept working: the batch scripts in the stack root
 (`start.bat`, `stop.bat`, `phpuse.bat`, `new-vhost.bat`) and the Rust binary
@@ -96,6 +98,28 @@ Each of these cost real effort to find.
   `--force`), unlike the version folders PHP and nginx guard. `install composer`
   with no version lists the lines (stable/lts/preview/snapshot); a line keyword
   or an exact still-current version installs.
+- **PostgreSQL is a service; its data must survive a reinstall.** One
+  `postgres\` directory (not versioned — a cluster's on-disk format is
+  version-specific, the same reason MariaDB won't fit the PHP model), holding the
+  binaries and the `data\` cluster. It is a `ServiceKind`, launched by running
+  `postgres.exe -D data` *directly* — never `pg_ctl`, which forks the server and
+  exits, breaking the process-path match. `--force` replaces the binaries only:
+  the swap lifts `data\` across from the retired folder to the new one, so it is
+  never sent off with the old binaries. `initdb` is a post-swap step, skipped
+  when a cluster (a `data\PG_VERSION`) already exists. EDB publishes no checksum
+  and no index, so downloads are length/TLS-checked (like nginx) and an exact
+  minor is named rather than a series listed.
+- **Python is a toolchain, not a service.** Like the planned Node/Bun: no port,
+  no `ServiceKind`, nothing to start/stop. Versions are `python\python-<X.Y>`
+  folders, switched by the `python\current` junction on `PATH` exactly as
+  `php\current` works (`crate::python`, mirroring `crate::php`); `status` shows
+  the active one as a line, not a service row. The embeddable distro ships with
+  `import site` off in its `._pth` — the install uncomments it, then bootstraps
+  pip from the *branch-specific* `bootstrap.pypa.io/pip/<X.Y>/get-pip.py` (the
+  generic script targets the newest Python and fails on 3.8). pip's fetch is the
+  one networked step and degrades to a message offline. python.org publishes MD5
+  and GPG, not sha256, so downloads are length/TLS-checked and a branch resolves
+  to its newest Windows build by probing the archive (3.8 ends at 3.8.10).
 - **One core, two front ends.** Each action is a function returning a structured
   result (`control::run_start`, `site::create`, `php::use_version`) with the
   printing in a thin CLI wrapper. The dashboard must never call anything that

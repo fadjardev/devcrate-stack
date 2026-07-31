@@ -26,6 +26,8 @@ pub struct Config {
     #[serde(default)]
     pub mariadb: MariaDbConfig,
     #[serde(default)]
+    pub postgres: PostgresConfig,
+    #[serde(default)]
     pub rabbitmq: RabbitMqConfig,
     /// One table per installed PHP version. Empty means "discover them".
     #[serde(default)]
@@ -50,6 +52,17 @@ pub struct NginxConfig {
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct MariaDbConfig {
+    pub dir: Option<PathBuf>,
+    pub port: Option<u16>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PostgresConfig {
+    /// Directory holding `bin\postgres.exe` and the `data\` cluster, relative to
+    /// the stack root. One version at a time, unlike PHP: a PostgreSQL data
+    /// directory is written in a version-specific on-disk format, so the builds
+    /// cannot coexist the way `php-7.4` and `php-8.5` do.
     pub dir: Option<PathBuf>,
     pub port: Option<u16>,
 }
@@ -98,6 +111,7 @@ pub enum ServiceKind {
     Nginx,
     Php,
     MariaDb,
+    Postgres,
     RabbitMq,
 }
 
@@ -107,6 +121,7 @@ impl ServiceKind {
             ServiceKind::Nginx => "nginx",
             ServiceKind::Php => "php",
             ServiceKind::MariaDb => "mariadb",
+            ServiceKind::Postgres => "postgres",
             ServiceKind::RabbitMq => "rabbitmq",
         }
     }
@@ -153,6 +168,10 @@ pub struct Stack {
     /// so it doubles as the "not installed" marker.
     pub nginx_bin: PathBuf,
     pub php_dir: PathBuf,
+    /// `python\`, holding one `python-<X.Y>` directory per installed version and
+    /// the `current` junction naming the one on `PATH`. Python is a toolchain,
+    /// not a service, so it lives here rather than in `services`.
+    pub python_dir: PathBuf,
     pub services: Vec<Service>,
 }
 
@@ -169,6 +188,7 @@ impl Stack {
         let nginx_bin =
             root::nginx_exe(&nginx_prefix).unwrap_or_else(|| nginx_prefix.join("nginx.exe"));
         let php_dir = base.join("php");
+        let python_dir = base.join("python");
 
         let mut services = Vec::new();
 
@@ -202,6 +222,21 @@ impl Stack {
             ports: vec![config.mariadb.port.unwrap_or(3306)],
         });
 
+        let postgres_dir =
+            base.join(config.postgres.dir.clone().unwrap_or_else(|| PathBuf::from("postgres")));
+        services.push(Service {
+            id: "postgres".into(),
+            name: "PostgreSQL".into(),
+            kind: ServiceKind::Postgres,
+            // The server binary, run directly rather than through pg_ctl: pg_ctl
+            // forks the postmaster and exits, so matching on its path would never
+            // find the process that is actually serving.
+            install_marker: postgres_dir.join("bin").join("postgres.exe"),
+            process_prefix: postgres_dir.join("bin").join("postgres.exe"),
+            exclude_names: Vec::new(),
+            ports: vec![config.postgres.port.unwrap_or(5432)],
+        });
+
         let rabbit_dir =
             base.join(config.rabbitmq.dir.clone().unwrap_or_else(|| PathBuf::from("rabbitmq")));
         let erlang_dir =
@@ -231,6 +266,7 @@ impl Stack {
             nginx_prefix,
             nginx_bin,
             php_dir,
+            python_dir,
             services,
         })
     }
@@ -262,6 +298,31 @@ impl Stack {
     /// to, since that junction is what sits on `PATH`.
     pub fn current_php(&self) -> Option<PathBuf> {
         crate::junction::target(&self.php_dir.join("current"))
+    }
+
+    /// Which Python version `python\current` points at -- the version the CLI
+    /// resolves to, since that junction is what sits on `PATH`.
+    pub fn current_python(&self) -> Option<PathBuf> {
+        crate::junction::target(&self.python_dir.join("current"))
+    }
+
+    /// The installed Python version directories, `python\python-*`, sorted.
+    /// `current` is excluded -- it is the junction naming one of these, not a
+    /// version of its own, exactly as `php\current` is.
+    pub fn python_versions(&self) -> Vec<PathBuf> {
+        let mut dirs: Vec<PathBuf> = std::fs::read_dir(&self.python_dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                let name =
+                    path.file_name().unwrap_or_default().to_string_lossy().to_ascii_lowercase();
+                path.is_dir() && name.starts_with("python") && name != "current"
+            })
+            .collect();
+        dirs.sort();
+        dirs
     }
 
     pub fn by_kind(&self, kind: ServiceKind) -> Option<&Service> {
@@ -298,6 +359,11 @@ impl Stack {
         if let Some(mariadb) = self.by_kind(ServiceKind::MariaDb) {
             config.mariadb.dir = ancestor(&mariadb.install_marker, 2).map(|d| self.rel_path(d));
             config.mariadb.port = mariadb.ports.first().copied();
+        }
+
+        if let Some(postgres) = self.by_kind(ServiceKind::Postgres) {
+            config.postgres.dir = ancestor(&postgres.install_marker, 2).map(|d| self.rel_path(d));
+            config.postgres.port = postgres.ports.first().copied();
         }
 
         if let Some(rabbit) = self.by_kind(ServiceKind::RabbitMq) {
@@ -419,6 +485,10 @@ mod tests {
         assert_eq!(version_from_tag("php-7.4"), "7.4");
         assert_eq!(version_from_tag("php-8.5"), "8.5");
         assert_eq!(version_from_tag("php-8.10"), "8.10");
+        // The same digit rule names Python folders: `python-3.8` -> `3.8`, which
+        // is what makes unpacking `python-3.8\` the whole of installing one.
+        assert_eq!(version_from_tag("python-3.8"), "3.8");
+        assert_eq!(version_from_tag("python-3.12"), "3.12");
     }
 
     /// The folders were called `php85` before they were called `php-8.5`, and

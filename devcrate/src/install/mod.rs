@@ -23,6 +23,8 @@ mod composer;
 mod download;
 mod nginx;
 mod php;
+mod postgres;
+mod python;
 
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -43,6 +45,8 @@ pub enum Runtime {
     Php,
     Nginx,
     Composer,
+    Postgres,
+    Python,
 }
 
 /// Named in `devcrate install --help`, installable in the order issue #2 sets.
@@ -55,13 +59,17 @@ impl Runtime {
             "php" => Ok(Runtime::Php),
             "nginx" => Ok(Runtime::Nginx),
             "composer" => Ok(Runtime::Composer),
+            "postgres" | "postgresql" => Ok(Runtime::Postgres),
+            "python" => Ok(Runtime::Python),
             other if PLANNED.contains(&other) => bail!(
-                "installing {other} is not built yet -- PHP, nginx, and Composer \
-                 are the runtimes that are (docs/roadmap.md item 2).\n\
+                "installing {other} is not built yet -- PHP, nginx, Composer, \
+                 PostgreSQL, and Python are the runtimes that are \
+                 (docs/roadmap.md item 2).\n\
                  Unpack it by hand for now: docs/installation.md"
             ),
             other => bail!(
-                "{other:?} is not a runtime devcrate manages.\nKnown: php, nginx, composer, {}",
+                "{other:?} is not a runtime devcrate manages.\n\
+                 Known: php, nginx, composer, postgres, python, {}",
                 PLANNED.join(", ")
             ),
         }
@@ -73,6 +81,8 @@ impl Runtime {
             Runtime::Php => "php",
             Runtime::Nginx => "nginx",
             Runtime::Composer => "composer",
+            Runtime::Postgres => "postgres",
+            Runtime::Python => "python",
         }
     }
 
@@ -82,6 +92,8 @@ impl Runtime {
             Runtime::Php => "PHP",
             Runtime::Nginx => "nginx",
             Runtime::Composer => "Composer",
+            Runtime::Postgres => "PostgreSQL",
+            Runtime::Python => "Python",
         }
     }
 }
@@ -135,6 +147,8 @@ pub enum Details {
     Php(PhpInstalled),
     Nginx(NginxInstalled),
     Composer(ComposerInstalled),
+    Postgres(PostgresInstalled),
+    Python(PythonInstalled),
 }
 
 #[derive(Debug)]
@@ -161,6 +175,32 @@ pub struct NginxInstalled {
     pub config_test: Option<nginx::ConfigTest>,
     /// nginx is running, so nothing here takes effect until it restarts.
     pub restart_needed: bool,
+}
+
+#[derive(Debug)]
+pub struct PostgresInstalled {
+    /// Root-relative data directory (`postgres\data`).
+    pub data_dir: String,
+    /// `initdb` ran now and created a fresh cluster.
+    pub initialised: bool,
+    /// An existing cluster was found and carried through the binary replace
+    /// untouched. Mutually exclusive with `initialised`.
+    pub preserved_data: bool,
+    pub superuser: String,
+    /// The password set on a freshly created cluster, printed so it is never a
+    /// mystery. `None` when an existing cluster was kept.
+    pub password: Option<String>,
+    pub port: u16,
+}
+
+#[derive(Debug)]
+pub struct PythonInstalled {
+    /// Whether a `._pth` was edited to enable `import site` (false for a full
+    /// distribution, which needs no such change).
+    pub site_enabled: bool,
+    /// What installing pip came to. `None` when it was not attempted at all
+    /// (there was no `._pth`, so this is a full distribution with pip already).
+    pub pip: Option<python::Pip>,
 }
 
 #[derive(Debug)]
@@ -191,6 +231,8 @@ pub fn from_archive(
         Runtime::Php => php_from_archive(stack, archive_path, opts, progress),
         Runtime::Nginx => nginx_from_archive(stack, archive_path, opts, progress),
         Runtime::Composer => composer_from_phar(stack, archive_path, opts, progress),
+        Runtime::Postgres => postgres_from_archive(stack, archive_path, opts, progress),
+        Runtime::Python => python_from_archive(stack, archive_path, opts, progress),
     }
 }
 
@@ -467,6 +509,391 @@ fn resolve_nginx_version(file_name: &str, wanted: Option<&str>) -> Result<String
                 "cannot tell which nginx version {file_name:?} holds.\n\
                  The vendor's own name carries it (nginx-1.31.3.zip); \
                  pass --version 1.31.3 if the file has been renamed."
+            )
+        }),
+    }
+}
+
+/// Install PostgreSQL into `postgres\`, then create the cluster if there is not
+/// one there already.
+///
+/// The one install that must protect what it replaces. PHP and nginx keep their
+/// versions side by side, so replacing one cannot cost data; PostgreSQL keeps a
+/// single `postgres\` directory with the cluster *inside* it, so the swap has to
+/// carry `data\` across from the old binaries to the new ones rather than let it
+/// go with the retired folder. [`swap_postgres`] is that careful move, and
+/// [`postgres::initialise`] runs `initdb` only when the swap left no cluster
+/// behind.
+fn postgres_from_archive(
+    stack: &Stack,
+    archive_path: &Path,
+    opts: &Options,
+    progress: &mut dyn FnMut(Progress),
+) -> Result<Installed> {
+    if !archive_path.is_file() {
+        bail!("{} is not a file", archive_path.display());
+    }
+    let file_name =
+        archive_path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    let source_sha256 = download::sha256_of(archive_path)
+        .with_context(|| format!("hashing {}", archive_path.display()))?;
+
+    let version = resolve_postgres_version(&file_name, opts.version.as_deref())?;
+    let dest = stack.root.join("postgres");
+    let port = stack
+        .by_kind(config::ServiceKind::Postgres)
+        .and_then(|s| s.ports.first().copied())
+        .unwrap_or(5432);
+
+    // Replacing the binaries a running server is executing from would fail at
+    // the rename anyway; saying which command fixes it beats an access-denied,
+    // and a live cluster is the last thing to swap under.
+    let bin_exe = dest.join("bin").join("postgres.exe");
+    if let Some(pid) = crate::probe::ProcessTable::scan().matching(&bin_exe, &[]).first() {
+        bail!(
+            "PostgreSQL is running (pid {pid}) out of {}.\n\
+             Stop it before replacing it: `devcrate stop postgres`.",
+            stack.rel(&dest)
+        );
+    }
+
+    // The refusal comes before the extract, not after it. The existing cluster
+    // in postgres\data is preserved either way -- --force replaces the binaries,
+    // not the database.
+    if dest.exists() && !opts.force {
+        bail!(
+            "{} already exists; pass --force to replace the binaries.\n\
+             An existing cluster in {}\\data is kept, not overwritten.",
+            stack.rel(&dest),
+            stack.rel(&dest)
+        );
+    }
+
+    let staging = stack.root.join(staging_name("postgres"));
+    if staging.exists() {
+        std::fs::remove_dir_all(&staging)
+            .with_context(|| format!("clearing {}", stack.rel(&staging)))?;
+    }
+    std::fs::create_dir_all(&staging)
+        .with_context(|| format!("creating {}", stack.rel(&staging)))?;
+
+    let files = match assemble_postgres(&staging, archive_path, progress) {
+        Ok(files) => files,
+        Err(err) => {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(err);
+        }
+    };
+
+    progress(Progress::Installing);
+    let swapped = swap_postgres(stack, &staging, &dest)?;
+
+    // Only now, with the binaries in place, is there an initdb.exe to run -- and
+    // it runs only if the swap did not carry an existing cluster across.
+    progress(Progress::Configuring);
+    let initialised = postgres::initialise(&dest, |p| stack.rel(p))?;
+
+    let receipt = Receipt {
+        runtime: Runtime::Postgres.as_str().to_string(),
+        version: version.clone(),
+        release: version.clone(),
+        thread_safe: None,
+        source_archive: file_name,
+        source_bytes: std::fs::metadata(archive_path).map(|m| m.len()).unwrap_or(0),
+        source_sha256,
+        files,
+    };
+    write_receipt(&dest, &receipt)
+        .with_context(|| format!("writing the install receipt in {}", stack.rel(&dest)))?;
+
+    Ok(Installed {
+        runtime: Runtime::Postgres,
+        version: version.clone(),
+        release: version,
+        dir: stack.rel(&dest),
+        files,
+        replaced: swapped.replaced,
+        details: Details::Postgres(PostgresInstalled {
+            data_dir: initialised.data_dir,
+            initialised: initialised.created,
+            preserved_data: swapped.preserved_data,
+            superuser: initialised.superuser.to_string(),
+            password: initialised.password.map(str::to_string),
+            port,
+        }),
+    })
+}
+
+/// Unpack and check a PostgreSQL archive in the staging directory. No configure
+/// step: the cluster is created after the swap, by [`postgres::initialise`],
+/// because there is no `initdb.exe` to run until the binaries are in place.
+fn assemble_postgres(
+    staging: &Path,
+    archive_path: &Path,
+    progress: &mut dyn FnMut(Progress),
+) -> Result<usize> {
+    // EDB wraps everything in `pgsql\`; the extractor strips that wrapper, so
+    // bin\ and share\ land at the top of the staging directory.
+    let extracted = archive::extract(archive_path, staging, &mut |done, total| {
+        progress(Progress::Extracting { done, total })
+    })?;
+
+    progress(Progress::Validating);
+    postgres::check(staging, archive_path)?;
+
+    Ok(extracted.files)
+}
+
+/// The outcome of moving fresh PostgreSQL binaries into place over any that were
+/// there, keeping the cluster.
+struct SwappedPostgres {
+    /// Binaries were already present and have been replaced.
+    replaced: bool,
+    /// An existing `data\` cluster was carried across to the new binaries.
+    preserved_data: bool,
+}
+
+/// Move the staged binaries into `postgres\`, carrying an existing `data\`
+/// cluster across from the old install to the new one.
+///
+/// The version runtimes' [`swap_into_place`] moves the whole directory aside and
+/// the whole new one in, which for PostgreSQL would send the database off with
+/// the retired binaries. So the cluster is lifted out of the retired folder and
+/// set back under the new binaries before the retired one is removed -- and if
+/// the new binaries fail to move in, the old folder (cluster and all) is put
+/// straight back.
+fn swap_postgres(stack: &Stack, staging: &Path, dest: &Path) -> Result<SwappedPostgres> {
+    let replaced = dest.exists();
+    let retired = stack.root.join(retired_name("postgres"));
+
+    if replaced {
+        if retired.exists() {
+            std::fs::remove_dir_all(&retired)
+                .with_context(|| format!("clearing {}", stack.rel(&retired)))?;
+        }
+        std::fs::rename(dest, &retired).with_context(|| {
+            format!(
+                "moving the existing {} aside (is something from it still \
+                 running? `devcrate stop postgres`)",
+                stack.rel(dest)
+            )
+        })?;
+    }
+
+    if let Err(err) = std::fs::rename(staging, dest) {
+        if replaced {
+            let _ = std::fs::rename(&retired, dest);
+        }
+        let _ = std::fs::remove_dir_all(staging);
+        return Err(anyhow::Error::new(err)
+            .context(format!("installing into {}", stack.rel(dest))));
+    }
+
+    let mut preserved_data = false;
+    if replaced {
+        let old_data = retired.join("data");
+        if old_data.join("PG_VERSION").is_file() {
+            let new_data = dest.join("data");
+            // The vendor archive carries no data\, but guard against a staging
+            // dir that somehow had one rather than move onto it.
+            if new_data.exists() {
+                std::fs::remove_dir_all(&new_data)
+                    .with_context(|| format!("clearing {}", stack.rel(&new_data)))?;
+            }
+            std::fs::rename(&old_data, &new_data).with_context(|| {
+                format!("restoring the existing cluster into {}", stack.rel(&new_data))
+            })?;
+            preserved_data = true;
+        }
+        let _ = std::fs::remove_dir_all(&retired);
+    }
+
+    Ok(SwappedPostgres { replaced, preserved_data })
+}
+
+/// Settle on the PostgreSQL version to record.
+///
+/// The vendor's file name is authoritative; an override only stands in when the
+/// file has been renamed past recognition. There is no versioned folder to name
+/// (PostgreSQL is a single install), so this is for the receipt and the printout
+/// rather than a path.
+fn resolve_postgres_version(file_name: &str, wanted: Option<&str>) -> Result<String> {
+    if let Some(version) = postgres::version_from_file_name(file_name) {
+        return Ok(version);
+    }
+    if let Some(wanted) = wanted {
+        let wanted = wanted.trim();
+        if !wanted.is_empty() {
+            return Ok(wanted.to_string());
+        }
+    }
+    bail!(
+        "cannot tell which PostgreSQL version {file_name:?} holds.\n\
+         The vendor's own name carries it \
+         (postgresql-13.16-1-windows-x64-binaries.zip); \
+         pass --version 13.16 if the file has been renamed."
+    )
+}
+
+/// Install Python into `python\python-<X.Y>`, enable `site`, and bootstrap pip.
+///
+/// The shape is PHP's -- versions side by side, a `current` junction switched
+/// separately -- so the staging-and-swap is the shared [`swap_into_place`] and
+/// there is nothing to protect on replace (no data, unlike PostgreSQL). What is
+/// its own is the configure: the embeddable distribution ships with `site`
+/// switched off, so [`python::enable_site`] turns it on, and pip is fetched and
+/// installed afterwards -- the one step that needs the network, and the one that
+/// degrades to a message rather than a failure when there is none.
+fn python_from_archive(
+    stack: &Stack,
+    archive_path: &Path,
+    opts: &Options,
+    progress: &mut dyn FnMut(Progress),
+) -> Result<Installed> {
+    if !archive_path.is_file() {
+        bail!("{} is not a file", archive_path.display());
+    }
+    let file_name =
+        archive_path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    let source_sha256 = download::sha256_of(archive_path)
+        .with_context(|| format!("hashing {}", archive_path.display()))?;
+
+    let (version, release) = resolve_python_version(&file_name, opts.version.as_deref())?;
+    let tag = format!("python-{version}");
+    let dest = stack.python_dir.join(&tag);
+
+    if dest.exists() && !opts.force {
+        bail!("{} already exists; pass --force to replace it", stack.rel(&dest));
+    }
+
+    std::fs::create_dir_all(&stack.python_dir)
+        .with_context(|| format!("creating {}", stack.rel(&stack.python_dir)))?;
+
+    let staging = stack.python_dir.join(staging_name(&tag));
+    if staging.exists() {
+        std::fs::remove_dir_all(&staging)
+            .with_context(|| format!("clearing {}", stack.rel(&staging)))?;
+    }
+    std::fs::create_dir_all(&staging)
+        .with_context(|| format!("creating {}", stack.rel(&staging)))?;
+
+    let assembled = match assemble_python(&staging, archive_path, progress) {
+        Ok(assembled) => assembled,
+        Err(err) => {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(err);
+        }
+    };
+
+    progress(Progress::Installing);
+    let replaced = swap_into_place(stack, &stack.python_dir, &staging, &dest, &tag)?;
+
+    // pip is the part that reaches the network, so it happens after the version
+    // is in place and only when there is a `._pth` that turning site on made
+    // pip-able. A full distribution (no `._pth`) already has pip.
+    let pip = if assembled.site_enabled {
+        Some(bootstrap_pip(stack, &dest, &version))
+    } else {
+        None
+    };
+
+    let receipt = Receipt {
+        runtime: Runtime::Python.as_str().to_string(),
+        version: version.clone(),
+        release: release.clone(),
+        thread_safe: None,
+        source_archive: file_name,
+        source_bytes: std::fs::metadata(archive_path).map(|m| m.len()).unwrap_or(0),
+        source_sha256,
+        files: assembled.files,
+    };
+    write_receipt(&dest, &receipt)
+        .with_context(|| format!("writing the install receipt in {}", stack.rel(&dest)))?;
+
+    Ok(Installed {
+        runtime: Runtime::Python,
+        version,
+        release,
+        dir: stack.rel(&dest),
+        files: assembled.files,
+        replaced,
+        details: Details::Python(PythonInstalled {
+            site_enabled: assembled.site_enabled,
+            pip,
+        }),
+    })
+}
+
+struct AssembledPython {
+    files: usize,
+    site_enabled: bool,
+}
+
+/// Unpack, check, and enable `site` -- everything local, so a `--from` install
+/// runs it with no network. pip, which needs one, is left to the caller.
+fn assemble_python(
+    staging: &Path,
+    archive_path: &Path,
+    progress: &mut dyn FnMut(Progress),
+) -> Result<AssembledPython> {
+    let extracted = archive::extract(archive_path, staging, &mut |done, total| {
+        progress(Progress::Extracting { done, total })
+    })?;
+
+    progress(Progress::Validating);
+    python::check(staging, archive_path)?;
+
+    progress(Progress::Configuring);
+    let site_enabled = python::enable_site(staging)?;
+
+    Ok(AssembledPython { files: extracted.files, site_enabled })
+}
+
+/// Fetch the branch's `get-pip.py` and run it under the installed Python.
+///
+/// Every failure here is soft: no network, a 404 for a branch pypa no longer
+/// hosts, or get-pip itself erroring all come back as [`python::Pip::Skipped`],
+/// because the Python is installed and usable regardless -- pip is the one thing
+/// that can be finished later with a single command.
+fn bootstrap_pip(stack: &Stack, dest: &Path, branch: &str) -> python::Pip {
+    let downloads = stack.root.join(DOWNLOADS_DIR);
+    let source = download::Download {
+        url: python::get_pip_url(branch),
+        // Per branch, so 3.8's script and 3.12's do not collide in the cache.
+        file_name: format!("get-pip-{branch}.py"),
+        sha256: None,
+    };
+    let fetched = match download::fetch(&source, &downloads, &mut |_, _| {}) {
+        Ok(fetched) => fetched,
+        Err(err) => {
+            return python::Pip::Skipped(format!("could not fetch get-pip.py ({err:#})"));
+        }
+    };
+    python::run_get_pip(dest, &fetched.path)
+}
+
+/// Settle on the Python branch to install as, and the release it came from.
+///
+/// The branch (`3.8`) is the folder name, so an override names it; the archive
+/// still knows its own release (`3.8.10`) for the receipt, exactly as PHP does.
+fn resolve_python_version(file_name: &str, wanted: Option<&str>) -> Result<(String, String)> {
+    let from_name = python::version_from_file_name(file_name);
+
+    match wanted {
+        Some(wanted) => {
+            let digits = crate::php::digits(wanted);
+            if digits.len() < 2 {
+                bail!("{wanted:?} does not name a Python version (try 3.8)");
+            }
+            let branch = config::version_from_tag(&digits);
+            let release = from_name.map(|(_, release)| release).unwrap_or_else(|| branch.clone());
+            Ok((branch, release))
+        }
+        None => from_name.ok_or_else(|| {
+            anyhow!(
+                "cannot tell which Python version {file_name:?} holds.\n\
+                 The vendor's own name carries it (python-3.8.10-embed-amd64.zip); \
+                 pass --version 3.8 if the file has been renamed."
             )
         }),
     }
@@ -800,6 +1227,8 @@ fn install_by_download(
         Runtime::Php => choose_php(stack, version)?,
         Runtime::Nginx => choose_nginx(stack, version)?,
         Runtime::Composer => choose_composer(stack, version)?,
+        Runtime::Postgres => choose_postgres(stack, version)?,
+        Runtime::Python => choose_python(stack, version)?,
     };
     // Nothing chosen means the catalogue was printed instead.
     let Some(Chosen { download: source, dest, replace_freely }) = chosen else {
@@ -913,6 +1342,113 @@ fn choose_composer(stack: &Stack, version: Option<&str>) -> Result<Option<Chosen
     }))
 }
 
+/// The EDB binaries zip a named PostgreSQL minor resolves to.
+///
+/// Unlike the other three runtimes there is no catalogue to print: EDB serves no
+/// machine-readable index of these zips, so a no-version invocation cannot list
+/// them and says so instead. A named `major.minor` resolves to a predictable URL
+/// on EDB's mirror, verified against its declared length over TLS -- the same
+/// weaker check nginx gets, for the same reason (no published checksum).
+fn choose_postgres(stack: &Stack, version: Option<&str>) -> Result<Option<Chosen>> {
+    let Some(wanted) = version else {
+        print_postgres_guidance(stack);
+        return Ok(None);
+    };
+
+    println!("  locating PostgreSQL {wanted} on get.enterprisedb.com");
+    let release = download::postgres_release(wanted)?;
+    println!("  PostgreSQL {} -> {}", release.version, release.file_name);
+    Ok(Some(Chosen {
+        download: release.download(),
+        dest: stack.root.join("postgres"),
+        replace_freely: false,
+    }))
+}
+
+/// What `devcrate install postgres` with no version prints. Not a catalogue --
+/// EDB publishes none -- but the honest shape of one: name an exact minor, and
+/// here is the current final of a series that is now EOL.
+fn print_postgres_guidance(stack: &Stack) {
+    let dir = stack.root.join("postgres");
+    let installed = read_receipt_version(&dir).filter(|v| v != "unknown");
+
+    println!();
+    println!("PostgreSQL (EDB Windows x64 binaries):");
+    println!();
+    match installed {
+        Some(version) => println!("  installed: {version}   in {}", stack.rel(&dir)),
+        None => println!("  not installed"),
+    }
+    println!();
+    println!("EDB serves no version index, so there is nothing to list -- name an");
+    println!("exact minor release and it is fetched from EDB's mirror:");
+    println!();
+    println!("  devcrate install postgres 13.23");
+    println!();
+    println!("Note: PostgreSQL 13 reached end-of-life on 2025-11-13; 13.23 is its");
+    println!("final release. The download is checked against its declared length");
+    println!("over TLS -- EDB publishes no checksum for these zips.");
+}
+
+/// The embeddable Python zip a named branch or release resolves to.
+///
+/// Like PostgreSQL there is no catalogue to print -- python.org publishes no
+/// machine-readable index of which patch releases carry a Windows zip -- so a
+/// no-version invocation guides rather than lists, and a named version resolves
+/// to a URL on python.org's archive, verified against its declared length over
+/// TLS (python.org publishes MD5 and GPG, no sha256).
+fn choose_python(stack: &Stack, version: Option<&str>) -> Result<Option<Chosen>> {
+    let Some(wanted) = version else {
+        print_python_guidance(stack);
+        return Ok(None);
+    };
+
+    println!("  locating Python {wanted} on python.org");
+    let release = download::python_release(wanted)?;
+    println!("  Python {} -> {}", release.release, release.file_name);
+    Ok(Some(Chosen {
+        download: release.download(),
+        dest: stack.python_dir.join(format!("python-{}", release.version)),
+        replace_freely: false,
+    }))
+}
+
+/// What `devcrate install python` with no version prints.
+fn print_python_guidance(stack: &Stack) {
+    println!();
+    println!("Python (embeddable amd64, from python.org):");
+    println!();
+    let installed = python_versions_installed(stack);
+    if installed.is_empty() {
+        println!("  none installed");
+    } else {
+        println!("  installed: {}", installed.join(", "));
+    }
+    println!();
+    println!("python.org serves no version index, so there is nothing to list --");
+    println!("name a branch or an exact release and it is fetched:");
+    println!();
+    println!("  devcrate install python 3.8       (the newest 3.8.x Windows build)");
+    println!("  devcrate install python 3.8.10    (an exact release)");
+    println!();
+    println!("Note: Python 3.8 is end-of-life (final Windows build 3.8.10). The zip");
+    println!("is checked against its declared length over TLS -- python.org");
+    println!("publishes MD5 and GPG for it, not sha256. pip is bootstrapped after.");
+}
+
+/// The installed Python branch names, for the guidance line. Scans `python\` the
+/// same way the toolchain does, but without pulling in that module's printing.
+fn python_versions_installed(stack: &Stack) -> Vec<String> {
+    stack
+        .python_versions()
+        .iter()
+        .map(|dir| {
+            let tag = dir.file_name().unwrap_or_default().to_string_lossy().to_ascii_lowercase();
+            config::version_from_tag(&tag)
+        })
+        .collect()
+}
+
 /// The release a spelling names: a line by name (`stable`, `lts`, `preview`,
 /// `snapshot`), or an exact version off the stable list.
 ///
@@ -1008,8 +1544,10 @@ fn report_transfer(
     let against = match runtime {
         Runtime::Php => "the release list",
         Runtime::Composer => "getcomposer.org's checksum",
-        // nginx publishes none, so this arm is never the verified one.
-        Runtime::Nginx => "the vendor's checksum",
+        Runtime::Python => "python.org's checksum",
+        // nginx and PostgreSQL (EDB) publish none, so these arms are never the
+        // verified one -- the "no checksum" branch below reports them instead.
+        Runtime::Nginx | Runtime::Postgres => "the vendor's checksum",
     };
     match (fetched.cached, fetched.verified) {
         (true, true) => println!(
@@ -1021,9 +1559,21 @@ fn report_transfer(
         }
         (false, true) => println!("  sha256 verified against {against}"),
         (false, false) => {
+            // The vendor that publishes no hash, named so the weaker check is
+            // attributed rather than mysterious.
+            let vendor = match runtime {
+                Runtime::Postgres => "EDB",
+                Runtime::Python => "python.org",
+                _ => "nginx",
+            };
+            let host = match runtime {
+                Runtime::Postgres => "the download host",
+                Runtime::Python => "python.org",
+                _ => "nginx.org",
+            };
             println!("  sha256 {}", fetched.sha256);
-            println!("  (nginx publishes no checksum; the transfer was checked");
-            println!("   against its declared length over TLS to nginx.org)");
+            println!("  ({vendor} publishes no checksum; the transfer was checked");
+            println!("   against its declared length over TLS to {host})");
         }
     }
 }
@@ -1163,6 +1713,8 @@ impl Reporter {
                 Runtime::Php => self.line("generating php.ini"),
                 Runtime::Nginx => self.line("preparing the prefix"),
                 Runtime::Composer => self.line("writing the composer shim"),
+                Runtime::Postgres => self.line("initialising the cluster (initdb)"),
+                Runtime::Python => self.line("enabling site (for pip)"),
             },
             Progress::Installing => self.line("moving it into place"),
         }
@@ -1215,7 +1767,40 @@ fn print_installed(done: &Installed) {
         Details::Php(php) => print_php_installed(done, php),
         Details::Nginx(nginx) => print_nginx_installed(done, nginx),
         Details::Composer(composer) => print_composer_installed(done, composer),
+        Details::Postgres(postgres) => print_postgres_installed(done, postgres),
+        Details::Python(py) => print_python_installed(done, py),
     }
+}
+
+fn print_python_installed(done: &Installed, py: &PythonInstalled) {
+    if py.site_enabled {
+        println!("  enabled `import site` (so pip can be installed and found)");
+    }
+    if done.replaced {
+        println!("  replaced the previous {} installation", done.version);
+    }
+
+    println!();
+    println!("{} {} installed as python-{}", done.runtime.label(), done.release, done.version);
+
+    match &py.pip {
+        Some(python::Pip::Installed) => println!("  pip installed"),
+        Some(python::Pip::Skipped(why)) => {
+            println!();
+            println!("NOTE: pip was not installed ({why}).");
+            println!("      The Python is installed and usable; finish pip when online:");
+            println!(
+                "        python\\python-{}\\python.exe -m ensurepip  (or re-run the install)",
+                done.version
+            );
+        }
+        None => {}
+    }
+
+    println!();
+    println!("  make it the CLI Python   devcrate python use {}", done.version);
+    println!("  then                     python --version");
+    println!("  (put python\\current, and its Scripts\\, on PATH once -- like php\\current)");
 }
 
 fn print_php_installed(done: &Installed, php: &PhpInstalled) {
@@ -1311,6 +1896,36 @@ fn print_nginx_installed(done: &Installed, nginx: &NginxInstalled) {
             println!("  check it   devcrate nginx list");
         }
     }
+}
+
+fn print_postgres_installed(done: &Installed, postgres: &PostgresInstalled) {
+    if postgres.initialised {
+        println!("  cluster created in {} (initdb)", postgres.data_dir);
+    } else if postgres.preserved_data {
+        println!("  kept the existing cluster in {}", postgres.data_dir);
+    }
+    if done.replaced && !postgres.preserved_data {
+        println!("  replaced the previous binaries");
+    }
+
+    println!();
+    println!("{} {} installed as postgres", done.runtime.label(), done.release);
+
+    match (&postgres.password, postgres.preserved_data) {
+        (Some(password), _) => {
+            println!("  superuser  {} / {password}  (local dev default)", postgres.superuser);
+            println!("  change it  ALTER USER {} PASSWORD '...';", postgres.superuser);
+        }
+        (None, true) => {
+            println!("  superuser  {} (existing cluster; its password is unchanged)", postgres.superuser);
+        }
+        (None, false) => {}
+    }
+
+    println!();
+    println!("  start it   devcrate start postgres        (listens on {})", postgres.port);
+    println!("  connect    psql -U {} -h 127.0.0.1 -p {}", postgres.superuser, postgres.port);
+    println!("  stop it    devcrate stop postgres");
 }
 
 fn print_composer_installed(done: &Installed, composer: &ComposerInstalled) {
@@ -1416,6 +2031,9 @@ mod tests {
         assert_eq!(Runtime::parse("nginx").unwrap(), Runtime::Nginx);
         assert_eq!(Runtime::parse("composer").unwrap(), Runtime::Composer);
         assert_eq!(Runtime::parse("Composer").unwrap(), Runtime::Composer);
+        assert_eq!(Runtime::parse("postgres").unwrap(), Runtime::Postgres);
+        assert_eq!(Runtime::parse("postgresql").unwrap(), Runtime::Postgres);
+        assert_eq!(Runtime::parse("python").unwrap(), Runtime::Python);
 
         let planned = Runtime::parse("mariadb").unwrap_err().to_string();
         assert!(planned.contains("not built yet"), "{planned}");

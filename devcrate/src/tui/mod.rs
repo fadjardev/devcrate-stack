@@ -180,6 +180,7 @@ mod tests {
             nginx_prefix: root.join("nginx"),
             nginx_bin: root.join("nginx").join("nginx-1.31.1").join("nginx.exe"),
             php_dir: root.join("php"),
+            python_dir: root.join("python"),
             services: vec![
                 Service {
                     id: "nginx".into(),
@@ -226,6 +227,7 @@ mod tests {
             root_source: "--root flag".into(),
             config: None,
             cli_php: Some("php-8.5".into()),
+            cli_python: None,
             services: vec![
                 service("nginx", "nginx", nginx, 80, vec![100]),
                 service("php-8.5", "PHP 8.5", php, 9085, vec![200]),

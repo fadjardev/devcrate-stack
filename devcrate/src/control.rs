@@ -35,13 +35,26 @@ const BACKGROUND: u32 = 0x0000_0200 /* CREATE_NEW_PROCESS_GROUP */ | 0x0800_0000
 #[cfg(windows)]
 const DETACHED: u32 = 0x0000_0008 /* DETACHED_PROCESS */;
 
-/// The order things may safely be brought down in.
-const SHUTDOWN: [ServiceKind; 4] =
-    [ServiceKind::Nginx, ServiceKind::Php, ServiceKind::RabbitMq, ServiceKind::MariaDb];
+/// The order things may safely be brought down in. Databases go last -- they
+/// have the most to flush, and nothing above them should still be talking to one
+/// by the time it is asked to stop.
+const SHUTDOWN: &[ServiceKind] = &[
+    ServiceKind::Nginx,
+    ServiceKind::Php,
+    ServiceKind::RabbitMq,
+    ServiceKind::Postgres,
+    ServiceKind::MariaDb,
+];
 
-/// ...and up in.
-const STARTUP: [ServiceKind; 4] =
-    [ServiceKind::MariaDb, ServiceKind::Php, ServiceKind::RabbitMq, ServiceKind::Nginx];
+/// ...and up in: the reverse, so nginx and the PHP pools only start once the
+/// backends they proxy to are answering.
+const STARTUP: &[ServiceKind] = &[
+    ServiceKind::MariaDb,
+    ServiceKind::Postgres,
+    ServiceKind::Php,
+    ServiceKind::RabbitMq,
+    ServiceKind::Nginx,
+];
 
 /// How often to re-check whether a service has finished going away.
 const POLL: Duration = Duration::from_millis(200);
@@ -59,6 +72,10 @@ fn grace(kind: ServiceKind) -> Duration {
         ServiceKind::Php => Duration::ZERO,
         ServiceKind::RabbitMq => Duration::from_secs(30),
         ServiceKind::MariaDb => Duration::from_secs(30),
+        // `pg_ctl stop -m fast` rolls back open transactions and disconnects
+        // clients rather than waiting them out, so this is a ceiling it rarely
+        // reaches.
+        ServiceKind::Postgres => Duration::from_secs(30),
     }
 }
 
@@ -152,10 +169,11 @@ fn subject(targets: &[&Service], only: Option<&str>) -> String {
 fn select<'a>(
     stack: &'a Stack,
     only: Option<&str>,
-    order: [ServiceKind; 4],
+    order: &[ServiceKind],
 ) -> Result<Vec<&'a Service>> {
     let ordered: Vec<&Service> = order
-        .into_iter()
+        .iter()
+        .copied()
         .flat_map(|kind| stack.services.iter().filter(move |s| s.kind == kind))
         .collect();
 
@@ -319,6 +337,21 @@ fn ask_nicely(stack: &Stack, service: &Service) -> Result<()> {
             }
             run(command.args(["-u", "root", "shutdown"]))
         }
+        ServiceKind::Postgres => {
+            let bin = parent(&service.install_marker)?;
+            let ctl = bin.join("pg_ctl.exe");
+            if !ctl.is_file() {
+                return Err(anyhow!("{} not found", stack.rel(&ctl)));
+            }
+            let data = ancestor(&service.install_marker, 2)?.join("data");
+            // -m fast: disconnect clients and roll back in-flight transactions
+            // rather than wait for them (the "smart" default), and don't leave a
+            // half-stopped cluster if a session is idle in a transaction.
+            run(Command::new(&ctl)
+                .arg("-D")
+                .arg(&data)
+                .args(["-m", "fast", "stop"]))
+        }
     }
 }
 
@@ -377,6 +410,7 @@ fn boot(kind: ServiceKind) -> Duration {
         ServiceKind::Nginx => Duration::from_secs(15),
         ServiceKind::Php => Duration::from_secs(15),
         ServiceKind::MariaDb => Duration::from_secs(45),
+        ServiceKind::Postgres => Duration::from_secs(30),
         // A cold Erlang node with the management plugin is the slow one here.
         ServiceKind::RabbitMq => Duration::from_secs(90),
     }
@@ -508,6 +542,27 @@ fn launch(stack: &Stack, service: &Service) -> Result<()> {
             let defaults = ancestor(&service.install_marker, 2)?.join("my.ini");
             if defaults.is_file() {
                 command.arg(format!("--defaults-file={}", defaults.display()));
+            }
+            background(&mut command)
+        }
+
+        ServiceKind::Postgres => {
+            let data = ancestor(&service.install_marker, 2)?.join("data");
+            if !data.join("PG_VERSION").is_file() {
+                return Err(anyhow!(
+                    "{} has no initialised data directory (PG_VERSION missing).\n\
+                     Reinstall to run initdb: `devcrate install postgres 13`.",
+                    stack.rel(&data)
+                ));
+            }
+            // postgres.exe, not pg_ctl: pg_ctl forks the postmaster and exits, so
+            // the process we would be left supervising is not the one serving.
+            // Running the server directly keeps the process-prefix match honest,
+            // exactly as MariaDB launches mariadbd.exe above.
+            let mut command = Command::new(&service.install_marker);
+            command.arg("-D").arg(&data);
+            if let Some(&port) = service.ports.first() {
+                command.args(["-p", &port.to_string()]);
             }
             background(&mut command)
         }
@@ -715,5 +770,56 @@ pub fn describe(outcome: &Stopped, helpers: usize) -> String {
     match helpers {
         0 => main,
         n => format!("{main}, {n} helper process(es) cleared"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every service kind has to appear in both orders, or one of them would be
+    /// silently skipped at start or stop. It is easy to add a kind to
+    /// `ServiceKind` and forget it here.
+    #[test]
+    fn every_kind_is_started_and_stopped() {
+        let all = [
+            ServiceKind::Nginx,
+            ServiceKind::Php,
+            ServiceKind::MariaDb,
+            ServiceKind::Postgres,
+            ServiceKind::RabbitMq,
+        ];
+        for kind in all {
+            assert!(STARTUP.contains(&kind), "{kind} is missing from STARTUP");
+            assert!(SHUTDOWN.contains(&kind), "{kind} is missing from SHUTDOWN");
+        }
+        // The two orders act on the same set -- the sequence differs (PHP and
+        // RabbitMQ are not strict mirrors), but neither may carry a kind the
+        // other drops.
+        let sorted = |order: &[ServiceKind]| {
+            let mut names: Vec<&str> = order.iter().map(|k| k.as_str()).collect();
+            names.sort_unstable();
+            names
+        };
+        assert_eq!(sorted(STARTUP), sorted(SHUTDOWN));
+        assert_eq!(STARTUP.len(), all.len());
+    }
+
+    /// The ordering that matters: the databases come up before the things that
+    /// query them and go down after, and nginx is the mirror of that -- last up,
+    /// first down -- so no request reaches a backend that is gone or not yet
+    /// there. PostgreSQL sits in the database layer beside MariaDB.
+    #[test]
+    fn databases_bookend_the_startup_and_nginx_is_the_outermost() {
+        assert_eq!(STARTUP.first(), Some(&ServiceKind::MariaDb));
+        assert_eq!(STARTUP.last(), Some(&ServiceKind::Nginx));
+        assert_eq!(SHUTDOWN.first(), Some(&ServiceKind::Nginx));
+        assert_eq!(SHUTDOWN.last(), Some(&ServiceKind::MariaDb));
+
+        let db_pos = |order: &[ServiceKind], kind| order.iter().position(|k| *k == kind).unwrap();
+        // Postgres starts in the DB half (before PHP/nginx) and stops in it
+        // (after nginx/PHP).
+        assert!(db_pos(STARTUP, ServiceKind::Postgres) < db_pos(STARTUP, ServiceKind::Php));
+        assert!(db_pos(SHUTDOWN, ServiceKind::Postgres) > db_pos(SHUTDOWN, ServiceKind::Php));
     }
 }

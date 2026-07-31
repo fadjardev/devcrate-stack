@@ -96,6 +96,11 @@ pub struct StatusReport {
     pub root_source: String,
     pub config: Option<String>,
     pub cli_php: Option<String>,
+    /// The Python `python\current` resolves to, if the stack names one. Python
+    /// is a toolchain rather than a service, so it is reported here as a line
+    /// rather than a row in the service table.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cli_python: Option<String>,
     pub services: Vec<ServiceStatus>,
     pub sites: Vec<String>,
 }
@@ -112,6 +117,9 @@ pub fn report(stack: &Stack) -> StatusReport {
         root_source: stack.root_source.label().to_string(),
         config: stack.config_path.as_ref().map(|p| p.display().to_string()),
         cli_php: stack.current_php().as_deref().map(|p| {
+            p.file_name().unwrap_or(p.as_os_str()).to_string_lossy().into_owned()
+        }),
+        cli_python: stack.current_python().as_deref().map(|p| {
             p.file_name().unwrap_or(p.as_os_str()).to_string_lossy().into_owned()
         }),
         services,
@@ -184,6 +192,11 @@ pub fn print_text(report: &StatusReport) {
     match &report.cli_php {
         Some(version) => println!("  CLI PHP    {version}  (via php\\current)"),
         None => println!("  CLI PHP    not set  (run: phpuse 85)"),
+    }
+    // Only when a Python is installed and active: unlike PHP, the stack does not
+    // assume one, so a stack with no Python says nothing rather than "not set".
+    if let Some(version) = &report.cli_python {
+        println!("  Python     {version}  (via python\\current)");
     }
     println!();
 

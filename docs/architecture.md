@@ -28,6 +28,10 @@ C:\devcrate\                   <- the stack root (any folder works)
 |  |- php-7.4\  php-8.2\  php-8.5\    Portable PHP builds (php.ini is versioned; binaries are not)
 |  |- current                  Junction -> the active CLI PHP version (generated)
 |
+|- python\                     Portable embeddable Python builds (a toolchain, not a service)
+|  |- python-3.8\              One folder per version (binaries, not versioned)
+|  |- current                  Junction -> the active CLI Python version (generated)
+|
 |- nginx\                      The nginx PREFIX (-p), and it never moves
 |  |- conf\
 |  |  |- nginx.conf            Main config (versioned)
@@ -40,6 +44,7 @@ C:\devcrate\                   <- the stack root (any folder works)
 |  |- current                  Junction -> the active nginx build (generated)
 |
 |- mariadb\                    Portable MariaDB (binaries + data, not versioned)
+|- postgres\                   Portable PostgreSQL 13 (bin\ + data\ cluster, not versioned)
 |- rabbitmq\ + erlang\         Portable RabbitMQ broker + Erlang runtime (not versioned)
 |- composer\                   composer.phar + shims + home/cache, in-root (not versioned)
 |- tools\rabbitmq-smoketest\   Standalone AMQP publish/consume test
@@ -73,6 +78,7 @@ selected by `phpuse`.
 | Service | Address | Notes |
 | --- | --- | --- |
 | MariaDB | `127.0.0.1:3306` | user `root`, no password |
+| PostgreSQL | `127.0.0.1:5432` | superuser `postgres` / `postgres` (local dev default) |
 | PHP 7.4 FastCGI | `127.0.0.1:9074` | `php-cgi.exe` |
 | PHP 8.2 FastCGI | `127.0.0.1:9082` | `php-cgi.exe` |
 | PHP 8.5 FastCGI | `127.0.0.1:9085` | `php-cgi.exe` |
@@ -127,3 +133,24 @@ that takes a version accepts `8.5`, `85`, or `php-8.5` interchangeably.
 - **Config is the only thing versioned.** Binaries are downloadable and large;
   the repo tracks the scripts, `nginx.conf`, `sites\*.conf`, and each
   `php.ini`. TLS private keys and `projects/` are never committed.
+- **Services and toolchains are different things.** MariaDB, PostgreSQL,
+  RabbitMQ, nginx, and the PHP FastCGI workers are *services* — they listen on a
+  port and are started, stopped, and supervised (`ServiceKind` in the binary).
+  PHP-on-`PATH`, Python, and (planned) Node/Bun are *toolchains* — no port,
+  nothing to start, switched by a `current` junction. PHP is the one runtime
+  that is both: FastCGI workers (service) and `php\current` (toolchain). Python
+  is a toolchain only, which is why `devcrate status` reports it as a line rather
+  than a service row and there is no `devcrate start python`.
+- **PostgreSQL keeps one version, and never loses its data.** A cluster's
+  on-disk format is version-specific, so — like MariaDB — `postgres\` holds a
+  single version and its `data\` cluster rather than the side-by-side folders PHP
+  keeps. Installing runs `initdb` once; reinstalling with `--force` replaces the
+  binaries but lifts `data\` across to them, so the database is never destroyed
+  by an upgrade. It is launched by `postgres.exe -D data` directly (not `pg_ctl`,
+  which forks and exits) and stopped with `pg_ctl stop -m fast`.
+- **The embeddable Python is deliberately minimal.** python.org's embeddable zip
+  is portable and needs no admin, but ships with `import site` off in its
+  `._pth`, so it has no `pip` until the install uncomments that line and
+  bootstraps pip from the branch-specific `get-pip.py`. That one step needs the
+  network and degrades to a message when there is none. See
+  [cli.md](cli.md#python).

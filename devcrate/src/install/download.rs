@@ -52,6 +52,20 @@ const NGINX_DOWNLOAD_URL: &str = "https://nginx.org/download/";
 const COMPOSER_VERSIONS_URL: &str = "https://getcomposer.org/versions";
 const COMPOSER_DOWNLOAD_URL: &str = "https://getcomposer.org/download/";
 
+/// Where EDB serves the Windows x64 *binaries* zips (the archive without the
+/// installer), named `postgresql-<version>-<build>-windows-x64-binaries.zip`.
+const POSTGRES_BINARIES_URL: &str = "https://get.enterprisedb.com/postgresql/";
+
+/// python.org's release archive: `<release>/python-<release>-embed-amd64.zip`.
+const PYTHON_FTP_URL: &str = "https://www.python.org/ftp/python/";
+
+/// How far up a branch's patch numbers to look for the last one that still ships
+/// an embeddable zip. Windows binaries stop partway up every branch (3.8 ends at
+/// 3.8.10; later 3.8.x are source-only), so resolving a branch means finding the
+/// highest patch that has a zip -- and no branch's binaries have ever reached
+/// this many patches.
+const PYTHON_PATCH_CEILING: u32 = 25;
+
 /// One archive to fetch, and what there is to check it against.
 ///
 /// The one thing [`fetch`] needs to know about a release, so that adding a
@@ -141,6 +155,164 @@ impl NginxRelease {
             sha256: None,
         }
     }
+}
+
+/// One installable PostgreSQL release, resolved to the EDB zip that holds it.
+///
+/// A fourth vendor shape, and the weakest for verification. EDB publishes no
+/// machine-readable index of these binaries zips and no checksums for them, so
+/// there is nothing to *list* and nothing to hash against -- only a predictable
+/// URL per release, checked (like nginx) against its declared length over TLS.
+/// [`Download::sha256`] is `None`, and that is where the difference lives.
+#[derive(Debug, Clone)]
+pub struct PostgresRelease {
+    /// `major.minor`, e.g. `13.23`. The name the stack knows it by.
+    pub version: String,
+    /// The zip EDB actually serves, incl. their packaging build number.
+    pub file_name: String,
+}
+
+impl PostgresRelease {
+    pub fn download(&self) -> Download {
+        Download {
+            url: format!("{POSTGRES_BINARIES_URL}{}", self.file_name),
+            file_name: self.file_name.clone(),
+            // EDB publishes no checksum; see the type docs.
+            sha256: None,
+        }
+    }
+}
+
+/// Resolve a `major.minor` to the EDB binaries zip that exists for it.
+///
+/// The build number after the version (`-1`, occasionally `-2`) is EDB's own
+/// packaging revision, not something the caller should have to know, so it is
+/// discovered by asking the server which one is there rather than guessed. There
+/// is no catalogue to enumerate -- EDB serves no index -- so this is the whole
+/// of "which release": a named version either resolves to a URL that answers or
+/// it does not.
+pub fn postgres_release(version: &str) -> Result<PostgresRelease> {
+    if !is_postgres_minor(version) {
+        bail!(
+            "{version:?} is not a PostgreSQL major.minor release (try 13.23).\n\
+             EDB publishes no index to resolve a bare series, so an exact minor \
+             is required."
+        );
+    }
+
+    let mut tried = Vec::new();
+    for build in 1..=3u32 {
+        let file_name = format!("postgresql-{version}-{build}-windows-x64-binaries.zip");
+        let url = format!("{POSTGRES_BINARIES_URL}{file_name}");
+        if resource_exists(&url) {
+            return Ok(PostgresRelease { version: version.to_string(), file_name });
+        }
+        tried.push(file_name);
+    }
+
+    bail!(
+        "no EDB Windows x64 binaries zip found for PostgreSQL {version}.\n\
+         Tried: {}\n\
+         Name an exact minor that EDB still hosts, or download the zip yourself \
+         and install it with --from (docs/installation.md).",
+        tried.join(", ")
+    )
+}
+
+/// Does a `HEAD` to this URL come back as present? Any error -- a 404, or a
+/// connection that never opened -- reads as "no", which is exactly what the
+/// caller wants: it is about to try the next candidate build, and the last one's
+/// failure is not worth distinguishing from a missing file here.
+fn resource_exists(url: &str) -> bool {
+    agent().head(url).call().is_ok()
+}
+
+/// One installable Python release, resolved to the embeddable amd64 zip.
+///
+/// python.org's shape is nginx's, not PHP's: it publishes MD5 sums and GPG
+/// signatures for these files but no sha256, so there is nothing that fits
+/// [`Download::sha256`] to check against, and the transfer falls back to its
+/// declared length over TLS to python.org. There is no machine-readable index of
+/// which patch releases carry a Windows zip either, so a branch is resolved by
+/// asking the archive which ones are there.
+#[derive(Debug, Clone)]
+pub struct PythonRelease {
+    /// The branch, and the folder name the stack knows it by: `3.8`.
+    pub version: String,
+    /// The full release the zip holds: `3.8.10`.
+    pub release: String,
+    /// `python-3.8.10-embed-amd64.zip`.
+    pub file_name: String,
+}
+
+impl PythonRelease {
+    pub fn download(&self) -> Download {
+        Download {
+            url: format!("{PYTHON_FTP_URL}{}/{}", self.release, self.file_name),
+            file_name: self.file_name.clone(),
+            // python.org publishes MD5 and GPG, not sha256; see the type docs.
+            sha256: None,
+        }
+    }
+}
+
+fn embed_release(branch: &str, release: &str) -> PythonRelease {
+    PythonRelease {
+        version: branch.to_string(),
+        release: release.to_string(),
+        file_name: format!("python-{release}-embed-amd64.zip"),
+    }
+}
+
+/// Resolve a Python branch (`3.8`) or exact release (`3.8.10`) to the embeddable
+/// zip that exists for it.
+///
+/// A branch names no single file -- the stack switches by branch, but the URL
+/// needs a patch level -- so the highest patch that still ships a Windows zip is
+/// found by asking python.org's archive, newest first. An exact release skips
+/// the search and is only checked to be there.
+pub fn python_release(wanted: &str) -> Result<PythonRelease> {
+    let parts: Vec<&str> = wanted.split('.').collect();
+    let numeric =
+        parts.iter().all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()));
+    if !numeric || parts.len() < 2 || parts.len() > 3 {
+        bail!("{wanted:?} is not a Python version (try 3.8 or 3.8.10)");
+    }
+    let branch = format!("{}.{}", parts[0], parts[1]);
+
+    // An exact release is one URL to confirm.
+    if parts.len() == 3 {
+        let release = embed_release(&branch, wanted);
+        if resource_exists(&release.download().url) {
+            return Ok(release);
+        }
+        bail!(
+            "python.org has no embeddable amd64 zip for Python {wanted}.\n\
+             Windows binaries stop partway up each branch; name one that has a \
+             zip (3.8.10 is the last for 3.8), or install it with --from."
+        );
+    }
+
+    // A branch: walk its patches down from the ceiling to the first that has a
+    // zip, which is the newest Windows build of that branch.
+    for patch in (0..=PYTHON_PATCH_CEILING).rev() {
+        let release = embed_release(&branch, &format!("{branch}.{patch}"));
+        if resource_exists(&release.download().url) {
+            return Ok(release);
+        }
+    }
+    bail!(
+        "no embeddable amd64 zip found for Python {branch} on python.org \
+         (tried .{PYTHON_PATCH_CEILING} down to .0).\n\
+         Name an exact release, e.g. 3.8.10, or install it with --from."
+    )
+}
+
+/// A PostgreSQL `major.minor`: two non-empty numeric parts, e.g. `13.23`.
+fn is_postgres_minor(version: &str) -> bool {
+    let parts: Vec<&str> = version.split('.').collect();
+    parts.len() == 2
+        && parts.iter().all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
 }
 
 /// An archive on disk, ready for [`super::from_archive`].
@@ -844,6 +1016,57 @@ mod tests {
         assert!(parse_sha256sum("<html>404</html>").is_err());
         assert!(parse_sha256sum("").is_err());
         assert!(parse_sha256sum("abc123  composer.phar").is_err());
+    }
+
+    #[test]
+    fn a_postgres_minor_is_two_numeric_parts() {
+        assert!(is_postgres_minor("13.23"));
+        assert!(is_postgres_minor("13.0"));
+        // A bare series has no minor to resolve, and EDB serves no index to
+        // resolve it from -- so it is not accepted as a version.
+        assert!(!is_postgres_minor("13"));
+        assert!(!is_postgres_minor("13.23.1"));
+        assert!(!is_postgres_minor("13.x"));
+        assert!(!is_postgres_minor(""));
+    }
+
+    #[test]
+    fn the_postgres_url_is_the_edb_binaries_zip() {
+        let release = PostgresRelease {
+            version: "13.23".into(),
+            file_name: "postgresql-13.23-1-windows-x64-binaries.zip".into(),
+        };
+        let download = release.download();
+        assert_eq!(
+            download.url,
+            "https://get.enterprisedb.com/postgresql/postgresql-13.23-1-windows-x64-binaries.zip"
+        );
+        // EDB publishes no hash, and that must be visible rather than faked.
+        assert_eq!(download.sha256, None);
+    }
+
+    #[test]
+    fn the_python_url_is_the_embeddable_zip_under_its_release() {
+        let release = embed_release("3.8", "3.8.10");
+        assert_eq!(release.version, "3.8");
+        assert_eq!(release.file_name, "python-3.8.10-embed-amd64.zip");
+        let download = release.download();
+        assert_eq!(
+            download.url,
+            "https://www.python.org/ftp/python/3.8.10/python-3.8.10-embed-amd64.zip"
+        );
+        // python.org publishes MD5 and GPG, not sha256 -- so this must be None,
+        // not a hash faked to look verified.
+        assert_eq!(download.sha256, None);
+    }
+
+    #[test]
+    fn a_python_version_must_be_two_or_three_numeric_parts() {
+        // These parse; whether the file exists is python.org's to answer.
+        assert!(python_release("3.8.x").is_err());
+        assert!(python_release("3").is_err());
+        assert!(python_release("3.8.10.1").is_err());
+        assert!(python_release("").is_err());
     }
 
     #[test]

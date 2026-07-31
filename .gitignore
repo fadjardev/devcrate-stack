@@ -27,6 +27,20 @@ erl_crash.dump
 /composer/
 /tools/
 
+# --- PostgreSQL: binaries AND the data\ cluster it carries ---
+# One un-versioned directory, like mariadb\: the cluster's on-disk format is
+# tied to the server version, so data\ lives inside the same folder as the
+# binaries and neither half is ours to version. Root-anchored so the
+# installer's source (devcrate\src\install\postgres.rs) stays tracked.
+/postgres/
+
+# --- Python: the versioned toolchain folders and the current junction ---
+# Shaped like php\ but with nothing to keep -- the embeddable distro carries no
+# stack-owned config, so unlike php.ini there is no exception to carve out.
+# Root-anchored, so devcrate\src\python.rs and devcrate\src\install\python.rs
+# are still versioned.
+/python/
+
 # --- PHP: keep ONLY each version's php.ini, drop binaries/zips/junction ---
 /php/**
 !/php/*/
