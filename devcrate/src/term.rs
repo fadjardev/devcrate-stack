@@ -6,8 +6,11 @@
 //! IDE's integrated terminal, and out of a pipe into a file -- and the last of
 //! those must not receive escape sequences at all.
 
-use std::io::{IsTerminal, stdout};
-use std::sync::OnceLock;
+use std::io::{IsTerminal, Write, stdout};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 /// The foreground colours used anywhere in the output. Deliberately few: colour
 /// here is a second channel for the state column, not decoration.
@@ -112,6 +115,75 @@ pub fn wrap(text: &str, indent: usize) -> Vec<String> {
         lines.push(line);
     }
     lines
+}
+
+// ---------------------------------------------------------------------------
+// Spinner
+// ---------------------------------------------------------------------------
+
+/// Whether it is worth animating anything: a real console, not a `dumb` one a
+/// pipe or a CI log is pretending to be.
+fn interactive() -> bool {
+    if std::env::var("TERM").is_ok_and(|term| term == "dumb") {
+        return false;
+    }
+    stdout().is_terminal()
+}
+
+const SPINNER_FRAMES: [char; 4] = ['|', '/', '-', '\\'];
+
+/// A one-line "still working" indicator for a step with no other feedback
+/// while it runs -- RabbitMQ's cold boot can eat 90s of otherwise total
+/// silence. Animates only on a real terminal; redirected output (a log file, a
+/// pipe, a `dumb` TERM) gets nothing until [`Spinner::finish`] prints the
+/// result, so `devcrate start > log` stays one line per service.
+pub struct Spinner {
+    stop: Option<Arc<AtomicBool>>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl Spinner {
+    /// Start animating `label` on the current line.
+    pub fn start(label: &str) -> Self {
+        if !interactive() {
+            return Spinner { stop: None, handle: None };
+        }
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_thread = stop.clone();
+        let label = label.to_string();
+        let handle = thread::spawn(move || {
+            let mut frame = 0usize;
+            while !stop_thread.load(Ordering::Relaxed) {
+                print!("\r  {} {label}", SPINNER_FRAMES[frame % SPINNER_FRAMES.len()]);
+                let _ = stdout().flush();
+                frame += 1;
+                thread::sleep(Duration::from_millis(100));
+            }
+        });
+        Spinner { stop: Some(stop), handle: Some(handle) }
+    }
+
+    /// Stop animating and print `line` as the permanent result.
+    pub fn finish(self, line: &str) {
+        let animated = self.stop.is_some();
+        if let Some(stop) = &self.stop {
+            stop.store(true, Ordering::Relaxed);
+        }
+        if let Some(handle) = self.handle {
+            // The thread only ever sleeps and writes to stdout, so this is a
+            // bounded wait, not a hang: at most one 100ms sleep left to run out.
+            let _ = handle.join();
+        }
+        if animated {
+            // Blank out whatever the spinner left on the line before writing
+            // the result over it, rather than assuming `line` is at least as
+            // wide as the label that was spinning.
+            let width = width().unwrap_or(120).max(20);
+            print!("\r{}\r", " ".repeat(width));
+        }
+        println!("{line}");
+    }
 }
 
 // ---------------------------------------------------------------------------

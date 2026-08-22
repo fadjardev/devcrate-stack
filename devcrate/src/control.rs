@@ -20,6 +20,7 @@ use anyhow::{Result, anyhow};
 
 use crate::config::{Service, ServiceKind, Stack};
 use crate::probe::{self, ProcessTable};
+use crate::term::Spinner;
 use crate::{exit, php};
 
 #[cfg(windows)]
@@ -126,16 +127,18 @@ pub struct Step<T> {
 /// were acted on.
 pub fn run_stop(stack: &Stack, only: Option<&str>) -> Result<Vec<Step<Stopped>>> {
     let targets = select(stack, only, SHUTDOWN)?;
-    Ok(targets
-        .iter()
-        .map(|service| {
-            let outcome = stop_service(stack, service);
-            // Only once the service itself is down: epmd is the thing RabbitMQ
-            // registers with, so clearing it first would be pulling the rug out.
-            let helpers = if outcome.is_failure() { 0 } else { reap_helpers(service) };
-            Step { id: service.id.clone(), name: service.name.clone(), outcome, helpers }
-        })
-        .collect())
+    Ok(targets.iter().map(|service| stop_one(stack, service)).collect())
+}
+
+/// One service's share of a stop: act, then reap the helpers it leaves behind.
+/// The shared step behind both [`run_stop`], which the dashboard drives, and
+/// [`stop`], which additionally spins and prints as each one finishes.
+fn stop_one(stack: &Stack, service: &Service) -> Step<Stopped> {
+    let outcome = stop_service(stack, service);
+    // Only once the service itself is down: epmd is the thing RabbitMQ
+    // registers with, so clearing it first would be pulling the rug out.
+    let helpers = if outcome.is_failure() { 0 } else { reap_helpers(service) };
+    Step { id: service.id.clone(), name: service.name.clone(), outcome, helpers }
 }
 
 /// Stop the whole stack, or the one service named.
@@ -145,11 +148,14 @@ pub fn stop(stack: &Stack, only: Option<&str>) -> Result<u8> {
     println!();
 
     let width = targets.iter().map(|s| s.name.chars().count()).max().unwrap_or(0);
-    let steps = run_stop(stack, only)?;
-    let failed = steps.iter().filter(|step| step.outcome.is_failure()).count();
-
-    for step in &steps {
-        println!("  {:<width$}  {}", step.name, describe(&step.outcome, step.helpers));
+    let mut failed = 0;
+    for service in &targets {
+        let spinner = Spinner::start(&format!("{:<width$}  stopping...", service.name));
+        let step = stop_one(stack, service);
+        if step.outcome.is_failure() {
+            failed += 1;
+        }
+        spinner.finish(&format!("  {:<width$}  {}", step.name, describe(&step.outcome, step.helpers)));
     }
 
     println!();
@@ -463,30 +469,41 @@ fn seal_stdio() {}
 pub fn run_start(stack: &Stack, only: Option<&str>) -> Result<Vec<Step<Started>>> {
     let targets = select(stack, only, STARTUP)?;
     seal_stdio();
-    Ok(targets
-        .iter()
-        .map(|service| Step {
-            id: service.id.clone(),
-            name: service.name.clone(),
-            outcome: start_service(stack, service),
-            helpers: 0,
-        })
-        .collect())
+    Ok(targets.iter().map(|service| start_one(stack, service)).collect())
+}
+
+/// One service's share of a start. The shared step behind both [`run_start`],
+/// which the dashboard drives, and [`start`], which additionally spins and
+/// prints as each one finishes.
+fn start_one(stack: &Stack, service: &Service) -> Step<Started> {
+    Step {
+        id: service.id.clone(),
+        name: service.name.clone(),
+        outcome: start_service(stack, service),
+        helpers: 0,
+    }
 }
 
 /// Start the whole stack, or the one service named.
 pub fn start(stack: &Stack, only: Option<&str>) -> Result<u8> {
     let targets = select(stack, only, STARTUP)?;
-    let kinds: Vec<ServiceKind> = targets.iter().map(|s| s.kind).collect();
+    seal_stdio();
     println!("Starting {} in {}", subject(&targets, only), stack.root.display());
     println!();
 
     let width = targets.iter().map(|s| s.name.chars().count()).max().unwrap_or(0);
-    let steps = run_start(stack, only)?;
-    let failed = steps.iter().filter(|step| step.outcome.is_failure()).count();
-
-    for (step, kind) in steps.iter().zip(kinds) {
-        println!("  {:<width$}  {}", step.name, describe_start(kind, &step.outcome));
+    let mut failed = 0;
+    for service in &targets {
+        let spinner = Spinner::start(&format!("{:<width$}  starting...", service.name));
+        let step = start_one(stack, service);
+        if step.outcome.is_failure() {
+            failed += 1;
+        }
+        spinner.finish(&format!(
+            "  {:<width$}  {}",
+            step.name,
+            describe_start(service.kind, &step.outcome)
+        ));
     }
 
     println!();
