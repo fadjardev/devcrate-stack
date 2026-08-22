@@ -3,8 +3,8 @@
 //! Two front ends over one core: the subcommands below, and the dashboard in
 //! [`tui`] that runs when none is given. Every batch script in the stack root
 //! has an equivalent in both, and `install` downloads and installs PHP, nginx,
-//! Composer, PostgreSQL, and Python end to end. What is left of installing is
-//! MariaDB, RabbitMQ, and Erlang.
+//! Composer, MariaDB, RabbitMQ, Erlang/OTP, Node.js, Bun, PostgreSQL, and
+//! Python end to end. `uninstall` is the mirror of it, one runtime at a time.
 
 mod bun;
 mod cli;
@@ -24,6 +24,7 @@ mod site;
 mod status;
 mod term;
 mod tui;
+mod uninstall;
 
 use std::process::ExitCode;
 
@@ -137,6 +138,13 @@ fn run(cli: Cli) -> Result<u8> {
             &args.runtime,
             args.version.as_deref(),
             args.from.as_deref(),
+            args.force,
+        ),
+        Command::Uninstall(args) => uninstall::uninstall(
+            &stack,
+            &args.runtime,
+            args.version.as_deref(),
+            args.data,
             args.force,
         ),
     }

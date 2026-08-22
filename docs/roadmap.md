@@ -172,7 +172,14 @@ port and no service, switched by a `python\current` junction. Both vendors
 publish no sha256 and no version index, so both downloads are length/TLS-checked
 like nginx, and a version is named rather than a catalogue listed.
 
-**Still to build:** uninstall / prune.
+**Built for uninstall too.** `devcrate uninstall <runtime> [version]` is the
+mirror of `install`: a versioned, side-by-side runtime (php, nginx, node, bun,
+python) is a folder deleted, with `--force` required if it is the one
+`current` names or, for PHP, if a vhost's `fastcgi_pass` still points at it. A
+single-directory service that keeps `data\` beside its binaries (mariadb,
+postgres, rabbitmq) has that data preserved by default — the same thing an
+`install --force` reinstall already does — and `--data --force` together are
+what actually delete it. See [cli.md](cli.md#devcrate-uninstall).
 
 **What it should do**
 
@@ -449,7 +456,13 @@ system-wide, everything inside the stack root.
    this repo had expected — that signs the setup script, not the phar.
 
    **MariaDB, RabbitMQ, and Erlang followed**, completing item 2's runtime list
-   end to end. Not delivered: uninstall / prune.
+   end to end.
+
+   **`devcrate uninstall` followed that**, the one gap item 2 had left. It
+   splits on the same two shapes the installer does: a versioned folder is
+   deleted (guarded by `--force` when it is the active `current` or, for PHP,
+   still named by a vhost), and a database's `data\` directory survives by
+   default, only actually removed with `--data --force` together.
 6. The full site workflow on top of `site add`: hosts-file management and
    mkcert issuance/renewal (item 4). The mkcert half depends on the installer
    from step 5, since mkcert becomes a managed tool.

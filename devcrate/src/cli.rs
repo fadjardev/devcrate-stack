@@ -2,8 +2,8 @@
 //!
 //! The whole surface was declared here before most of it was built, so the
 //! shape was settled once and `devcrate --help` told the truth about what did
-//! and did not work yet. By now every declared command is implemented; the
-//! one gap left is that no `uninstall` subcommand is declared yet.
+//! and did not work yet. By now every declared command is implemented,
+//! `uninstall` included.
 //!
 //! No subcommand means the dashboard. Every subcommand is reachable from it,
 //! and every action it offers is one of these calls -- the interactive and
@@ -80,6 +80,9 @@ pub enum Command {
     /// Install a runtime: download it from the vendor and verify it, or use
     /// --from for an archive already on disk.
     Install(InstallArgs),
+
+    /// Remove a runtime from the stack root.
+    Uninstall(UninstallArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -250,6 +253,27 @@ pub struct InstallArgs {
     #[arg(long, value_name = "PATH")]
     pub from: Option<PathBuf>,
     /// Replace an existing installation of the same version.
+    #[arg(long)]
+    pub force: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct UninstallArgs {
+    /// Runtime to remove: same names as `install` accepts.
+    pub runtime: String,
+    /// Version to remove, for the runtimes that have versions (php, nginx,
+    /// node, bun, python). Omitted: list what is installed. Ignored for
+    /// composer, mariadb, rabbitmq, erlang, and postgres, which have only one.
+    pub version: Option<String>,
+    /// Also delete the data directory a database service (mariadb, postgres,
+    /// rabbitmq) keeps beside its binaries. Irreversible, so it must be paired
+    /// with --force; left off, the data directory survives and everything else
+    /// is removed.
+    #[arg(long)]
+    pub data: bool,
+    /// Remove even when it is the version `current` points at, a vhost still
+    /// names its FastCGI port, or (for erlang) RabbitMQ still depends on it.
+    /// Also required together with --data to actually delete a data directory.
     #[arg(long)]
     pub force: bool,
 }

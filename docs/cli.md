@@ -121,8 +121,12 @@ visible rather than mysterious.
 | `devcrate install composer` (no version) | **works** — lists the lines getcomposer.org offers |
 | `devcrate install postgres <minor>` | **works** — downloads EDB's binaries zip (length/TLS), unpacks, runs `initdb` |
 | `devcrate install python <branch\|release>` | **works** — downloads the embeddable zip (length/TLS), enables site, bootstraps pip |
+| `devcrate install mariadb <version>` | **works** — downloads, unpacks, generates `my.ini` and `data\` |
+| `devcrate install rabbitmq <version>` | **works** — downloads, unpacks, enables the management plugin |
+| `devcrate install erlang <version>` | **works** — downloads, unpacks the RabbitMQ dependency |
+| `devcrate install node <version>` / `devcrate install bun <version>` | **works** — downloads and installs into `node\` / `bun\` |
 | `devcrate install <runtime> --from <file>` | **works** — the same install from an archive or phar on disk |
-| `devcrate install <other runtime>` | not built (mariadb, rabbitmq, erlang) — see [installation.md](installation.md) |
+| `devcrate uninstall <runtime> [version]` | **works** — see [`devcrate uninstall`](#devcrate-uninstall) |
 
 `--root` is accepted on every command.
 
@@ -996,14 +1000,40 @@ folder by hand a complete way to install a version.
   checked, and for nginx not even they carry a published hash.
 - **No PGP verification.** nginx's `.asc` signatures are not fetched or checked;
   see above for what is checked instead.
-- **No uninstall.** Removing a version is still `rmdir`, and nothing warns that
-  a vhost still points at its FastCGI port, or that the nginx build being
-  removed is the one `current` names.
 - **No offline version listing.** A cached archive installs with no network, but
   both catalogues are fetched every time a list is printed or a version
   resolved.
-- **`mariadb`, `rabbitmq`, `erlang`, and `composer` are named but not
-  installable.**
+
+### `devcrate uninstall`
+
+```
+devcrate uninstall <runtime> [version] [--data] [--force]
+```
+
+The mirror of `install`, one runtime at a time. `runtime` is the same name
+`install` accepts. `version` is required for the versioned, side-by-side
+runtimes (`php`, `nginx`, `node`, `bun`, `python`) and lists what is installed
+when omitted; it is ignored for the ones that have only one install
+(`composer`, `mariadb`, `postgres`, `rabbitmq`, `erlang`).
+
+A service that is still running is always refused — Windows will not cleanly
+delete a directory a process is executing out of, and `devcrate stop
+<service>` fixes it. Two things need `--force` on top of that:
+
+- Removing the version `php\current`, `nginx\current`, `node\current`,
+  `bun\current`, or `python\current` names, since the CLI would resolve to
+  nothing afterwards. The junction is cleared, not left dangling.
+- Removing a PHP version a vhost's `fastcgi_pass` still points at, or removing
+  `erlang` while `rabbitmq\` is still installed (Erlang is its dependency, not
+  a peer).
+
+`mariadb`, `postgres`, and `rabbitmq` keep a `data\` directory beside their
+binaries — the same directory an `install --force` reinstall already lifts
+across rather than overwrites (see [`devcrate install`](#devcrate-install)
+above). `uninstall` treats it the same way: everything else is removed, and
+`data\` is left in place unless `--data` is also given. `--data` alone is
+refused; it has to be paired with `--force`, since deleting a database's data
+directory is the one irreversible thing this command does.
 
 ## `devcrate.toml`
 

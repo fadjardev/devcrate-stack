@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`devcrate uninstall <runtime> [version]`** — The mirror of `install`, closing the one gap left in Roadmap Item 2. A versioned runtime (php, nginx, node, bun, python) is removed by deleting its folder, guarded by `--force` when it is the version `current` points at, or — for PHP — when a vhost's `fastcgi_pass` still names it. A single-directory service that keeps `data\` beside its binaries (mariadb, postgres, rabbitmq) has that data preserved by default, the same as an `install --force` reinstall; deleting it needs `--data` paired with `--force`. Erlang refuses to remove itself while RabbitMQ still depends on it, without `--force`. A service that is still running is always refused.
 - **Interactive TUI Install Modal (Key `i`)** — Added one-click service & runtime downloader modal directly inside the TUI dashboard for Node.js, Bun, PHP, MariaDB, RabbitMQ, Composer, and Nginx.
 - **Node.js & Bun Managed Runtimes (`devcrate install node`, `devcrate install bun`, `devcrate node`, `devcrate bun`)** — Implemented Roadmap Item 5: portable JavaScript runtimes and version management.
   - Downloads Node.js zip distributions from `nodejs.org/dist/` into `node/v<version>/` and Bun from GitHub Releases into `bun/v<version>/`.
