@@ -59,6 +59,9 @@ erl_crash.dump
 !/nginx/conf/**
 /nginx/conf/certs/
 
+# --- Nginx: vhost confs are per-project/local, not stack config ---
+/nginx/conf/sites/*.conf
+
 # The pre-restructure layout, where the versioned folder was itself the
 # prefix. Nothing in it is tracked any more -- `devcrate nginx migrate` moves
 # what matters into nginx\ -- so the whole thing is ignored rather than
