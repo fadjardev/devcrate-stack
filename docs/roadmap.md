@@ -172,7 +172,7 @@ port and no service, switched by a `python\current` junction. Both vendors
 publish no sha256 and no version index, so both downloads are length/TLS-checked
 like nginx, and a version is named rather than a catalogue listed.
 
-**Still to build:** uninstall, and MariaDB, RabbitMQ, and Erlang.
+**Still to build:** uninstall / prune.
 
 **What it should do**
 
@@ -448,7 +448,8 @@ system-wide, everything inside the stack root.
    refuses. The trust root turned out to be the sidecar, not the `installer.sig`
    this repo had expected — that signs the setup script, not the phar.
 
-   Not delivered: uninstall, and MariaDB, RabbitMQ, and Erlang.
+   **MariaDB, RabbitMQ, and Erlang followed**, completing item 2's runtime list
+   end to end. Not delivered: uninstall / prune.
 6. The full site workflow on top of `site add`: hosts-file management and
    mkcert issuance/renewal (item 4). The mkcert half depends on the installer
    from step 5, since mkcert becomes a managed tool.

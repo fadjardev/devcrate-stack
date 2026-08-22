@@ -2,9 +2,8 @@
 //!
 //! The whole surface was declared here before most of it was built, so the
 //! shape was settled once and `devcrate --help` told the truth about what did
-//! and did not work yet. By now every declared command is implemented; what
-//! remains unbuilt (installing MariaDB, RabbitMQ, or Erlang) says so when
-//! named.
+//! and did not work yet. By now every declared command is implemented; the
+//! one gap left is that no `uninstall` subcommand is declared yet.
 //!
 //! No subcommand means the dashboard. Every subcommand is reachable from it,
 //! and every action it offers is one of these calls -- the interactive and
