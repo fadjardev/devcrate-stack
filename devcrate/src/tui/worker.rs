@@ -362,11 +362,33 @@ fn run(stack: &Stack, job: Job) -> JobResult {
         },
 
         Job::Install { runtime, version } => {
-            match crate::install::install(stack, &runtime, version.as_deref(), None, true) {
-                Ok(_) => JobResult {
+            // `install_quiet` is the pure core `install` wraps for the CLI --
+            // it never writes to stdout, unlike `install` itself, which this
+            // job used to call directly. See
+            // docs/issue/tui-install-stdout-corruption-2026-09-19.md.
+            match crate::install::install_quiet(stack, &runtime, version.as_deref(), true) {
+                Ok(crate::install::InstallOutcome::Installed(done)) => JobResult {
                     label,
-                    lines: vec![format!("Successfully installed {runtime}!")],
+                    lines: vec![format!(
+                        "{} {} installed into {}",
+                        done.runtime.label(),
+                        done.release,
+                        done.dir
+                    )],
                     failed: false,
+                    sites_changed: false,
+                },
+                // No version was named, so there was nothing to pick a
+                // default from (see the runtimes with `None` in
+                // `INSTALL_OPTIONS`) and nothing installed -- reported as a
+                // failure so it does not read as a false success.
+                Ok(crate::install::InstallOutcome::Listed) => JobResult {
+                    label,
+                    lines: vec![format!(
+                        "No version named for {runtime} -- nothing installed. \
+                         Run `devcrate install {runtime} <version>` from a terminal."
+                    )],
+                    failed: true,
                     sites_changed: false,
                 },
                 Err(err) => failure(label, err),

@@ -27,6 +27,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - RabbitMQ sets up `data/` directory and enables `rabbitmq_management` plugin.
   - Erlang/OTP installs silently into `erlang/` for RabbitMQ dependency.
 
+### Fixed
+
+- **The TUI install modal no longer writes to stdout.** `Job::Install` called
+  the same `install::install` the CLI uses, which prints unconditionally —
+  including a raw `\r`-redrawn progress bar — straight to the terminal
+  ratatui's alternate screen owns, from a background thread. `install` is now
+  a thin wrapper around a pure `install_with` core (same split `site.rs`
+  already used for `create`/`add`); the dashboard calls a new
+  `install::install_quiet`, which reports through the existing `JobResult`
+  channel instead of the screen. See
+  [docs/issue/tui-install-stdout-corruption-2026-09-19.md](docs/issue/tui-install-stdout-corruption-2026-09-19.md).
+- **The install modal no longer reports false success.** Four of its eight
+  options (Bun, MariaDB, RabbitMQ, Composer "Latest") pass no version, which
+  `install` has always treated as "list what's available and install
+  nothing" — but the modal reported "Successfully installed" regardless. It
+  now reports honestly when nothing was installed.
+
 ### Changed
 
 - **The nginx directory is now a stable prefix with the versions inside it.**

@@ -40,6 +40,20 @@ use serde::Serialize;
 use crate::config::{self, Stack};
 use crate::{exit, junction};
 
+/// `println!`, but into an [`Emit`] instead of stdout. The CLI's [`TerminalEmit`]
+/// prints exactly as `println!` did; the dashboard's [`NullEmit`] discards it,
+/// because a background thread must never write to the screen ratatui is
+/// drawing on the main thread -- see
+/// docs/issue/tui-install-stdout-corruption-2026-09-19.md.
+macro_rules! emit_line {
+    ($emit:expr) => {
+        $emit.line("")
+    };
+    ($emit:expr, $($arg:tt)*) => {
+        $emit.line(&format!($($arg)*))
+    };
+}
+
 /// Runtimes `install` knows how to name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Runtime {
@@ -1463,6 +1477,19 @@ fn vcredist_present() -> Option<bool> {
 // The subcommand
 // ---------------------------------------------------------------------------
 
+/// What `install_with` actually did.
+pub enum InstallOutcome {
+    /// A version installed successfully.
+    Installed(Box<Installed>),
+    /// No version was named, so a catalogue (or, for the vendors that publish
+    /// none, guidance) was shown instead and nothing was installed.
+    Listed,
+}
+
+/// `devcrate install <runtime>` -- the CLI entry point. Prints to the real
+/// terminal exactly as before; the logic lives in [`install_with`], which the
+/// dashboard calls too, through [`install_quiet`], without any of this
+/// printing.
 pub fn install(
     stack: &Stack,
     runtime: &str,
@@ -1470,21 +1497,47 @@ pub fn install(
     from: Option<&Path>,
     force: bool,
 ) -> Result<u8> {
+    let mut emit = TerminalEmit::new();
+    install_with(stack, runtime, version, from, force, &mut emit)?;
+    Ok(exit::OK)
+}
+
+/// The dashboard's entry point: identical to [`install`], minus the
+/// printing, plus the outcome the CLI's printing is normally built from --
+/// see docs/issue/tui-install-stdout-corruption-2026-09-19.md. Always
+/// downloads (the `--from` archive path is a CLI-only affordance).
+pub fn install_quiet(
+    stack: &Stack,
+    runtime: &str,
+    version: Option<&str>,
+    force: bool,
+) -> Result<InstallOutcome> {
+    let mut emit = NullEmit;
+    install_with(stack, runtime, version, None, force, &mut emit)
+}
+
+fn install_with(
+    stack: &Stack,
+    runtime: &str,
+    version: Option<&str>,
+    from: Option<&Path>,
+    force: bool,
+    emit: &mut dyn Emit,
+) -> Result<InstallOutcome> {
     let runtime = Runtime::parse(runtime)?;
 
     let Some(archive_path) = from else {
-        return install_by_download(stack, runtime, version, force);
+        return install_by_download(stack, runtime, version, force, emit);
     };
 
     let opts = Options { version: version.map(str::to_string), force };
-    let mut reporter = Reporter::new(runtime);
     let done = from_archive(stack, runtime, archive_path, &opts, &mut |progress| {
-        reporter.report(progress)
+        emit.progress_event(runtime, progress)
     })?;
-    reporter.finish();
+    emit.end_progress();
 
-    print_installed(&done);
-    Ok(exit::OK)
+    print_installed(&done, emit);
+    Ok(InstallOutcome::Installed(Box::new(done)))
 }
 
 /// Fetch the vendor's release list, download the wanted version into
@@ -1495,25 +1548,26 @@ fn install_by_download(
     runtime: Runtime,
     version: Option<&str>,
     force: bool,
-) -> Result<u8> {
+    emit: &mut dyn Emit,
+) -> Result<InstallOutcome> {
     // Each runtime answers the same two questions -- what can be had, and where
     // would this one land -- and everything after that is common. Exhaustive on
     // purpose: the next downloadable runtime has to answer them here too.
     let chosen = match runtime {
-        Runtime::Php => choose_php(stack, version)?,
-        Runtime::Nginx => choose_nginx(stack, version)?,
-        Runtime::Composer => choose_composer(stack, version)?,
-        Runtime::MariaDb => choose_mariadb(stack, version)?,
-        Runtime::RabbitMq => choose_rabbitmq(stack, version)?,
-        Runtime::Erlang => choose_erlang(stack, version)?,
-        Runtime::Node => choose_node(stack, version)?,
-        Runtime::Bun => choose_bun(stack, version)?,
-        Runtime::Postgres => choose_postgres(stack, version)?,
-        Runtime::Python => choose_python(stack, version)?,
+        Runtime::Php => choose_php(stack, version, emit)?,
+        Runtime::Nginx => choose_nginx(stack, version, emit)?,
+        Runtime::Composer => choose_composer(stack, version, emit)?,
+        Runtime::MariaDb => choose_mariadb(stack, version, emit)?,
+        Runtime::RabbitMq => choose_rabbitmq(stack, version, emit)?,
+        Runtime::Erlang => choose_erlang(stack, version, emit)?,
+        Runtime::Node => choose_node(stack, version, emit)?,
+        Runtime::Bun => choose_bun(stack, version, emit)?,
+        Runtime::Postgres => choose_postgres(stack, version, emit)?,
+        Runtime::Python => choose_python(stack, version, emit)?,
     };
     // Nothing chosen means the catalogue was printed instead.
     let Some(Chosen { download: source, dest, replace_freely }) = chosen else {
-        return Ok(exit::OK);
+        return Ok(InstallOutcome::Listed);
     };
 
     // The refusal --force overrides comes before the transfer, not after
@@ -1524,22 +1578,20 @@ fn install_by_download(
     }
 
     let downloads = stack.root.join(DOWNLOADS_DIR);
-    let mut reporter = Reporter::new(runtime);
     let fetched = download::fetch(&source, &downloads, &mut |done, total| {
-        reporter.report(Progress::Downloading { done, total })
+        emit.progress_event(runtime, Progress::Downloading { done, total })
     })?;
-    reporter.finish();
-    report_transfer(stack, runtime, &downloads, &fetched);
+    emit.end_progress();
+    report_transfer(stack, runtime, &downloads, &fetched, emit);
 
     let opts = Options { version: None, force };
-    let mut reporter = Reporter::new(runtime);
     let done = from_archive(stack, runtime, &fetched.path, &opts, &mut |progress| {
-        reporter.report(progress)
+        emit.progress_event(runtime, progress)
     })?;
-    reporter.finish();
+    emit.end_progress();
 
-    print_installed(&done);
-    Ok(exit::OK)
+    print_installed(&done, emit);
+    Ok(InstallOutcome::Installed(Box::new(done)))
 }
 
 /// A release picked out of a catalogue: where to get it, and where it goes.
@@ -1551,12 +1603,12 @@ struct Chosen {
     replace_freely: bool,
 }
 
-fn choose_php(stack: &Stack, version: Option<&str>) -> Result<Option<Chosen>> {
-    println!("  fetching the release list from windows.php.net");
+fn choose_php(stack: &Stack, version: Option<&str>, emit: &mut dyn Emit) -> Result<Option<Chosen>> {
+    emit_line!(emit, "  fetching the release list from windows.php.net");
     let catalogue = download::php_catalogue()?;
 
     let Some(wanted) = version else {
-        print_php_catalogue(stack, &catalogue);
+        print_php_catalogue(stack, &catalogue, emit);
         return Ok(None);
     };
 
@@ -1581,17 +1633,17 @@ fn choose_php(stack: &Stack, version: Option<&str>) -> Result<Option<Chosen>> {
     }))
 }
 
-fn choose_nginx(stack: &Stack, version: Option<&str>) -> Result<Option<Chosen>> {
+fn choose_nginx(stack: &Stack, version: Option<&str>, emit: &mut dyn Emit) -> Result<Option<Chosen>> {
     // Refused before the network call rather than after it: a stack in the old
     // layout has nowhere to put a second build, and finding that out is not
     // worth a round trip.
     let prefix = nginx::install_prefix(&stack.nginx_prefix)?.to_path_buf();
 
-    println!("  fetching the download page from nginx.org");
+    emit_line!(emit, "  fetching the download page from nginx.org");
     let catalogue = download::nginx_catalogue()?;
 
     let Some(wanted) = version else {
-        print_nginx_catalogue(stack, &prefix, &catalogue);
+        print_nginx_catalogue(stack, &prefix, &catalogue, emit);
         return Ok(None);
     };
 
@@ -1603,17 +1655,17 @@ fn choose_nginx(stack: &Stack, version: Option<&str>) -> Result<Option<Chosen>> 
     }))
 }
 
-fn choose_composer(stack: &Stack, version: Option<&str>) -> Result<Option<Chosen>> {
-    println!("  fetching the version list from getcomposer.org");
+fn choose_composer(stack: &Stack, version: Option<&str>, emit: &mut dyn Emit) -> Result<Option<Chosen>> {
+    emit_line!(emit, "  fetching the version list from getcomposer.org");
     let catalogue = download::composer_catalogue()?;
 
     let Some(wanted) = version else {
-        print_composer_catalogue(stack, &catalogue);
+        print_composer_catalogue(stack, &catalogue, emit);
         return Ok(None);
     };
 
     let release = pick_composer(&catalogue, wanted)?;
-    println!("  fetching the checksum for {}", release.version);
+    emit_line!(emit, "  fetching the checksum for {}", release.version);
     Ok(Some(Chosen {
         // Composer's is the download that fetches its own sha256 sidecar, so
         // this is the one `download()` that can fail.
@@ -1630,15 +1682,15 @@ fn choose_composer(stack: &Stack, version: Option<&str>) -> Result<Option<Chosen
 /// them and says so instead. A named `major.minor` resolves to a predictable URL
 /// on EDB's mirror, verified against its declared length over TLS -- the same
 /// weaker check nginx gets, for the same reason (no published checksum).
-fn choose_postgres(stack: &Stack, version: Option<&str>) -> Result<Option<Chosen>> {
+fn choose_postgres(stack: &Stack, version: Option<&str>, emit: &mut dyn Emit) -> Result<Option<Chosen>> {
     let Some(wanted) = version else {
-        print_postgres_guidance(stack);
+        print_postgres_guidance(stack, emit);
         return Ok(None);
     };
 
-    println!("  locating PostgreSQL {wanted} on get.enterprisedb.com");
+    emit_line!(emit, "  locating PostgreSQL {wanted} on get.enterprisedb.com");
     let release = download::postgres_release(wanted)?;
-    println!("  PostgreSQL {} -> {}", release.version, release.file_name);
+    emit_line!(emit, "  PostgreSQL {} -> {}", release.version, release.file_name);
     Ok(Some(Chosen {
         download: release.download(),
         dest: stack.root.join("postgres"),
@@ -1649,26 +1701,26 @@ fn choose_postgres(stack: &Stack, version: Option<&str>) -> Result<Option<Chosen
 /// What `devcrate install postgres` with no version prints. Not a catalogue --
 /// EDB publishes none -- but the honest shape of one: name an exact minor, and
 /// here is the current final of a series that is now EOL.
-fn print_postgres_guidance(stack: &Stack) {
+fn print_postgres_guidance(stack: &Stack, emit: &mut dyn Emit) {
     let dir = stack.root.join("postgres");
     let installed = read_receipt_version(&dir).filter(|v| v != "unknown");
 
-    println!();
-    println!("PostgreSQL (EDB Windows x64 binaries):");
-    println!();
+    emit_line!(emit);
+    emit_line!(emit, "PostgreSQL (EDB Windows x64 binaries):");
+    emit_line!(emit);
     match installed {
-        Some(version) => println!("  installed: {version}   in {}", stack.rel(&dir)),
-        None => println!("  not installed"),
+        Some(version) => emit_line!(emit, "  installed: {version}   in {}", stack.rel(&dir)),
+        None => emit_line!(emit, "  not installed"),
     }
-    println!();
-    println!("EDB serves no version index, so there is nothing to list -- name an");
-    println!("exact minor release and it is fetched from EDB's mirror:");
-    println!();
-    println!("  devcrate install postgres 13.23");
-    println!();
-    println!("Note: PostgreSQL 13 reached end-of-life on 2025-11-13; 13.23 is its");
-    println!("final release. The download is checked against its declared length");
-    println!("over TLS -- EDB publishes no checksum for these zips.");
+    emit_line!(emit);
+    emit_line!(emit, "EDB serves no version index, so there is nothing to list -- name an");
+    emit_line!(emit, "exact minor release and it is fetched from EDB's mirror:");
+    emit_line!(emit);
+    emit_line!(emit, "  devcrate install postgres 13.23");
+    emit_line!(emit);
+    emit_line!(emit, "Note: PostgreSQL 13 reached end-of-life on 2025-11-13; 13.23 is its");
+    emit_line!(emit, "final release. The download is checked against its declared length");
+    emit_line!(emit, "over TLS -- EDB publishes no checksum for these zips.");
 }
 
 /// The embeddable Python zip a named branch or release resolves to.
@@ -1678,15 +1730,15 @@ fn print_postgres_guidance(stack: &Stack) {
 /// no-version invocation guides rather than lists, and a named version resolves
 /// to a URL on python.org's archive, verified against its declared length over
 /// TLS (python.org publishes MD5 and GPG, no sha256).
-fn choose_python(stack: &Stack, version: Option<&str>) -> Result<Option<Chosen>> {
+fn choose_python(stack: &Stack, version: Option<&str>, emit: &mut dyn Emit) -> Result<Option<Chosen>> {
     let Some(wanted) = version else {
-        print_python_guidance(stack);
+        print_python_guidance(stack, emit);
         return Ok(None);
     };
 
-    println!("  locating Python {wanted} on python.org");
+    emit_line!(emit, "  locating Python {wanted} on python.org");
     let release = download::python_release(wanted)?;
-    println!("  Python {} -> {}", release.release, release.file_name);
+    emit_line!(emit, "  Python {} -> {}", release.release, release.file_name);
     Ok(Some(Chosen {
         download: release.download(),
         dest: stack.python_dir.join(format!("python-{}", release.version)),
@@ -1695,26 +1747,26 @@ fn choose_python(stack: &Stack, version: Option<&str>) -> Result<Option<Chosen>>
 }
 
 /// What `devcrate install python` with no version prints.
-fn print_python_guidance(stack: &Stack) {
-    println!();
-    println!("Python (embeddable amd64, from python.org):");
-    println!();
+fn print_python_guidance(stack: &Stack, emit: &mut dyn Emit) {
+    emit_line!(emit);
+    emit_line!(emit, "Python (embeddable amd64, from python.org):");
+    emit_line!(emit);
     let installed = python_versions_installed(stack);
     if installed.is_empty() {
-        println!("  none installed");
+        emit_line!(emit, "  none installed");
     } else {
-        println!("  installed: {}", installed.join(", "));
+        emit_line!(emit, "  installed: {}", installed.join(", "));
     }
-    println!();
-    println!("python.org serves no version index, so there is nothing to list --");
-    println!("name a branch or an exact release and it is fetched:");
-    println!();
-    println!("  devcrate install python 3.8       (the newest 3.8.x Windows build)");
-    println!("  devcrate install python 3.8.10    (an exact release)");
-    println!();
-    println!("Note: Python 3.8 is end-of-life (final Windows build 3.8.10). The zip");
-    println!("is checked against its declared length over TLS -- python.org");
-    println!("publishes MD5 and GPG for it, not sha256. pip is bootstrapped after.");
+    emit_line!(emit);
+    emit_line!(emit, "python.org serves no version index, so there is nothing to list --");
+    emit_line!(emit, "name a branch or an exact release and it is fetched:");
+    emit_line!(emit);
+    emit_line!(emit, "  devcrate install python 3.8       (the newest 3.8.x Windows build)");
+    emit_line!(emit, "  devcrate install python 3.8.10    (an exact release)");
+    emit_line!(emit);
+    emit_line!(emit, "Note: Python 3.8 is end-of-life (final Windows build 3.8.10). The zip");
+    emit_line!(emit, "is checked against its declared length over TLS -- python.org");
+    emit_line!(emit, "publishes MD5 and GPG for it, not sha256. pip is bootstrapped after.");
 }
 
 /// The installed Python branch names, for the guidance line. Scans `python\` the
@@ -1730,16 +1782,16 @@ fn python_versions_installed(stack: &Stack) -> Vec<String> {
         .collect()
 }
 
-fn choose_mariadb(stack: &Stack, version: Option<&str>) -> Result<Option<Chosen>> {
-    println!("  fetching the MariaDB release list");
+fn choose_mariadb(stack: &Stack, version: Option<&str>, emit: &mut dyn Emit) -> Result<Option<Chosen>> {
+    emit_line!(emit, "  fetching the MariaDB release list");
     let catalogue = download::mariadb_catalogue()?;
 
     let Some(wanted) = version else {
-        println!("\n  Available MariaDB releases:");
+        emit_line!(emit, "\n  Available MariaDB releases:");
         for rel in &catalogue {
-            println!("    mariadb {} ({})", rel.version, rel.file_name);
+            emit_line!(emit, "    mariadb {} ({})", rel.version, rel.file_name);
         }
-        println!("\n  Pass a version to install: `devcrate install mariadb 11.4.5`");
+        emit_line!(emit, "\n  Pass a version to install: `devcrate install mariadb 11.4.5`");
         return Ok(None);
     };
 
@@ -1758,16 +1810,16 @@ fn choose_mariadb(stack: &Stack, version: Option<&str>) -> Result<Option<Chosen>
     }))
 }
 
-fn choose_rabbitmq(stack: &Stack, version: Option<&str>) -> Result<Option<Chosen>> {
-    println!("  fetching the RabbitMQ release list");
+fn choose_rabbitmq(stack: &Stack, version: Option<&str>, emit: &mut dyn Emit) -> Result<Option<Chosen>> {
+    emit_line!(emit, "  fetching the RabbitMQ release list");
     let catalogue = download::rabbitmq_catalogue()?;
 
     let Some(wanted) = version else {
-        println!("\n  Available RabbitMQ releases:");
+        emit_line!(emit, "\n  Available RabbitMQ releases:");
         for rel in &catalogue {
-            println!("    rabbitmq {} ({})", rel.version, rel.file_name);
+            emit_line!(emit, "    rabbitmq {} ({})", rel.version, rel.file_name);
         }
-        println!("\n  Pass a version to install: `devcrate install rabbitmq 4.0.5`");
+        emit_line!(emit, "\n  Pass a version to install: `devcrate install rabbitmq 4.0.5`");
         return Ok(None);
     };
 
@@ -1786,16 +1838,16 @@ fn choose_rabbitmq(stack: &Stack, version: Option<&str>) -> Result<Option<Chosen
     }))
 }
 
-fn choose_erlang(stack: &Stack, version: Option<&str>) -> Result<Option<Chosen>> {
-    println!("  fetching the Erlang release list");
+fn choose_erlang(stack: &Stack, version: Option<&str>, emit: &mut dyn Emit) -> Result<Option<Chosen>> {
+    emit_line!(emit, "  fetching the Erlang release list");
     let catalogue = download::erlang_catalogue()?;
 
     let Some(wanted) = version else {
-        println!("\n  Available Erlang/OTP releases:");
+        emit_line!(emit, "\n  Available Erlang/OTP releases:");
         for rel in &catalogue {
-            println!("    erlang {} ({})", rel.version, rel.file_name);
+            emit_line!(emit, "    erlang {} ({})", rel.version, rel.file_name);
         }
-        println!("\n  Pass a version to install: `devcrate install erlang 27.2`");
+        emit_line!(emit, "\n  Pass a version to install: `devcrate install erlang 27.2`");
         return Ok(None);
     };
 
@@ -1904,6 +1956,7 @@ fn report_transfer(
     runtime: Runtime,
     downloads: &Path,
     fetched: &download::Fetched,
+    emit: &mut dyn Emit,
 ) {
     // Where the verifying hash came from, for the runtimes that publish one.
     let against = match runtime {
@@ -1920,14 +1973,14 @@ fn report_transfer(
         Runtime::Nginx | Runtime::Postgres | Runtime::Python => "the vendor's checksum",
     };
     match (fetched.cached, fetched.verified) {
-        (true, true) => println!(
+        (true, true) => emit_line!(emit, 
             "  already in {}, checksum still good -- nothing downloaded",
             stack.rel(downloads)
         ),
         (true, false) => {
-            println!("  already in {} -- nothing downloaded", stack.rel(downloads))
+            emit_line!(emit, "  already in {} -- nothing downloaded", stack.rel(downloads))
         }
-        (false, true) => println!("  sha256 verified against {against}"),
+        (false, true) => emit_line!(emit, "  sha256 verified against {against}"),
         (false, false) => {
             // The vendor that publishes no hash, named so the weaker check is
             // attributed rather than mysterious.
@@ -1941,41 +1994,42 @@ fn report_transfer(
                 Runtime::Python => "python.org",
                 _ => "nginx.org",
             };
-            println!("  sha256 {}", fetched.sha256);
-            println!("  ({vendor} publishes no checksum; the transfer was checked");
-            println!("   against its declared length over TLS to {host})");
+            emit_line!(emit, "  sha256 {}", fetched.sha256);
+            emit_line!(emit, "  ({vendor} publishes no checksum; the transfer was checked");
+            emit_line!(emit, "   against its declared length over TLS to {host})");
         }
     }
 }
 
-fn print_php_catalogue(stack: &Stack, catalogue: &[download::PhpRelease]) {
-    println!();
-    println!("PHP releases on windows.php.net (thread-safe x64):");
-    println!();
+fn print_php_catalogue(stack: &Stack, catalogue: &[download::PhpRelease], emit: &mut dyn Emit) {
+    emit_line!(emit);
+    emit_line!(emit, "PHP releases on windows.php.net (thread-safe x64):");
+    emit_line!(emit);
     let width = catalogue.iter().map(|r| r.release.len()).max().unwrap_or(0);
     for release in catalogue {
         let tag = format!("php-{}", release.version);
         let installed =
             if stack.php_dir.join(&tag).is_dir() { "   installed" } else { "" };
-        println!(
+        emit_line!(emit, 
             "  {:<5}  {:<width$}  {:>8}{installed}",
             release.version, release.release, release.size
         );
     }
-    println!();
-    println!("Install one with   devcrate install php 8.4");
-    println!("Only each branch's current release is offered; an older build");
-    println!("installs from a downloaded archive with --from.");
+    emit_line!(emit);
+    emit_line!(emit, "Install one with   devcrate install php 8.4");
+    emit_line!(emit, "Only each branch's current release is offered; an older build");
+    emit_line!(emit, "installs from a downloaded archive with --from.");
 }
 
 fn print_nginx_catalogue(
     stack: &Stack,
     prefix: &Path,
     catalogue: &[download::NginxRelease],
+    emit: &mut dyn Emit,
 ) {
-    println!();
-    println!("nginx for Windows on nginx.org:");
-    println!();
+    emit_line!(emit);
+    emit_line!(emit, "nginx for Windows on nginx.org:");
+    emit_line!(emit);
     let width = catalogue.iter().map(|r| r.version.len()).max().unwrap_or(0);
     for release in catalogue {
         let dir = prefix.join(format!("nginx-{}", release.version));
@@ -1985,25 +2039,25 @@ fn print_nginx_catalogue(
             release.version,
             release.channel.label()
         );
-        println!("{}", row.trim_end());
+        emit_line!(emit, "{}", row.trim_end());
     }
-    println!();
-    println!("Install one with   devcrate install nginx 1.31.3");
-    println!("...or name a series: `1.30` takes the current stable release.");
-    println!("Each build gets its own folder in {}.", stack.rel(prefix));
+    emit_line!(emit);
+    emit_line!(emit, "Install one with   devcrate install nginx 1.31.3");
+    emit_line!(emit, "...or name a series: `1.30` takes the current stable release.");
+    emit_line!(emit, "Each build gets its own folder in {}.", stack.rel(prefix));
 }
 
-fn print_composer_catalogue(stack: &Stack, catalogue: &download::ComposerCatalogue) {
+fn print_composer_catalogue(stack: &Stack, catalogue: &download::ComposerCatalogue, emit: &mut dyn Emit) {
     let dir = stack.root.join("composer");
     let installed = read_receipt_version(&dir).filter(|v| v != "unknown");
 
-    println!();
-    println!("Composer on getcomposer.org:");
-    println!();
+    emit_line!(emit);
+    emit_line!(emit, "Composer on getcomposer.org:");
+    emit_line!(emit);
 
     // One line each -- Composer is a tool you take the current of, not a version
     // you pick among, so the lines are what to name and not a wall of releases.
-    let row = |release: Option<&download::ComposerRelease>| {
+    let mut row = |release: Option<&download::ComposerRelease>| {
         let Some(release) = release else { return };
         let here = installed.as_deref() == Some(release.version.as_str());
         let php = release
@@ -2020,105 +2074,139 @@ fn print_composer_catalogue(stack: &Stack, catalogue: &download::ComposerCatalog
             php,
             if here { "installed" } else { "" }
         );
-        println!("{}", line.trim_end());
+        emit_line!(emit, "{}", line.trim_end());
     };
     row(catalogue.latest_stable());
     row(catalogue.lts.as_ref());
     row(catalogue.preview.as_ref());
     row(catalogue.snapshot.as_ref());
 
-    println!();
-    println!("Install the current stable    devcrate install composer stable");
-    println!("...the LTS line (for old PHP)  devcrate install composer lts");
-    println!("An older release installs from a downloaded phar with --from.");
-    println!("It lands in {}, runs under whatever php is on PATH.", stack.rel(&dir));
+    emit_line!(emit);
+    emit_line!(emit, "Install the current stable    devcrate install composer stable");
+    emit_line!(emit, "...the LTS line (for old PHP)  devcrate install composer lts");
+    emit_line!(emit, "An older release installs from a downloaded phar with --from.");
+    emit_line!(emit, "It lands in {}, runs under whatever php is on PATH.", stack.rel(&dir));
 }
 
-/// Progress on the way to the terminal.
-///
-/// A download is millions of bytes and an extraction thousands of entries, so
-/// both are redrawn in place on a terminal and suppressed entirely otherwise
-/// -- an install log redirected to a file does not want three thousand
-/// progress lines, and `\r` is meaningless in one.
-struct Reporter {
-    runtime: Runtime,
-    interactive: bool,
-    last: String,
-    drawing: bool,
-}
+/// Where every status line, catalogue, and progress update an install
+/// produces actually goes. [`TerminalEmit`] is what the CLI has always
+/// printed; [`NullEmit`] is what the dashboard uses, because it must never
+/// write to the screen ratatui is drawing on the main thread -- see
+/// docs/issue/tui-install-stdout-corruption-2026-09-19.md. `choose_*`,
+/// `print_*`, and `report_transfer` write through this instead of calling
+/// `println!` directly, via the [`emit_line!`] macro.
+trait Emit {
+    /// A normal line of text.
+    fn line(&mut self, text: &str);
+    /// A percentage-style update, meant to redraw in place on a real terminal
+    /// and to be otherwise discarded -- a download is millions of bytes and
+    /// an extraction thousands of entries, and neither an install log
+    /// redirected to a file nor the dashboard wants that many lines.
+    fn progress(&mut self, text: &str);
+    /// End a run of `progress` calls, so whatever prints next starts on its
+    /// own line.
+    fn end_progress(&mut self);
 
-impl Reporter {
-    fn new(runtime: Runtime) -> Reporter {
-        Reporter {
-            runtime,
-            interactive: std::io::stdout().is_terminal(),
-            last: String::new(),
-            drawing: false,
-        }
-    }
-
-    fn report(&mut self, progress: Progress) {
+    /// Turn a [`Progress`] step into `line`/`progress` calls. One place for
+    /// the formatting, shared by every `Emit` impl.
+    fn progress_event(&mut self, runtime: Runtime, progress: Progress) {
         match progress {
             Progress::Downloading { done, total } => match total {
-                Some(total) => self.redraw(format!(
+                Some(total) => self.progress(&format!(
                     "  downloading  {:>3}%  {} / {}",
                     done * 100 / total.max(1),
                     megabytes(done),
                     megabytes(total)
                 )),
-                None => self.redraw(format!("  downloading  {}", megabytes(done))),
+                None => self.progress(&format!("  downloading  {}", megabytes(done))),
             },
             Progress::Extracting { done, total } => {
                 let percent = done * 100 / total.max(1);
-                self.redraw(format!("  extracting   {percent:>3}%"));
+                self.progress(&format!("  extracting   {percent:>3}%"));
             }
-            Progress::Validating => match self.runtime {
-                Runtime::Composer => self.line("checking the phar"),
-                _ => self.line("checking the build"),
-            },
+            Progress::Validating => {
+                self.end_progress();
+                match runtime {
+                    Runtime::Composer => self.line("  checking the phar"),
+                    _ => self.line("  checking the build"),
+                }
+            }
             // The one step that means genuinely different things: PHP's
             // configuration is the version's own, nginx's belongs to the prefix
             // it is about to sit in, and Composer's is the shim that launches it.
-            Progress::Configuring => match self.runtime {
-                Runtime::Php => self.line("generating php.ini"),
-                Runtime::Nginx => self.line("preparing the prefix"),
-                Runtime::Composer => self.line("writing the composer shim"),
-                Runtime::MariaDb => self.line("generating my.ini"),
-                Runtime::RabbitMq => self.line("configuring rabbitmq plugins"),
-                Runtime::Erlang => self.line("configuring erlang environment"),
-                Runtime::Node => self.line("configuring portable npm environment"),
-                Runtime::Bun => self.line("preparing bun environment"),
-                Runtime::Postgres => self.line("initialising the cluster (initdb)"),
-                Runtime::Python => self.line("enabling site (for pip)"),
-            },
-            Progress::Installing => self.line("moving it into place"),
+            Progress::Configuring => {
+                self.end_progress();
+                let text = match runtime {
+                    Runtime::Php => "generating php.ini",
+                    Runtime::Nginx => "preparing the prefix",
+                    Runtime::Composer => "writing the composer shim",
+                    Runtime::MariaDb => "generating my.ini",
+                    Runtime::RabbitMq => "configuring rabbitmq plugins",
+                    Runtime::Erlang => "configuring erlang environment",
+                    Runtime::Node => "configuring portable npm environment",
+                    Runtime::Bun => "preparing bun environment",
+                    Runtime::Postgres => "initialising the cluster (initdb)",
+                    Runtime::Python => "enabling site (for pip)",
+                };
+                self.line(&format!("  {text}"));
+            }
+            Progress::Installing => {
+                self.end_progress();
+                self.line("  moving it into place");
+            }
         }
+    }
+}
+
+/// Prints to the real terminal, redrawing `progress` in place -- exactly what
+/// this file printed before it was split from the pipeline it reports on.
+struct TerminalEmit {
+    interactive: bool,
+    last: String,
+    drawing: bool,
+}
+
+impl TerminalEmit {
+    fn new() -> TerminalEmit {
+        TerminalEmit { interactive: std::io::stdout().is_terminal(), last: String::new(), drawing: false }
+    }
+}
+
+impl Emit for TerminalEmit {
+    fn line(&mut self, text: &str) {
+        self.end_progress();
+        println!("{text}");
     }
 
     /// Repaint the in-place line, but only when its text has changed -- the
     /// download callback fires on every 64 KiB read.
-    fn redraw(&mut self, text: String) {
+    fn progress(&mut self, text: &str) {
         if !self.interactive || text == self.last {
             return;
         }
-        self.last = text;
+        self.last = text.to_string();
         self.drawing = true;
         print!("\r{}", self.last);
         let _ = std::io::stdout().flush();
     }
 
-    fn line(&mut self, text: &str) {
-        self.finish();
-        println!("  {text}");
-    }
-
-    /// End the redrawn line, so whatever prints next starts on its own.
-    fn finish(&mut self) {
+    fn end_progress(&mut self) {
         if self.drawing {
             println!();
             self.drawing = false;
         }
     }
+}
+
+/// Discards everything. The dashboard's `Job::Install` uses this: it already
+/// reports its own result through `JobResult`, and must never write to the
+/// screen ratatui owns.
+struct NullEmit;
+
+impl Emit for NullEmit {
+    fn line(&mut self, _text: &str) {}
+    fn progress(&mut self, _text: &str) {}
+    fn end_progress(&mut self) {}
 }
 
 fn megabytes(bytes: u64) -> String {
@@ -2134,42 +2222,42 @@ fn ellipsize(text: &str, max: usize) -> String {
     format!("{kept}…")
 }
 
-fn print_installed(done: &Installed) {
-    println!();
+fn print_installed(done: &Installed, emit: &mut dyn Emit) {
+    emit_line!(emit);
     let files = if done.files == 1 { "1 file".to_string() } else { format!("{} files", done.files) };
-    println!("  {files} into {}", done.dir);
+    emit_line!(emit, "  {files} into {}", done.dir);
     match &done.details {
-        Details::Php(php) => print_php_installed(done, php),
-        Details::Nginx(nginx) => print_nginx_installed(done, nginx),
-        Details::Composer(composer) => print_composer_installed(done, composer),
-        Details::MariaDb(mariadb) => print_mariadb_installed(done, mariadb),
-        Details::RabbitMq(rabbitmq) => print_rabbitmq_installed(done, rabbitmq),
-        Details::Erlang(erlang) => print_erlang_installed(done, erlang),
-        Details::Node(node) => print_node_installed(done, node),
-        Details::Bun(bun) => print_bun_installed(done, bun),
-        Details::Postgres(postgres) => print_postgres_installed(done, postgres),
-        Details::Python(py) => print_python_installed(done, py),
+        Details::Php(php) => print_php_installed(done, php, emit),
+        Details::Nginx(nginx) => print_nginx_installed(done, nginx, emit),
+        Details::Composer(composer) => print_composer_installed(done, composer, emit),
+        Details::MariaDb(mariadb) => print_mariadb_installed(done, mariadb, emit),
+        Details::RabbitMq(rabbitmq) => print_rabbitmq_installed(done, rabbitmq, emit),
+        Details::Erlang(erlang) => print_erlang_installed(done, erlang, emit),
+        Details::Node(node) => print_node_installed(done, node, emit),
+        Details::Bun(bun) => print_bun_installed(done, bun, emit),
+        Details::Postgres(postgres) => print_postgres_installed(done, postgres, emit),
+        Details::Python(py) => print_python_installed(done, py, emit),
     }
 }
 
-fn print_python_installed(done: &Installed, py: &PythonInstalled) {
+fn print_python_installed(done: &Installed, py: &PythonInstalled, emit: &mut dyn Emit) {
     if py.site_enabled {
-        println!("  enabled `import site` (so pip can be installed and found)");
+        emit_line!(emit, "  enabled `import site` (so pip can be installed and found)");
     }
     if done.replaced {
-        println!("  replaced the previous {} installation", done.version);
+        emit_line!(emit, "  replaced the previous {} installation", done.version);
     }
 
-    println!();
-    println!("{} {} installed as python-{}", done.runtime.label(), done.release, done.version);
+    emit_line!(emit);
+    emit_line!(emit, "{} {} installed as python-{}", done.runtime.label(), done.release, done.version);
 
     match &py.pip {
-        Some(python::Pip::Installed) => println!("  pip installed"),
+        Some(python::Pip::Installed) => emit_line!(emit, "  pip installed"),
         Some(python::Pip::Skipped(why)) => {
-            println!();
-            println!("NOTE: pip was not installed ({why}).");
-            println!("      The Python is installed and usable; finish pip when online:");
-            println!(
+            emit_line!(emit);
+            emit_line!(emit, "NOTE: pip was not installed ({why}).");
+            emit_line!(emit, "      The Python is installed and usable; finish pip when online:");
+            emit_line!(emit, 
                 "        python\\python-{}\\python.exe -m ensurepip  (or re-run the install)",
                 done.version
             );
@@ -2177,31 +2265,31 @@ fn print_python_installed(done: &Installed, py: &PythonInstalled) {
         None => {}
     }
 
-    println!();
-    println!("  make it the CLI Python   devcrate python use {}", done.version);
-    println!("  then                     python --version");
-    println!("  (put python\\current, and its Scripts\\, on PATH once -- like php\\current)");
+    emit_line!(emit);
+    emit_line!(emit, "  make it the CLI Python   devcrate python use {}", done.version);
+    emit_line!(emit, "  then                     python --version");
+    emit_line!(emit, "  (put python\\current, and its Scripts\\, on PATH once -- like php\\current)");
 }
 
-fn print_node_installed(done: &Installed, node: &NodeInstalledDetails) {
-    println!("  Node.js v{} installed into {}", done.version, node.dir);
-    println!("  NPM global prefix set to {}", node.global_dir);
-    println!();
-    println!("Use `devcrate node use {}` to activate it.", done.version);
+fn print_node_installed(done: &Installed, node: &NodeInstalledDetails, emit: &mut dyn Emit) {
+    emit_line!(emit, "  Node.js v{} installed into {}", done.version, node.dir);
+    emit_line!(emit, "  NPM global prefix set to {}", node.global_dir);
+    emit_line!(emit);
+    emit_line!(emit, "Use `devcrate node use {}` to activate it.", done.version);
 }
 
-fn print_bun_installed(done: &Installed, bun: &BunInstalledDetails) {
-    println!("  Bun v{} installed into {}", done.version, bun.dir);
-    println!();
-    println!("Use `devcrate bun use {}` to activate it.", done.version);
+fn print_bun_installed(done: &Installed, bun: &BunInstalledDetails, emit: &mut dyn Emit) {
+    emit_line!(emit, "  Bun v{} installed into {}", done.version, bun.dir);
+    emit_line!(emit);
+    emit_line!(emit, "Use `devcrate bun use {}` to activate it.", done.version);
 }
 
-fn choose_node(stack: &Stack, version: Option<&str>) -> Result<Option<Chosen>> {
-    println!("  fetching release index from nodejs.org");
+fn choose_node(stack: &Stack, version: Option<&str>, emit: &mut dyn Emit) -> Result<Option<Chosen>> {
+    emit_line!(emit, "  fetching release index from nodejs.org");
     let catalogue = download::fetch_node_catalogue()?;
 
     let Some(wanted) = version else {
-        print_node_catalogue(&catalogue);
+        print_node_catalogue(&catalogue, emit);
         return Ok(None);
     };
 
@@ -2226,21 +2314,21 @@ fn choose_node(stack: &Stack, version: Option<&str>) -> Result<Option<Chosen>> {
     }))
 }
 
-fn print_node_catalogue(catalogue: &download::NodeCatalogue) {
-    println!("\nNode.js releases available on nodejs.org:");
+fn print_node_catalogue(catalogue: &download::NodeCatalogue, emit: &mut dyn Emit) {
+    emit_line!(emit, "\nNode.js releases available on nodejs.org:");
     for (i, rel) in catalogue.releases.iter().take(15).enumerate() {
         let lts_tag = rel.lts.as_ref().map(|l| format!(" [{l}]")).unwrap_or_default();
-        println!("  {:2}. v{}{lts_tag}", i + 1, rel.version);
+        emit_line!(emit, "  {:2}. v{}{lts_tag}", i + 1, rel.version);
     }
-    println!("\nRun `devcrate install node <version>` to install one.");
+    emit_line!(emit, "\nRun `devcrate install node <version>` to install one.");
 }
 
-fn choose_bun(stack: &Stack, version: Option<&str>) -> Result<Option<Chosen>> {
-    println!("  fetching Bun releases from GitHub");
+fn choose_bun(stack: &Stack, version: Option<&str>, emit: &mut dyn Emit) -> Result<Option<Chosen>> {
+    emit_line!(emit, "  fetching Bun releases from GitHub");
     let catalogue = download::fetch_bun_catalogue()?;
 
     let Some(wanted) = version else {
-        print_bun_catalogue(&catalogue);
+        print_bun_catalogue(&catalogue, emit);
         return Ok(None);
     };
 
@@ -2265,12 +2353,12 @@ fn choose_bun(stack: &Stack, version: Option<&str>) -> Result<Option<Chosen>> {
     }))
 }
 
-fn print_bun_catalogue(catalogue: &download::BunCatalogue) {
-    println!("\nBun releases available on GitHub:");
+fn print_bun_catalogue(catalogue: &download::BunCatalogue, emit: &mut dyn Emit) {
+    emit_line!(emit, "\nBun releases available on GitHub:");
     for (i, rel) in catalogue.releases.iter().take(15).enumerate() {
-        println!("  {:2}. v{}", i + 1, rel.version);
+        emit_line!(emit, "  {:2}. v{}", i + 1, rel.version);
     }
-    println!("\nRun `devcrate install bun <version>` to install one.");
+    emit_line!(emit, "\nRun `devcrate install bun <version>` to install one.");
 }
 
 fn node_from_archive(
@@ -2435,104 +2523,104 @@ fn bun_from_archive(
     })
 }
 
-fn print_mariadb_installed(done: &Installed, mariadb: &MariaDbInstalled) {
+fn print_mariadb_installed(done: &Installed, mariadb: &MariaDbInstalled, emit: &mut dyn Emit) {
     if mariadb.config_created {
-        println!("  my.ini generated with default settings");
+        emit_line!(emit, "  my.ini generated with default settings");
     }
     if mariadb.data_dir_created {
-        println!("  created data/ directory");
+        emit_line!(emit, "  created data/ directory");
     }
     if done.replaced {
-        println!("  replaced the previous MariaDB installation");
+        emit_line!(emit, "  replaced the previous MariaDB installation");
     }
-    println!();
-    println!("MariaDB {} installed to {}", done.version, mariadb.dir);
-    println!("  start MariaDB service   devcrate start mariadb");
+    emit_line!(emit);
+    emit_line!(emit, "MariaDB {} installed to {}", done.version, mariadb.dir);
+    emit_line!(emit, "  start MariaDB service   devcrate start mariadb");
 }
 
-fn print_rabbitmq_installed(done: &Installed, rabbitmq: &RabbitMqInstalled) {
+fn print_rabbitmq_installed(done: &Installed, rabbitmq: &RabbitMqInstalled, emit: &mut dyn Emit) {
     if rabbitmq.data_dir_created {
-        println!("  created data/ directory");
+        emit_line!(emit, "  created data/ directory");
     }
     if rabbitmq.plugins_file_created {
-        println!("  enabled rabbitmq_management plugin");
+        emit_line!(emit, "  enabled rabbitmq_management plugin");
     }
     if done.replaced {
-        println!("  replaced the previous RabbitMQ installation");
+        emit_line!(emit, "  replaced the previous RabbitMQ installation");
     }
-    println!();
-    println!("RabbitMQ {} installed to {}", done.version, rabbitmq.dir);
-    println!("  start RabbitMQ service  devcrate start rabbitmq");
+    emit_line!(emit);
+    emit_line!(emit, "RabbitMQ {} installed to {}", done.version, rabbitmq.dir);
+    emit_line!(emit, "  start RabbitMQ service  devcrate start rabbitmq");
 }
 
-fn print_erlang_installed(done: &Installed, erlang: &ErlangInstalled) {
+fn print_erlang_installed(done: &Installed, erlang: &ErlangInstalled, emit: &mut dyn Emit) {
     if done.replaced {
-        println!("  replaced the previous Erlang/OTP installation");
+        emit_line!(emit, "  replaced the previous Erlang/OTP installation");
     }
-    println!();
-    println!("Erlang/OTP {} installed to {}", done.version, erlang.dir);
+    emit_line!(emit);
+    emit_line!(emit, "Erlang/OTP {} installed to {}", done.version, erlang.dir);
 }
 
-fn print_php_installed(done: &Installed, php: &PhpInstalled) {
-    println!(
+fn print_php_installed(done: &Installed, php: &PhpInstalled, emit: &mut dyn Emit) {
+    emit_line!(emit, 
         "  php.ini generated from php.ini-development, {} extensions enabled",
         php.enabled_extensions.len()
     );
     if done.replaced {
-        println!("  replaced the previous {} installation", done.version);
+        emit_line!(emit, "  replaced the previous {} installation", done.version);
     }
 
     if !php.missing_extensions.is_empty() {
-        println!();
-        println!(
+        emit_line!(emit);
+        emit_line!(emit, 
             "WARNING: php.ini-development had no line for: {}",
             php.missing_extensions.join(", ")
         );
-        println!("         They are not enabled. Add them by hand if this version needs them.");
+        emit_line!(emit, "         They are not enabled. Add them by hand if this version needs them.");
     }
 
     if php.vcredist == Some(false) {
-        println!();
-        println!("WARNING: the Visual C++ runtime (vcruntime140.dll) was not found.");
-        println!("         php-cgi.exe exits with no output at all without it. Install");
-        println!("         https://aka.ms/vs/17/release/vc_redist.x64.exe before starting.");
+        emit_line!(emit);
+        emit_line!(emit, "WARNING: the Visual C++ runtime (vcruntime140.dll) was not found.");
+        emit_line!(emit, "         php-cgi.exe exits with no output at all without it. Install");
+        emit_line!(emit, "         https://aka.ms/vs/17/release/vc_redist.x64.exe before starting.");
     }
 
-    println!();
+    emit_line!(emit);
     let label = done.runtime.label();
     match php.fastcgi_port {
-        Some(port) => println!(
+        Some(port) => emit_line!(emit, 
             "{label} {} installed as php-{} (fastcgi {port})",
             done.release, done.version
         ),
-        None => println!(
+        None => emit_line!(emit, 
             "{label} {} installed as php-{} (no default FastCGI port for this \
              version; set one in devcrate.toml)",
             done.release, done.version
         ),
     }
-    println!("  serve a site with it   devcrate site add myapp.test --php {}", done.version);
-    println!("  make it the CLI PHP    devcrate php use {}", done.version);
-    println!("  start its worker       devcrate start php-{}", done.version);
+    emit_line!(emit, "  serve a site with it   devcrate site add myapp.test --php {}", done.version);
+    emit_line!(emit, "  make it the CLI PHP    devcrate php use {}", done.version);
+    emit_line!(emit, "  start its worker       devcrate start php-{}", done.version);
 }
 
-fn print_nginx_installed(done: &Installed, nginx: &NginxInstalled) {
+fn print_nginx_installed(done: &Installed, nginx: &NginxInstalled, emit: &mut dyn Emit) {
     for created in &nginx.prepared.created {
-        println!("  created {created}");
+        emit_line!(emit, "  created {created}");
     }
     if nginx.activated {
-        println!("  {}\\current -> {}", nginx.prefix, done.dir);
+        emit_line!(emit, "  {}\\current -> {}", nginx.prefix, done.dir);
     }
     if done.replaced {
-        println!("  replaced the previous {} installation", done.version);
+        emit_line!(emit, "  replaced the previous {} installation", done.version);
     }
 
     if nginx.prepared.config_missing {
-        println!();
-        println!("WARNING: {}\\conf\\nginx.conf is not there.", nginx.prefix);
-        println!("         It is tracked in the repository rather than generated, so a");
-        println!("         missing one means the checkout is incomplete. nginx will not");
-        println!("         start without it.");
+        emit_line!(emit);
+        emit_line!(emit, "WARNING: {}\\conf\\nginx.conf is not there.", nginx.prefix);
+        emit_line!(emit, "         It is tracked in the repository rather than generated, so a");
+        emit_line!(emit, "         missing one means the checkout is incomplete. nginx will not");
+        emit_line!(emit, "         start without it.");
     }
 
     // Only worth surfacing when it failed: a passing test says nothing that
@@ -2540,107 +2628,107 @@ fn print_nginx_installed(done: &Installed, nginx: &NginxInstalled) {
     if let Some(test) = &nginx.config_test
         && !test.ok
     {
-        println!();
-        println!("WARNING: this build does not accept the current configuration:");
-        println!("         {}", test.detail);
-        println!("         On a stack with no certificates yet this is expected --");
-        println!("         ssl_certificate names a file mkcert has not issued. Otherwise");
-        println!("         it is a directive the new nginx no longer takes.");
+        emit_line!(emit);
+        emit_line!(emit, "WARNING: this build does not accept the current configuration:");
+        emit_line!(emit, "         {}", test.detail);
+        emit_line!(emit, "         On a stack with no certificates yet this is expected --");
+        emit_line!(emit, "         ssl_certificate names a file mkcert has not issued. Otherwise");
+        emit_line!(emit, "         it is a directive the new nginx no longer takes.");
     }
 
-    println!();
-    println!("{} {} installed as nginx-{}", done.runtime.label(), done.release, done.version);
+    emit_line!(emit);
+    emit_line!(emit, "{} {} installed as nginx-{}", done.runtime.label(), done.release, done.version);
 
     match (&nginx.active_instead, nginx.restart_needed) {
         (Some(active), _) => {
-            println!("  {}\\current still names {active}, so this build is installed", nginx.prefix);
-            println!("  but not the one that runs. To switch:");
-            println!("    devcrate nginx use {}", done.version);
+            emit_line!(emit, "  {}\\current still names {active}, so this build is installed", nginx.prefix);
+            emit_line!(emit, "  but not the one that runs. To switch:");
+            emit_line!(emit, "    devcrate nginx use {}", done.version);
         }
         (None, true) => {
-            println!("  nginx is running the previous build until it is restarted:");
-            println!("    devcrate restart nginx");
+            emit_line!(emit, "  nginx is running the previous build until it is restarted:");
+            emit_line!(emit, "    devcrate restart nginx");
         }
         (None, false) => {
-            println!("  start it   devcrate start nginx");
-            println!("  check it   devcrate nginx list");
+            emit_line!(emit, "  start it   devcrate start nginx");
+            emit_line!(emit, "  check it   devcrate nginx list");
         }
     }
 }
 
-fn print_postgres_installed(done: &Installed, postgres: &PostgresInstalled) {
+fn print_postgres_installed(done: &Installed, postgres: &PostgresInstalled, emit: &mut dyn Emit) {
     if postgres.initialised {
-        println!("  cluster created in {} (initdb)", postgres.data_dir);
+        emit_line!(emit, "  cluster created in {} (initdb)", postgres.data_dir);
     } else if postgres.preserved_data {
-        println!("  kept the existing cluster in {}", postgres.data_dir);
+        emit_line!(emit, "  kept the existing cluster in {}", postgres.data_dir);
     }
     if done.replaced && !postgres.preserved_data {
-        println!("  replaced the previous binaries");
+        emit_line!(emit, "  replaced the previous binaries");
     }
 
-    println!();
-    println!("{} {} installed as postgres", done.runtime.label(), done.release);
+    emit_line!(emit);
+    emit_line!(emit, "{} {} installed as postgres", done.runtime.label(), done.release);
 
     match (&postgres.password, postgres.preserved_data) {
         (Some(password), _) => {
-            println!("  superuser  {} / {password}  (local dev default)", postgres.superuser);
-            println!("  change it  ALTER USER {} PASSWORD '...';", postgres.superuser);
+            emit_line!(emit, "  superuser  {} / {password}  (local dev default)", postgres.superuser);
+            emit_line!(emit, "  change it  ALTER USER {} PASSWORD '...';", postgres.superuser);
         }
         (None, true) => {
-            println!("  superuser  {} (existing cluster; its password is unchanged)", postgres.superuser);
+            emit_line!(emit, "  superuser  {} (existing cluster; its password is unchanged)", postgres.superuser);
         }
         (None, false) => {}
     }
 
-    println!();
-    println!("  start it   devcrate start postgres        (listens on {})", postgres.port);
-    println!("  connect    psql -U {} -h 127.0.0.1 -p {}", postgres.superuser, postgres.port);
-    println!("  stop it    devcrate stop postgres");
+    emit_line!(emit);
+    emit_line!(emit, "  start it   devcrate start postgres        (listens on {})", postgres.port);
+    emit_line!(emit, "  connect    psql -U {} -h 127.0.0.1 -p {}", postgres.superuser, postgres.port);
+    emit_line!(emit, "  stop it    devcrate stop postgres");
 }
 
-fn print_composer_installed(done: &Installed, composer: &ComposerInstalled) {
+fn print_composer_installed(done: &Installed, composer: &ComposerInstalled, emit: &mut dyn Emit) {
     for shim in &composer.shims {
-        println!("  wrote {shim}");
+        emit_line!(emit, "  wrote {shim}");
     }
     for created in &composer.created {
-        println!("  created {created}");
+        emit_line!(emit, "  created {created}");
     }
     match &composer.replaced_version {
-        Some(old) if old == &done.version => println!("  reinstalled the same version"),
-        Some(old) => println!("  updated from {old}"),
-        None if done.replaced => println!("  replaced the previous phar"),
+        Some(old) if old == &done.version => emit_line!(emit, "  reinstalled the same version"),
+        Some(old) => emit_line!(emit, "  updated from {old}"),
+        None if done.replaced => emit_line!(emit, "  replaced the previous phar"),
         None => {}
     }
 
-    println!();
+    emit_line!(emit);
     if done.version == "unknown" {
-        println!("Composer installed in {}", composer.dir);
-        println!("  (its version could not be read -- no php\\current to run it, and the");
-        println!("   file name did not carry one)");
+        emit_line!(emit, "Composer installed in {}", composer.dir);
+        emit_line!(emit, "  (its version could not be read -- no php\\current to run it, and the");
+        emit_line!(emit, "   file name did not carry one)");
     } else {
-        println!("Composer {} installed in {}", done.version, composer.dir);
+        emit_line!(emit, "Composer {} installed in {}", done.version, composer.dir);
     }
 
     // The functional check: did the PHP on PATH actually run it? A failure here
     // is advisory -- the phar is installed and verified regardless.
     match &composer.run {
-        Some(run) if run.ok => println!("  {}", run.detail),
+        Some(run) if run.ok => emit_line!(emit, "  {}", run.detail),
         Some(run) => {
-            println!();
-            println!("WARNING: php\\current could not run the phar:");
-            println!("         {}", run.detail);
-            println!("         The phar is installed; this is the PHP it would run under.");
+            emit_line!(emit);
+            emit_line!(emit, "WARNING: php\\current could not run the phar:");
+            emit_line!(emit, "         {}", run.detail);
+            emit_line!(emit, "         The phar is installed; this is the PHP it would run under.");
         }
         None => {
-            println!();
-            println!("NOTE: no php\\current to run it with yet. Composer needs a PHP:");
-            println!("      devcrate install php 8.4  &&  devcrate php use 8.4");
+            emit_line!(emit);
+            emit_line!(emit, "NOTE: no php\\current to run it with yet. Composer needs a PHP:");
+            emit_line!(emit, "      devcrate install php 8.4  &&  devcrate php use 8.4");
         }
     }
 
-    println!();
-    println!("  put it on PATH   add {} (once, like php\\current)", composer.dir);
-    println!("  then             composer --version");
+    emit_line!(emit);
+    emit_line!(emit, "  put it on PATH   add {} (once, like php\\current)", composer.dir);
+    emit_line!(emit, "  then             composer --version");
 }
 
 #[cfg(test)]
