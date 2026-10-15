@@ -7,7 +7,7 @@ MariaDB, RabbitMQ, Erlang/OTP, and Composer — instead of requiring you to down
 archives from vendor sites and extract them by hand as
 [docs/installation.md](docs/installation.md) describes today.
 
-Roadmap item 2 of 3 — see [docs/roadmap.md](docs/roadmap.md).
+Roadmap item 2 — see [docs/roadmap.md](docs/roadmap.md).
 
 ## Motivation
 
@@ -65,7 +65,8 @@ no output. The program knows exactly what it needs — it should just get it.
   are the same. A `--from` file is hashed into the receipt but not judged — it
   may legitimately be a release the vendor no longer lists.*
 - [x] Extract into the standard layout (`php\php-8.5\`, `nginx\`, `mariadb\`, …)
-  — *PHP and nginx. The extractor strips a wrapper directory when every entry is
+  — *every runtime: PHP, nginx, MariaDB, PostgreSQL, RabbitMQ, Erlang, Redis,
+  Node.js, Bun, and Python. The extractor strips a wrapper directory when every entry is
   under one, which is exactly the difference between the two archives: nginx
   ships `nginx-1.31.3/…`, PHP ships its files at the top level. Composer has
   nothing to extract — the phar is one file, placed into `composer\` by an atomic
@@ -78,8 +79,9 @@ no output. The program knows exactly what it needs — it should just get it.
   is tracked and belongs to the stack, not to a build. What the installer does
   instead is make the prefix startable — `logs\`, `temp\`, and the `projects`
   junction — and warn if the tracked config is missing rather than seeding a
-  vendor default that would serve no vhosts.* `my.ini` — *not built, MariaDB is
-  not installable.* The FastCGI port — *needed no work: it is derived from the
+  vendor default that would serve no vhosts.* `my.ini` — *generated on MariaDB's first
+  install, with `data\` beside it, and left alone on a reinstall; PostgreSQL
+  runs `initdb` instead, and Redis gets a `devcrate.conf` of its own.* The FastCGI port — *needed no work: it is derived from the
   folder name (`90` + digits), so installing `php-8.4` gets 9084 for free.*
 
 ### Multiple PHP versions side by side
@@ -109,9 +111,16 @@ no output. The program knows exactly what it needs — it should just get it.
 
 ### Uninstall
 
-- [ ] Remove a version — *not built; still `rmdir`.*
-- [ ] Refuse (or warn loudly) if a vhost still points at its FastCGI port, or if
-  the nginx build being removed is the one `current` names
+- [x] Remove a version — *`devcrate uninstall <runtime> [version]`. A versioned
+  runtime (php, nginx, node, bun, python) is its folder deleted; a service that
+  keeps `data\` beside its binaries (mariadb, postgres, rabbitmq, redis) has
+  that data kept unless `--data --force` are both given. A running service is
+  always refused.*
+- [x] Refuse (or warn loudly) if a vhost still points at its FastCGI port, or if
+  the nginx build being removed is the one `current` names — *both refused
+  without `--force`. The same guard covers `node\current`, `bun\current`, and `python\current`,
+  but not `php\current`: removing the active PHP clears the junction without
+  asking. Recorded in [docs-drift-audit-2026-10-15.md](docs-drift-audit-2026-10-15.md).*
 
 ### Preflight
 
@@ -241,8 +250,7 @@ roadmap's build order. Suggested implementation order within this issue: PHP fir
   nothing else edited.
 - A fresh clone can reach a running stack without visiting any vendor website
 
-  *Not met — PHP and nginx no longer need a vendor site, but MariaDB,
-  RabbitMQ/Erlang, mkcert, and the VC++ redistributable still do.* This is the
-  measure the remaining runtimes are built against. Worth noting how much of the
-  stack the two that are done cover: nginx plus one PHP version is a stack that
-  serves, which is the half a fresh clone needs first.
+  *Nearly met — every runtime the stack serves with installs from the binary
+  now; mkcert and the VC++ redistributable are the two left that still need a
+  vendor site. Proposed roadmap item 6 (`devcrate setup`) is where the rest of
+  this lands.*

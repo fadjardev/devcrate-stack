@@ -1,6 +1,8 @@
 # Docs and the dashboard's install picker have drifted from what the code does
 
-**Status: open.** Nothing below has been fixed yet.
+**Status: open.** The documentation fixes (items 1–5, 9, 10) and the GitHub
+sync (8) are done; the code fixes (6, 7, 11–13) are not. See
+[Definition of done](#definition-of-done).
 
 ## Summary
 
@@ -84,6 +86,28 @@ breaks.
 10. The mirrors still say "Roadmap item N of 3" though the roadmap has had five
     done items, and items 4 and 5 have no GitHub issue at all.
 
+**Found while fixing the docs**
+
+11. The dashboard's `d` does not remove the host from the hosts file. The
+    CLI's `site::remove` (`devcrate/src/site.rs:438–449`) calls
+    `hosts::remove_entry` in its *printing* wrapper, after `site::delete`;
+    `Job::SiteRemove` (`devcrate/src/tui/worker.rs:350`) calls `site::delete`
+    alone. The work belongs in the shared core — the rule CLAUDE.md calls *one
+    core, two front ends*. Running `devcrate site remove` afterwards cannot
+    clean up either: the conf is already gone, so it refuses before reaching
+    the hosts file.
+12. The unelevated hosts write is not atomic. `hosts::write_hosts_content`
+    (`devcrate/src/hosts.rs:148`) calls `fs::write` on the hosts file itself;
+    only the elevated path goes through a temp file. Roadmap item 4's
+    constraint is "write to a temp file, then replace". An interrupted write
+    can leave the system-wide hosts file truncated (`hosts.bak` holds the
+    copy from before the first edit only).
+13. Removing the PHP version `php\current` names does not need `--force`.
+    `uninstall_php` (`devcrate/src/uninstall.rs:150–200`) records
+    `was_current` and clears the junction, but never refuses, while nginx,
+    Node, Bun, and Python all do — and the module doc, `cli.md`, and the
+    changelog all say PHP does too.
+
 ## Impact
 
 Items 1–5 make the docs undersell the tool: a reader of `cli.md` or `tui.md`
@@ -106,14 +130,20 @@ is a dead end, and the remainder will drift from what the vendors ship.
 4. Build the picker's entries from the catalogue functions at open time
    (cached, with the current hard-coded list as an offline fallback), and add
    nginx, PostgreSQL, and Python.
-
 5. Tick `issue-2.md`'s uninstall lines to match `uninstall.rs`. Then bring the
    GitHub issues level with their mirrors — edit each body to the mirror's
    checkboxes, and close #1 (and #2 if the catalogue cache is moved to its own
    issue). Filing issues for items 4–10 is the owner's call, per CLAUDE.md.
+6. Move the hosts removal into `site::delete` (or a shared core function
+   both front ends call), so `d` and `site remove` do the same thing (11).
+7. Write the hosts file to a temp file beside it and rename over it when no
+   elevation is needed (12).
+8. Add the `was_current && !force` refusal to `uninstall_php`, matching the
+   other versioned runtimes, with a test (13).
 
 Fixes 1–2 are documentation only. Fixes 3–4 touch `tui/app.rs`, `tui/worker.rs`
-and the catalogue code in `install/`.
+and the catalogue code in `install/`; 6–8 touch `site.rs`, `hosts.rs`, and
+`uninstall.rs`.
 
 ## Out of scope
 
@@ -123,15 +153,21 @@ and the catalogue code in `install/`.
 
 ## Definition of done
 
-- [ ] `cli.md` and `tui.md` *does not do* sections describe only what is
+- [x] `cli.md` and `tui.md` *does not do* sections describe only what is
       genuinely not built.
-- [ ] `tui.md`'s picker list matches `INSTALL_OPTIONS` exactly.
-- [ ] `index.md` lists every managed service and an accurate roadmap summary.
-- [ ] `roadmap.md`'s opening and status table no longer hide open scope.
+- [x] `tui.md`'s picker list matches `INSTALL_OPTIONS` exactly.
+- [x] `index.md` lists every managed service and an accurate roadmap summary.
+- [x] `roadmap.md`'s opening and status table no longer hide open scope.
 - [ ] Every option in the install picker installs something, or is removed.
 - [ ] The picker's versions come from the upstream catalogues, with an offline
       fallback; nginx, PostgreSQL, and Python are offered.
-- [ ] `issue-2.md` reflects that uninstall is built.
-- [ ] Each GitHub issue's checkboxes match its mirror; finished issues are
-      closed.
+- [x] `issue-2.md` reflects that uninstall is built.
+- [ ] The dashboard's `d` removes the hosts entry, as `site remove` does.
+- [ ] An unelevated hosts write is atomic (temp file, then rename).
+- [ ] `uninstall php` refuses the `current` version without `--force`.
+- [x] Each GitHub issue's checkboxes match its mirror; finished issues are
+      closed. — *Bodies of #1–#3 replaced with their mirrors on 2026-10-15,
+      after the mirrors' own stale notes were corrected (#1's site creation,
+      #2's `my.ini` and definition of done, #3's hosts entry). #1 closed as
+      completed; #2 (catalogue cache) and #3 (platform abstraction) stay open.*
 - [ ] `cargo build --release` is warning-free and `cargo test` passes.

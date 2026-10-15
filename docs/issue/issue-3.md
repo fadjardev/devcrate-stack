@@ -7,7 +7,7 @@ Devcrate should not be tied to one shell or to double-clicking a `.bat` file. Sh
 Git Bash, and an IDE's integrated terminal — with non-interactive subcommands
 alongside the TUI, from the same executable.
 
-Roadmap item 3 of 3 — see [docs/roadmap.md](docs/roadmap.md).
+Roadmap item 3 — see [docs/roadmap.md](docs/roadmap.md).
 
 ## Motivation
 
@@ -102,4 +102,6 @@ if the binary is missing or a build breaks.
 - [x] `start`, `stop`, `status`, `php use`, and `site add` are at parity with the
       corresponding batch scripts — and ahead of them on process scoping, port
       preflight, naming the process that holds a port, config testing, and
-      overwrite protection. The hosts-file entry stays manual in both (see #4).
+      overwrite protection. `site add` has since gone past the script on the
+      hosts file too: it writes the entry itself (roadmap item 4), where
+      `new-vhost.bat` only prints it.

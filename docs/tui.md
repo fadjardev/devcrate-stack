@@ -57,7 +57,7 @@ a rescan rather than waiting for the next one.
 | --- | --- |
 | `s` `x` `t` | Start / stop / restart the **selected** service |
 | `S` `X` `T` | ...the **whole stack**, in dependency order |
-| `i` | Open the **Install Service / Runtime** picker (Node.js, Bun, PHP, MariaDB, RabbitMQ, Composer, Nginx) |
+| `i` | Open the **Install Service / Runtime** picker (Node.js 22.11.0, Bun, PHP 8.4 / 8.3 / 8.2, MariaDB, RabbitMQ + Erlang, Redis, Composer) |
 | `u` | Repoint `php\current` — the CLI PHP version |
 
 Start and stop go through the same order, the same graceful commands, and the
@@ -76,18 +76,23 @@ leaves anyway, which may abandon a shutdown halfway through.
 
 | Key | Action |
 | --- | --- |
-| `n` | New vhost: type a hostname, then pick a PHP version |
+| `n` | New vhost: a form for the hostname, project path (typed or picked with **Browse**), PHP version (or auto-detect), and whether to add the hosts entry and issue a certificate |
 | `p` | Change the selected vhost's PHP version |
 | `d` | Delete the vhost's conf (asks first) |
 
-`p` is `devcrate site set-php`: it rewrites the `fastcgi_pass` line and nothing
-else, so a hand-edited conf survives. `d` deletes only the conf — the project
-folder under `projects\` and the certificate are left alone, and the confirmation
-says so.
+`n` is `devcrate site add`: the same web-root and PHP detection, the same hosts
+block and UAC prompt, the same mkcert issuance — see
+[cli.md](cli.md#devcrate-site-add--site-remove). `p` is `devcrate site set-php`:
+it rewrites the `fastcgi_pass` line and nothing else, so a hand-edited conf
+survives. `d` deletes only the conf — the project folder under `projects\` and
+the certificate are left alone, and the confirmation says so.
 
-Creating a vhost still leaves the hosts-file entry to you, exactly as
-`devcrate site add` and `new-vhost.bat` do. It needs elevation; automating it is
-[roadmap](roadmap.md) item 4.
+Unlike `devcrate site remove`, `d` does **not** take the host out of the hosts
+file: the CLI does that in its printing wrapper, which the dashboard does not
+call. Use `devcrate site remove` *instead of* `d` — after `d` the conf is gone
+and the command refuses — or remove the line by hand, until that moves into the
+shared core — see
+[docs-drift-audit-2026-10-15.md](issue/docs-drift-audit-2026-10-15.md).
 
 ### Logs
 
@@ -135,14 +140,19 @@ escape sequences into a file.
 
 ## What it deliberately does not do
 
-- **Install runtimes.** `devcrate install php 8.4`, `devcrate install nginx
-  1.31.3`, and `devcrate install composer` work as subcommands
-  ([cli.md](cli.md#devcrate-install)), but the dashboard has no screen for any of
-  them — no version picker, no download progress pane. The core is ready for one:
-  every step returns a structured result and reports progress through a callback
-  rather than printing.
-- **Edit the hosts file or issue certificates.** Both need elevation or a managed
-  mkcert — roadmap items 4 and 2.
+- **Install everything the CLI can, or show progress while it does.** The `i`
+  picker is a fixed list of nine entries rather than the vendors' catalogues, so
+  nginx, PostgreSQL, and Python are not on it, and the versions it names are
+  built into the binary. The five entries with no version — Bun, MariaDB,
+  RabbitMQ, Redis, Composer — install nothing and report a failure that names
+  the `devcrate install` command to run instead. An install shows only its
+  result, not download progress. See
+  [docs-drift-audit-2026-10-15.md](issue/docs-drift-audit-2026-10-15.md).
+- **Uninstall.** `devcrate uninstall` has no key in the dashboard.
+- **Report certificate expiry.** The New Site form adds the hosts entry and
+  issues the certificate, as `site add` does (see
+  [cli.md](cli.md#what-this-deliberately-does-not-do)), but nothing shows when a
+  certificate runs out.
 - **Edit anything in a vhost except its PHP version.** The web root, the
   certificate, an added `location` block: still a manual edit. The dashboard, like
   the subcommands, never reformats or regenerates a conf you may have changed by

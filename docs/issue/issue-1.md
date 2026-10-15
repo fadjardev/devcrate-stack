@@ -7,7 +7,7 @@ with one interactive terminal UI written in Rust using [ratatui](https://ratatui
 and [crossterm](https://docs.rs/crossterm/), compiled to a single `devcrate.exe`
 with no runtime dependency.
 
-Roadmap item 1 of 3 — see [docs/roadmap.md](docs/roadmap.md).
+Roadmap item 1 — see [docs/roadmap.md](docs/roadmap.md).
 
 **Status: built.** `devcrate` with no arguments opens the dashboard; the
 reference is [docs/tui.md](docs/tui.md). It is a front end over the core from #3
@@ -16,8 +16,11 @@ as this issue's technical note requires — every action it offers is a call int
 returns a structured result with the printing left outside, so nothing is
 implemented twice and nothing the dashboard calls can write over the screen.
 
-Two scope items below are deliberately left undone; both are marked and
-explained where they appear.
+Every scope item below is built. The one that was first left undone —
+issuing a certificate when creating a site — arrived with #2 and roadmap item
+4. What the dashboard still deliberately does not do (edit a vhost beyond its
+PHP version, notice a crash it did not witness) is listed in
+[docs/tui.md](docs/tui.md#what-it-deliberately-does-not-do).
 
 | Scope item | Where it lives |
 | --- | --- |
@@ -28,7 +31,7 @@ explained where they appear.
 | Report a crashed child | Services pane — `up` → `stopped` with nobody asking |
 | Log viewer | Logs pane — discovered files, follow, scrollback |
 | Vhost list | Sites pane |
-| Vhost create | `n` → `site::create` (cert reuse only; mkcert issuance is #2/#4) |
+| Vhost create | `n` → `site::create` — the same hosts block and mkcert issuance as `site add` |
 | Vhost edit: change PHP version | `p` → `site::repoint_site` |
 | PHP switcher: show active | header, and the picker marks it |
 | PHP switcher: repoint junction | `u` → `php::use_version` |
@@ -70,10 +73,12 @@ stack's actual state visible and controllable from one screen.
 
 ### Vhost manager
 - [x] List `conf/sites/*.conf` with each site's hostname, PHP version, and web root
-- [x] Create a site — scaffold the web root, write the vhost, print the hosts
-      entry. **Not** the mkcert certificate: that needs mkcert as a managed tool,
-      which is #2. The `*.test` wildcard is reused and a third-level domain is
-      called out, exactly as `new-vhost.bat` does.
+- [x] Create a site — scaffold the web root, write the vhost, add the hosts
+      entry, and issue the certificate — *the New Site form calls
+      `site::create`, so it adds `127.0.0.1 <host>` inside the devcrate hosts
+      block (UAC prompt when needed) and reuses or issues a wildcard with mkcert
+      (`*.test`, or `*.mygroup.test` for a third-level domain). Both can be
+      switched off in the form.*
 - [x] Change an existing site's PHP version (rewrite `fastcgi_pass`) and reload nginx
 
 ### PHP switcher

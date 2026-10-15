@@ -21,7 +21,8 @@ install walkthrough.
 | [troubleshooting.md](troubleshooting.md) | Common failures, known limitations, the verification checklist, and log locations. |
 | [cli.md](cli.md) | The `devcrate` binary: building it, stack-root resolution, `devcrate.toml`, and the subcommands. |
 | [tui.md](tui.md) | The dashboard `devcrate` opens with no arguments: panes, keys, crash detection. |
-| [roadmap.md](roadmap.md) | Planned development: what is built, and what is left — the runtime installer, the one-step project setup, Node and Bun. |
+| [roadmap.md](roadmap.md) | What is built (items 1–5: the dashboard, the runtime installer, the scriptable CLI, one-step project setup, Node and Bun) and the candidates proposed next to stand as a Laragon / XAMPP alternative (items 6–10). |
+| [issue/](issue) | Mirrors of the GitHub issues, kept ticked to match the code, plus write-ups of findings from reviews. |
 
 ## The stack at a glance
 
@@ -32,6 +33,8 @@ install walkthrough.
 | PHP (FastCGI) | per vhost | `:9074` / `:9082` / `:9085` | - |
 | MariaDB | 12.3 | `127.0.0.1:3306` | `root`, no password |
 | RabbitMQ | 4.3.2 (Erlang 27) | `:5672`, UI `:15672` | `guest` / `guest` |
+| PostgreSQL | 13.23 | `127.0.0.1:5432` | `postgres` / `postgres` |
+| Redis | 8.10.2 | `127.0.0.1:6379` | none (loopback-only bind) |
 
 Everything runs out of `C:\devcrate` with no system-wide installs. Only the scripts
 and service configs are versioned; binaries, runtime data, TLS keys, and

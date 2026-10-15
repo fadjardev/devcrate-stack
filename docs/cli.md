@@ -1023,7 +1023,10 @@ delete a directory a process is executing out of, and `devcrate stop
 
 - Removing the version `php\current`, `nginx\current`, `node\current`,
   `bun\current`, or `python\current` names, since the CLI would resolve to
-  nothing afterwards. The junction is cleared, not left dangling.
+  nothing afterwards. The junction is cleared, not left dangling. *PHP does
+  not enforce this yet:* removing the version `php\current` names succeeds
+  without `--force` and clears the junction — see
+  [docs-drift-audit-2026-10-15.md](issue/docs-drift-audit-2026-10-15.md).
 - Removing a PHP version a vhost's `fastcgi_pass` still points at, or removing
   `erlang` while `rabbitmq\` is still installed (Erlang is its dependency, not
   a peer).
@@ -1111,8 +1114,20 @@ ignored, so a typo is an error instead of a setting that silently does nothing.
   [roadmap](roadmap.md) item 1.
 - **Never touches your project code.** `site remove` leaves `projects\<host>\`
   exactly where it is.
-- **Never edits the hosts file or issues a certificate.** Both need elevation or
-  a managed mkcert, which are roadmap items 4 and 2.
+- **Never touches the hosts file outside its own block.** `site add` writes
+  `127.0.0.1 <host>` between `# --- devcrate begin/end ---` markers, backing the
+  file up to `hosts.bak` once, and `site remove` takes the line out again;
+  `--no-hosts` skips it. When writing needs elevation, the new content goes to a
+  temp file and a UAC prompt copies it into place; declining leaves the file
+  untouched and the line printed for you. The unelevated write is *not* atomic
+  yet — it writes the file directly rather than a temp file then a replace,
+  which roadmap item 4 asks for.
+- **Never installs mkcert.** `site add` issues or reuses a certificate (`*.test`
+  for `myapp.test`, `*.mygroup.test` for `api.mygroup.test`) with an mkcert it
+  finds in the stack root, in `mkcert\`, or on `PATH`, running `mkcert -install`
+  first; `--no-tls` skips it. There is no `devcrate install mkcert`, nothing
+  reports a certificate's expiry, and `site remove` leaves the certificate in
+  place, since another site may share the wildcard.
 - **No supervision from a subcommand.** `start` launches and walks away;
   `status` and `stop` find their targets by scanning, not by remembering what
   was launched. So a service that dies five minutes later is reported by
