@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`site add` issues a certificate browsers accept for a second-level host.** `myapp.test` used to reuse `_wildcard.test.pem`, whose only name is `*.test` — a wildcard directly under a TLD, which browsers refuse (`ERR_CERT_COMMON_NAME_INVALID` in Chrome). It now gets its own certificate for `myapp.test` and `*.myapp.test`, the same per-group scheme third-level hosts already had. mkcert's output is also silenced, since the dashboard can run it. Existing sites still pointing at `_wildcard.test.pem` keep it until their conf is changed.
 - **`site add --path` refuses a folder that does not exist** before creating anything. A relative path is taken from the current directory, so `--path adminer` run outside the stack root used to leave a junction to nowhere at `projects\<host>` and stop before the hosts file was written; every retry then failed with "Cannot create a file when that file already exists". The `install adminer` hint now prints the full path.
 
 ## [0.2.0] - 2026-10-15

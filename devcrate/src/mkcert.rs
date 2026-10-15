@@ -1,11 +1,21 @@
 //! Local TLS Certificate Management via mkcert.
 //!
 //! Automatically issues and updates TLS certificates for local vhosts into
-//! `nginx/conf/certs/`. Reuses `_wildcard.test.pem` for standard `*.test` domains
-//! and issues domain-group wildcards (e.g. `*.mygroup.test`) for 3rd-level domains.
+//! `nginx/conf/certs/`, one per domain group: `myapp.test` gets a certificate
+//! for `myapp.test` and `*.myapp.test`, and `api.mygroup.test` shares one for
+//! `mygroup.test` and `*.mygroup.test` with its siblings.
+//!
+//! Never `*.test` on its own. Browsers refuse a wildcard that sits directly
+//! under a top-level domain, so a `*.test` certificate is rejected for
+//! `myapp.test` (`ERR_CERT_COMMON_NAME_INVALID` in Chrome) even though it
+//! appears to cover it. An older `_wildcard.test.pem` from `new-vhost.bat` is
+//! therefore no longer reused.
+//!
+//! mkcert's own output is discarded: these run from the dashboard too, where
+//! anything printed would land on the screen it just drew.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, anyhow};
 
@@ -40,6 +50,9 @@ pub fn find_mkcert(stack: &Stack) -> Option<PathBuf> {
 pub fn ensure_ca_installed(mkcert_bin: &Path) -> Result<()> {
     let status = Command::new(mkcert_bin)
         .arg("-install")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status()
         .with_context(|| format!("running {} -install", mkcert_bin.display()))?;
 
@@ -61,7 +74,7 @@ pub fn parent_domain(host: &str) -> &str {
     }
 }
 
-/// Issue or reuse a TLS wildcard certificate for the target host.
+/// Issue or reuse the certificate for the host's domain group.
 /// Returns the name of the cert file used (e.g., `_wildcard.mygroup.test.pem`).
 pub fn ensure_cert_for_host(stack: &Stack, host: &str) -> Result<Option<String>> {
     let certs_dir = stack.nginx_prefix.join("conf").join("certs");
@@ -69,20 +82,7 @@ pub fn ensure_cert_for_host(stack: &Stack, host: &str) -> Result<Option<String>>
         let _ = std::fs::create_dir_all(&certs_dir);
     }
 
-    let is_third_level = host.matches('.').count() > 1;
-    if !is_third_level {
-        // Standard *.test domain is covered by existing default wildcard
-        let default_cert = certs_dir.join("_wildcard.test.pem");
-        if default_cert.is_file() {
-            return Ok(Some("_wildcard.test.pem".to_string()));
-        }
-    }
-
-    let domain = if is_third_level {
-        parent_domain(host)
-    } else {
-        "test"
-    };
+    let domain = cert_domain(host);
 
     let cert_file_name = format!("_wildcard.{domain}.pem");
     let key_file_name = format!("_wildcard.{domain}-key.pem");
@@ -110,6 +110,9 @@ pub fn ensure_cert_for_host(stack: &Stack, host: &str) -> Result<Option<String>>
             &wildcard_pattern,
             domain,
         ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status()
         .with_context(|| format!("running mkcert to issue {wildcard_pattern}"))?;
 
@@ -120,9 +123,26 @@ pub fn ensure_cert_for_host(stack: &Stack, host: &str) -> Result<Option<String>>
     }
 }
 
+/// The domain a host's certificate is issued for: the host itself when it is
+/// directly under the TLD (`myapp.test`), its parent otherwise
+/// (`api.mygroup.test` -> `mygroup.test`). Never the bare TLD, whose wildcard
+/// browsers reject.
+pub fn cert_domain(host: &str) -> &str {
+    parent_domain(host)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `*.test` is never the answer: browsers refuse a wildcard straight under
+    /// a TLD, so a second-level host gets its own name on the certificate.
+    #[test]
+    fn certificates_are_never_issued_for_the_bare_tld() {
+        assert_eq!(cert_domain("db.test"), "db.test");
+        assert_eq!(cert_domain("api.mygroup.test"), "mygroup.test");
+        assert_eq!(cert_domain("a.b.mygroup.test"), "b.mygroup.test");
+    }
 
     #[test]
     fn test_parent_domain() {

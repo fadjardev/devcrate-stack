@@ -144,9 +144,18 @@ Windows certificate store (`mkcert -install`, run once as Admin - see
 
 ### Wildcard strategy
 
-X.509 wildcards are single-level: `*.test` matches `ic-stokdigital.test` but NOT
-`api.qhomeapps.test` (that is a third level). Multi-level wildcards like
-`*.*.test` are invalid. So each domain group gets its own wildcard cert.
+X.509 wildcards are single-level: `*.qhomeapps.test` matches
+`api.qhomeapps.test` but not `qhomeapps.test` itself or `a.b.qhomeapps.test`.
+Multi-level wildcards like `*.*.test` are invalid. So each domain group gets its
+own wildcard cert.
+
+**`*.test` does not work for a second-level host.** Browsers refuse a wildcard
+that sits directly under a top-level domain, so a `*.test` certificate is
+rejected for `ic-stokdigital.test` (`ERR_CERT_COMMON_NAME_INVALID` in Chrome,
+`SEC_E_WRONG_PRINCIPAL` from Windows) even though it looks like it covers it.
+A second-level host needs its own name on the certificate — which is what
+`devcrate site add` issues (`myapp.test` and `*.myapp.test`); `new-vhost.bat`
+still reuses `_wildcard.test.pem` and gets the warning.
 
 Existing certs cover:
 

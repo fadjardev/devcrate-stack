@@ -507,9 +507,11 @@ Differences from `new-vhost.bat`:
   `sites\` as one document, so one bad conf fails the reload for *all* vhosts
   with nothing to say why. `nginx -t` runs first, and its message — file and
   line — is what you get instead.
-- **A third-level domain is called out.** `api.mygroup.test` is not covered by
-  the `*.test` wildcard, so the output tells you to issue `*.mygroup.test`
-  rather than leaving you to find out from a browser warning.
+- **The certificate is issued, per domain group.** `myapp.test` gets one for
+  `myapp.test` and `*.myapp.test`; `api.mygroup.test` shares one for
+  `mygroup.test` and `*.mygroup.test` with its siblings. Never `*.test`, which
+  the script reuses: browsers refuse a wildcard directly under a TLD, so it is
+  rejected for `myapp.test` (`ERR_CERT_COMMON_NAME_INVALID`).
 
 The hosts-file entry is still yours to add, as with the script; automating it
 needs elevation and is [roadmap](roadmap.md) item 4.
@@ -1158,8 +1160,9 @@ ignored, so a typo is an error instead of a setting that silently does nothing.
   write). When writing needs elevation, a UAC prompt copies the new content
   into place instead; declining leaves the file untouched and the line printed
   for you.
-- **Never installs mkcert.** `site add` issues or reuses a certificate (`*.test`
-  for `myapp.test`, `*.mygroup.test` for `api.mygroup.test`) with an mkcert it
+- **Never installs mkcert.** `site add` issues or reuses a certificate
+  (`myapp.test` + `*.myapp.test` for `myapp.test`, `mygroup.test` +
+  `*.mygroup.test` for `api.mygroup.test`) with an mkcert it
   finds in the stack root, in `mkcert\`, or on `PATH`, running `mkcert -install`
   first; `--no-tls` skips it. There is no `devcrate install mkcert`, nothing
   reports a certificate's expiry, and `site remove` leaves the certificate in
