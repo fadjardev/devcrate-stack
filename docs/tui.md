@@ -60,6 +60,7 @@ a rescan rather than waiting for the next one.
 | `i` | Open the **Install Service / Runtime** picker — see [Installing and removing](#installing-and-removing) |
 | `U` | Open the **Uninstall** picker: everything installed, removed after a confirmation |
 | `u` | Repoint `php\current` — the CLI PHP version |
+| `e` | On a PHP row: that version's **extensions**, switched on and off with `Enter` or `Space` |
 
 Start and stop go through the same order, the same graceful commands, and the
 same path-scoped process matching as `devcrate start` and `devcrate stop`; see
@@ -97,6 +98,19 @@ before removing anything. It is `devcrate uninstall` without `--force` or
 version a vhost still uses, Erlang under an installed RabbitMQ, and a
 database's `data\` are all refused or kept, with the command that would do it
 named in the result.
+
+`e` is `devcrate php ext` for the PHP version under the cursor (on any other row
+it says to pick a PHP one). The list is every DLL in the version's extension
+directory and every extension its `php.ini` switches on, marked `on` or `off`;
+`Enter` or `Space` flips the one selected, through the same `php ext enable` /
+`disable` — the marked block, the `php -m` check, and the restart of that
+version's worker if it was running. An extension the file itself switches on is
+marked with its line, and flipping it is refused with that line named: only
+devcrate's block is edited. When the version has no Xdebug DLL, the first row
+is `get xdebug`, which is `php ext install xdebug` — the download matched to
+that exact PHP build, with its progress in the footer. As with installs, the
+dashboard never forces: replacing a DLL already there stays `php ext install
+--force` in a terminal.
 
 ### Sites
 

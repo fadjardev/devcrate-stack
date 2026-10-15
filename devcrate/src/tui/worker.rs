@@ -70,6 +70,10 @@ pub enum Job {
     SiteRemove(String),
     Install { runtime: String, version: Option<String> },
     Uninstall { runtime: String, version: Option<String>, label: String },
+    /// Switch one extension of one PHP version on or off.
+    PhpExt { php: String, ext: String, on: bool },
+    /// Download a PECL extension for one PHP version and switch it on.
+    PhpExtInstall { php: String, ext: String },
 }
 
 impl Job {
@@ -94,6 +98,9 @@ impl Job {
                 )
             }
             Job::Uninstall { label, .. } => format!("Removing {label}"),
+            Job::PhpExt { php, ext, on: true } => format!("Enabling {ext} on {php}"),
+            Job::PhpExt { php, ext, on: false } => format!("Disabling {ext} on {php}"),
+            Job::PhpExtInstall { php, ext } => format!("Downloading & installing {ext} for {php}"),
         }
     }
 
@@ -471,6 +478,77 @@ fn run(stack: &Stack, job: Job, tx: &Sender<Event>) -> JobResult {
                 Err(err) => failure(label, err),
             }
         }
+
+        Job::PhpExt { php, ext, on } => {
+            let names = [ext.clone()];
+            let done = if on {
+                crate::php_ext::enable(stack, Some(&php), &names)
+            } else {
+                crate::php_ext::disable(stack, Some(&php), &names)
+            };
+            match done {
+                Ok(done) => {
+                    let state = if on { "on" } else { "off" };
+                    let mut lines = vec![match done.changed.is_empty() {
+                        true => format!("{ext} was already {state} in {}", done.php_name),
+                        false => format!("{ext} switched {state} in {}", done.ini),
+                    }];
+                    let mut failed = false;
+                    if let Some((line, bad)) = restart_line(&done.php_id, &done.restart) {
+                        lines.push(line);
+                        failed = bad;
+                    }
+                    JobResult { label, lines, failed, sites_changed: false }
+                }
+                Err(err) => failure(label, err),
+            }
+        }
+
+        Job::PhpExtInstall { php, ext } => {
+            // Same throttling as an install: a footer needs ten updates a
+            // second at most.
+            let mut last = None::<std::time::Instant>;
+            let mut on_progress = |done: u64, total: Option<u64>| {
+                if last.is_none_or(|at| at.elapsed() >= Duration::from_millis(100)) {
+                    last = Some(std::time::Instant::now());
+                    let text = match total {
+                        Some(total) if total > 0 => format!("{ext}: {}%", done * 100 / total),
+                        _ => format!("{ext}: {} KB", done / 1024),
+                    };
+                    let _ = tx.send(Event::Progress(text));
+                }
+            };
+            // Never forced from here, as with installs: replacing a DLL that
+            // is already there stays a deliberate `--force` in a terminal.
+            match crate::php_ext::install(stack, Some(&php), &ext, None, false, &mut on_progress) {
+                Ok(done) => {
+                    let mut lines = vec![
+                        format!("{} {} {} installed: {}", done.php_name, done.extension, done.version, done.dll),
+                        format!("{}, built for {}", done.file_name, done.build),
+                        "length-checked over TLS only -- the PECL host publishes no checksum".into(),
+                    ];
+                    let mut failed = false;
+                    if let Some((line, bad)) = restart_line(&done.php_id, &done.restart) {
+                        lines.push(line);
+                        failed = bad;
+                    }
+                    JobResult { label, lines, failed, sites_changed: false }
+                }
+                Err(err) => failure(label, err),
+            }
+        }
+    }
+}
+
+/// What a restart after an extension change came to, as a line, and whether
+/// it failed.
+fn restart_line(php: &str, restart: &crate::php_ext::Restart) -> Option<(String, bool)> {
+    use crate::php_ext::Restart;
+    match restart {
+        Restart::NotNeeded => None,
+        Restart::NotRunning => Some((format!("{php} is not running; it reads php.ini when it starts"), false)),
+        Restart::Done => Some((format!("{php} restarted"), false)),
+        Restart::Failed(why) => Some((format!("{php} did not restart cleanly: {why}"), true)),
     }
 }
 

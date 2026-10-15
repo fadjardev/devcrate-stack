@@ -10,7 +10,7 @@ use ratatui::widgets::{
 };
 
 use crate::status::{ServiceStatus, State};
-use crate::tui::app::{App, Modal, PhpPurpose, Tab};
+use crate::tui::app::{App, ExtRow, Modal, PhpPurpose, Tab};
 use crate::tui::logs;
 
 const ACCENT: Color = Color::Cyan;
@@ -445,6 +445,7 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
             ("i", "install"),
             ("U", "uninstall"),
             ("u", "CLI PHP"),
+            ("e", "PHP ext"),
             ("?", "help"),
             ("q", "quit"),
         ],
@@ -469,7 +470,7 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
     let mut spans = vec![Span::raw(" ")];
     for (i, (name, what)) in keys.iter().enumerate() {
         if i > 0 {
-            spans.push(Span::raw("   "));
+            spans.push(Span::raw("  "));
         }
         spans.push(key(name));
         spans.push(Span::styled(format!(" {what}"), Style::new().fg(MUTED)));
@@ -644,6 +645,38 @@ fn render_modal(frame: &mut Frame, app: &App, modal: &Modal) {
                 .collect();
             picker(frame, "Uninstall", items, *index);
         }
+        Modal::ExtPicker { php_name, index, rows, .. } => {
+            let items: Vec<ListItem> = rows.iter().map(ext_row).collect();
+            let title = format!("{php_name} extensions -- Enter switches, Esc closes");
+            picker(frame, &title, items, *index);
+        }
+    }
+}
+
+fn ext_row(row: &ExtRow) -> ListItem<'static> {
+    use crate::php_ext::Source;
+    match row {
+        ExtRow::Install(name) => ListItem::new(Line::from(vec![
+            Span::styled("get ", Style::new().fg(ACCENT)),
+            Span::raw(format!("{name:<14}")),
+            Span::styled("not installed -- Enter downloads a matching build", Style::new().fg(MUTED)),
+        ])),
+        ExtRow::Ext(ext) => {
+            let (mark, colour) = match ext.enabled {
+                Some(_) => ("on  ", OK),
+                None => ("off ", MUTED),
+            };
+            let note = match &ext.enabled {
+                Some(Source::Ini(line)) => format!("php.ini line {line} -- yours, not switched from here"),
+                Some(Source::Block) => "devcrate".to_string(),
+                None => String::new(),
+            };
+            ListItem::new(Line::from(vec![
+                Span::styled(mark, Style::new().fg(colour)),
+                Span::raw(format!("{:<14}", ext.name)),
+                Span::styled(note, Style::new().fg(MUTED)),
+            ]))
+        }
     }
 }
 
@@ -691,6 +724,7 @@ fn help_text() -> Text<'static> {
         row("i", "install service or runtime (Node, Bun, PHP, etc)"),
         row("U", "uninstall one (never forces, never deletes data)"),
         row("u", "repoint php\\current (the CLI version)"),
+        row("e", "a PHP version's extensions, Xdebug too"),
         Line::from(""),
         section("Sites"),
         row("n", "new vhost"),

@@ -55,12 +55,38 @@ pub enum Modal {
     /// Choose something installed to remove. The list is taken when the
     /// picker opens, so it cannot shift under the cursor.
     UninstallPicker { index: usize, items: Vec<crate::uninstall::Removable> },
+    /// One PHP version's extensions, to switch on and off. Read when the
+    /// picker opens, like the uninstall list.
+    ExtPicker { php: String, php_name: String, index: usize, rows: Vec<ExtRow> },
     /// Type details for a new vhost.
     NewSite(NewSiteForm),
     /// Confirm something that cannot be undone.
     Confirm { question: String, job: Job },
     /// The full output of the last job, when it was more than one line.
     Output { title: String, lines: Vec<String>, failed: bool },
+}
+
+/// A line of the extension picker.
+#[derive(Debug, Clone)]
+pub enum ExtRow {
+    /// A PECL extension the version does not have yet: Enter downloads it.
+    Install(&'static str),
+    Ext(crate::php_ext::Extension),
+}
+
+/// Offered for download when a version has no DLL for it.
+const INSTALLABLE: [&str; 1] = ["xdebug"];
+
+/// The picker's rows for one version: what can be downloaded, then every
+/// extension it has.
+pub fn ext_rows(extensions: Vec<crate::php_ext::Extension>) -> Vec<ExtRow> {
+    let mut rows: Vec<ExtRow> = INSTALLABLE
+        .iter()
+        .filter(|name| !extensions.iter().any(|ext| ext.name == **name && ext.bundled))
+        .map(|name| ExtRow::Install(name))
+        .collect();
+    rows.extend(extensions.into_iter().map(ExtRow::Ext));
+    rows
 }
 
 #[derive(Debug, Clone)]
@@ -429,7 +455,38 @@ impl App {
                 self.modal = Some(Modal::UninstallPicker { index: 0, items });
                 None
             }
+            KeyCode::Char('e') => {
+                self.open_ext_picker();
+                None
+            }
             _ => None,
+        }
+    }
+
+    /// `e` on a PHP row: that version's extensions. Anything else says why
+    /// nothing opened.
+    fn open_ext_picker(&mut self) {
+        let service = self
+            .selected_service()
+            .and_then(|id| self.stack.services.iter().find(|s| s.id == id))
+            .filter(|service| service.kind == ServiceKind::Php)
+            .map(|service| (service.id.clone(), service.name.clone()));
+        let Some((php, php_name)) = service else {
+            self.note = Some(Note {
+                text: "Extensions are per PHP version -- select a PHP row first.".into(),
+                failed: true,
+                at: Instant::now(),
+            });
+            return;
+        };
+        match crate::php_ext::list(&self.stack, Some(&php)) {
+            Ok(listing) => {
+                let rows = ext_rows(listing.extensions);
+                self.modal = Some(Modal::ExtPicker { php, php_name, index: 0, rows });
+            }
+            Err(err) => {
+                self.note = Some(Note { text: format!("{err:#}"), failed: true, at: Instant::now() })
+            }
         }
     }
 
@@ -655,6 +712,25 @@ impl App {
                             label: item.label,
                         },
                     });
+                }
+                _ => {}
+            },
+            Some(Modal::ExtPicker { php, index, rows, .. }) => match key.code {
+                KeyCode::Esc => self.modal = None,
+                KeyCode::Up | KeyCode::Char('k') => *index = index.saturating_sub(1),
+                KeyCode::Down | KeyCode::Char('j') => {
+                    *index = (*index + 1).min(rows.len().saturating_sub(1));
+                }
+                KeyCode::Enter | KeyCode::Char(' ') => {
+                    let job = match rows.get(*index)? {
+                        ExtRow::Install(ext) => Job::PhpExtInstall { php: php.clone(), ext: ext.to_string() },
+                        ExtRow::Ext(ext) => Job::PhpExt {
+                            php: php.clone(),
+                            ext: ext.name.clone(),
+                            on: ext.enabled.is_none(),
+                        },
+                    };
+                    return self.submit(job);
                 }
                 _ => {}
             },

@@ -511,4 +511,67 @@ mod tests {
             assert!(screen.contains(row), "{row} missing: {screen}");
         }
     }
+
+    /// `e` on a PHP row lists that version's extensions, offers Xdebug when
+    /// it has no DLL for it, and turns a row into the job that switches it.
+    #[test]
+    fn the_extension_picker_switches_the_selected_version() {
+        let root = std::env::temp_dir().join(format!("devcrate-tui-ext-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let php = root.join("php").join("php-8.5");
+        std::fs::create_dir_all(php.join("ext")).unwrap();
+        for file in ["php-cgi.exe", "php.exe", "ext/php_curl.dll", "ext/php_pgsql.dll"] {
+            std::fs::write(php.join(file), "").unwrap();
+        }
+        std::fs::write(php.join("php.ini"), "extension=curl\n").unwrap();
+        let stack = Arc::new(
+            Stack::open(crate::root::StackRoot { path: root.clone(), source: RootSource::Flag })
+                .unwrap(),
+        );
+        let mut app = App::new(stack);
+        app.on_status(report(State::Up, State::Up));
+
+        app.service_row = 0; // nginx
+        app.on_key(KeyEvent::from(KeyCode::Char('e')));
+        assert!(app.modal.is_none());
+        assert!(app.note.as_ref().is_some_and(|n| n.text.contains("PHP row")));
+
+        app.service_row = 1; // php-8.5
+        app.on_key(KeyEvent::from(KeyCode::Char('e')));
+        let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+        terminal.draw(|frame| view::render(frame, &app)).unwrap();
+        let screen = format!("{:?}", terminal.backend().buffer());
+        for want in ["extensions", "xdebug", "curl", "php.ini line 1", "pgsql"] {
+            assert!(screen.contains(want), "{want} missing: {screen}");
+        }
+
+        let job = app.on_key(KeyEvent::from(KeyCode::Enter)).expect("first row installs");
+        assert!(matches!(job, worker::Job::PhpExtInstall { php, ext } if php == "php-8.5" && ext == "xdebug"));
+        app.busy = None;
+
+        app.on_key(KeyEvent::from(KeyCode::Char('e')));
+        app.on_key(KeyEvent::from(KeyCode::Down));
+        app.on_key(KeyEvent::from(KeyCode::Down));
+        let job = app.on_key(KeyEvent::from(KeyCode::Char(' '))).expect("pgsql switches on");
+        assert!(matches!(job, worker::Job::PhpExt { php, ext, on: true } if php == "php-8.5" && ext == "pgsql"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Every pane's footer fits a 100-column terminal, `q quit` included.
+    #[test]
+    fn footers_fit_a_hundred_columns() {
+        let mut app = App::new(stack());
+        for tab in app::Tab::ALL {
+            app.tab = tab;
+            let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+            terminal.draw(|frame| view::render(frame, &app)).unwrap();
+            let buffer = terminal.backend().buffer().clone();
+            let y = buffer.area.height - 1;
+            let footer: String = (0..buffer.area.width)
+                .filter_map(|x| buffer.cell((x, y)).map(|cell| cell.symbol().to_string()))
+                .collect();
+            assert!(footer.contains("q quit"), "{}: {footer}", tab.title());
+        }
+    }
 }
