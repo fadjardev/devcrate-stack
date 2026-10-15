@@ -96,4 +96,68 @@ mod tests {
         );
         assert_eq!(version_from_file_name("invalid.zip"), None);
     }
+
+    fn unique_temp_dir(label: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "devcrate-test-{label}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    #[test]
+    fn a_directory_is_recognized_by_either_server_binary_name() {
+        let dir = unique_temp_dir("mariadb-check-ok");
+        std::fs::create_dir_all(dir.join("bin")).unwrap();
+        std::fs::write(dir.join("bin").join("mariadbd.exe"), b"stub").unwrap();
+
+        assert!(check(&dir, Path::new("mariadb-11.4.5-winx64.zip")).is_ok());
+
+        // The older `mysqld.exe` name is accepted too.
+        std::fs::remove_file(dir.join("bin").join("mariadbd.exe")).unwrap();
+        std::fs::write(dir.join("bin").join("mysqld.exe"), b"stub").unwrap();
+        assert!(check(&dir, Path::new("mariadb-10.11.11-winx64.zip")).is_ok());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_directory_without_either_server_binary_is_rejected() {
+        let dir = unique_temp_dir("mariadb-check-bad");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let archive = Path::new("not-mariadb.zip");
+        let err = check(&dir, archive).unwrap_err().to_string();
+        assert!(err.contains("not-mariadb.zip"));
+        assert!(err.contains("bin/mariadbd.exe"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn configure_writes_my_ini_and_data_dir_only_once() {
+        let dir = unique_temp_dir("mariadb-configure");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let first = configure(&dir).unwrap();
+        assert!(first.config_created);
+        assert!(first.data_dir_created);
+        assert!(dir.join("my.ini").is_file());
+        assert!(dir.join("data").is_dir());
+
+        let content = std::fs::read_to_string(dir.join("my.ini")).unwrap();
+        assert!(content.contains("port=3306"));
+
+        // A hand-edited my.ini and an already-existing data dir are left alone.
+        std::fs::write(dir.join("my.ini"), "[mysqld]\nport=3307\n").unwrap();
+        let second = configure(&dir).unwrap();
+        assert!(!second.config_created);
+        assert!(!second.data_dir_created);
+        let unchanged = std::fs::read_to_string(dir.join("my.ini")).unwrap();
+        assert_eq!(unchanged, "[mysqld]\nport=3307\n");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
