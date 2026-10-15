@@ -115,6 +115,7 @@ visible rather than mysterious.
 | `devcrate site add <host>` | **works** — web root, conf, junction, reload |
 | `devcrate site set-php <host> <version>` | **works** — repoints an existing vhost |
 | `devcrate site remove <host>` | **works** — removes the conf, keeps the project |
+| `devcrate setup [--no-start]` | **works** — installs nginx, PHP, MariaDB, Composer, and mkcert where missing, trusts mkcert's CA, starts the stack (see below) |
 | `devcrate install php <version>` | **works** — downloads, verifies sha256, installs |
 | `devcrate install php` (no version) | **works** — lists the versions windows.php.net offers |
 | `devcrate install nginx <version>` | **works** — downloads and installs a build into the prefix |
@@ -643,6 +644,53 @@ The configuration is tested with `nginx -t` before the reload, as with
 `site add`. Changing the version does **not** start that version's FastCGI
 worker — the output says which one you need.
 
+### `devcrate setup`
+
+```
+devcrate setup              REM a working stack, started
+devcrate setup --no-start   REM the same, left stopped
+```
+
+```
+Setting up the stack in C:\devcrate
+  nginx     nginx 1.30.6 installed into nginx\nginx-1.30.6
+  PHP       PHP 8.5.11 installed into php\php-8.5
+  MariaDB   MariaDB 11.4.5 installed into mariadb
+  Composer  Composer 2.10.3 installed into composer
+  CLI PHP   php\current -> php\php-8.5
+  mkcert    mkcert 1.4.4 placed at mkcert.exe (length-checked over TLS; the release publishes no checksum)
+  local CA  already there: mkcert's CA, trusted by this user
+  start     3 started, 3 up
+Ready. `devcrate` opens the dashboard; `devcrate site add myapp.test` serves a project.
+```
+
+The first thing to run in a fresh clone or an extracted release zip. Each step
+installs only what is missing, through the same installers as `devcrate
+install`: nginx `stable`, PHP `latest`, MariaDB `latest`, Composer `stable`.
+Then `php\current` is pointed at the newest PHP if it points nowhere, mkcert is
+downloaded to `mkcert.exe` in the stack root if none is found (the root, its
+`mkcert\` folder, or `PATH`), `mkcert -install` makes its CA trusted by your
+user — Windows asks to confirm that the first time — and the stack is started.
+
+What is already there is reported and left alone, so running `setup` on a
+stack that is set up changes nothing and says "Nothing to do". The first step
+that fails stops the run; everything before it stays installed, and running
+`setup` again carries on from there.
+
+It installs binaries, not configuration: `nginx\conf\nginx.conf` and each
+version's `php.ini` come with the repository or the zip. Without the first,
+setup stops before downloading anything. A `php\php-X.Y\` that holds only the
+stack's `php.ini` — which is what a clone has — is filled in by the PHP install
+and that `php.ini` kept as it is, rather than refused as already installed.
+
+mkcert's GitHub releases carry no checksum, so its download is length-checked
+over TLS, the same as nginx's, and the line says so.
+
+MariaDB's `latest` is the newest release this build of devcrate knows — its
+list is built in, not fetched (11.4.5 today) — whatever a stack set up earlier
+may be running. Its zip comes from MariaDB's download CDN, `dlm.mariadb.com`,
+and is verified against the `sha256sums.txt` MariaDB publishes beside it.
+
 ### `devcrate install`
 
 ```
@@ -1114,6 +1162,12 @@ in `status`, the version lists, and the dashboard the instant it exists. Any
 failure clears the staging directory. Replacing a version with `--force` moves
 the old one aside rather than deleting it, and puts it back if the rename fails,
 so a failed install cannot leave the version missing altogether.
+
+**A PHP version folder holding only `php.ini` is not an installation.** That is
+what a clone of the repository carries: the stack's own `php.ini`, no binaries.
+Installing that version fills the folder in without `--force` and keeps the
+`php.ini`, instead of generating one over it; the install says "php.ini is the
+stack's own, kept".
 
 **Extraction cannot write outside the destination.** A zip entry carries its own
 path, and that path came from a file downloaded off a vendor site, so it is

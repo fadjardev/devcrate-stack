@@ -77,6 +77,10 @@ pub enum Command {
     #[command(subcommand)]
     Bun(BunCommand),
 
+    /// Set up a working stack in one step: nginx, PHP, MariaDB, Composer,
+    /// and mkcert where missing, the local CA trusted, and the stack started.
+    Setup(SetupArgs),
+
     /// Install a runtime: download it from the vendor and verify it, or use
     /// --from for an archive already on disk.
     Install(InstallArgs),
@@ -169,6 +173,13 @@ pub enum ConfigCommand {
     Show,
     /// Print the path devcrate.toml is read from, whether or not it exists.
     Path,
+}
+
+#[derive(Debug, Args)]
+pub struct SetupArgs {
+    /// Install and trust, but do not start the stack.
+    #[arg(long)]
+    pub no_start: bool,
 }
 
 #[derive(Debug, Subcommand)]

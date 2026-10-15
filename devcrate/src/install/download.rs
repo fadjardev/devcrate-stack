@@ -276,17 +276,47 @@ pub struct MariaDbRelease {
     pub sha256: Option<String>,
 }
 
+/// MariaDB's download CDN. `archive.mariadb.org` serves the same files, but
+/// has been seen trickling at 13 KB/s -- two hours for one zip -- where this
+/// answers at hundreds of KB/s. Each release directory carries a
+/// `sha256sums.txt` beside the zip, on both hosts.
+const MARIADB_DOWNLOAD_URL: &str = "https://dlm.mariadb.com/mariadb/";
+
 impl MariaDbRelease {
-    pub fn download(&self) -> Download {
-        Download {
-            url: format!(
-                "https://archive.mariadb.org/mariadb-{}/winx64-packages/{}",
-                self.version, self.file_name
-            ),
+    /// The zip, verified against the `sha256sums.txt` MariaDB publishes in the
+    /// same release directory -- so a MariaDB download is checksum-verified,
+    /// at full strength, the way Composer's is from its sidecar.
+    pub fn download(&self) -> Result<Download> {
+        let dir = format!("{MARIADB_DOWNLOAD_URL}mariadb-{}/winx64-packages/", self.version);
+        let sums_url = format!("{dir}sha256sums.txt");
+        let mut response = agent()
+            .get(&sums_url)
+            .call()
+            .with_context(|| format!("fetching the MariaDB checksums from {sums_url}"))?;
+        let sums = response
+            .body_mut()
+            .read_to_string()
+            .with_context(|| format!("reading the MariaDB checksums from {sums_url}"))?;
+        let sha256 = self.sha256.clone().or_else(|| sha256_for(&sums, &self.file_name)).ok_or_else(|| {
+            anyhow::anyhow!("{sums_url} lists no sha256 for {}", self.file_name)
+        })?;
+        Ok(Download {
+            url: format!("{dir}{}", self.file_name),
             file_name: self.file_name.clone(),
-            sha256: self.sha256.clone(),
-        }
+            sha256: Some(sha256),
+        })
     }
+}
+
+/// The hash `sha256sums.txt` gives `file`: lines of `<64 hex>  ./<file>`.
+pub fn sha256_for(sums: &str, file: &str) -> Option<String> {
+    sums.lines().find_map(|line| {
+        let mut parts = line.split_whitespace();
+        let hash = parts.next()?;
+        let name = parts.next()?.trim_start_matches('*').trim_start_matches("./");
+        (name == file && hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit()))
+            .then(|| hash.to_ascii_lowercase())
+    })
 }
 
 pub fn mariadb_catalogue() -> Result<Vec<MariaDbRelease>> {
@@ -488,15 +518,27 @@ pub struct Fetched {
     pub verified: bool,
 }
 
-/// The timeouts cover the phases with a bounded cost -- connecting and waiting
-/// for headers. The body transfer itself is deliberately uncapped: a whole-
-/// request timeout long enough for a PHP zip on a slow connection would be
-/// too long to be worth anything, and the progress callback already shows
-/// whether bytes are moving.
+/// For catalogues, checksums, and listings: small responses, so connecting
+/// and waiting for the headers are both capped.
 fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .timeout_connect(Some(Duration::from_secs(15)))
         .timeout_recv_response(Some(Duration::from_secs(30)))
+        .user_agent(concat!("devcrate/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .new_agent()
+}
+
+/// For the archives themselves: only connecting is capped. ureq checks the
+/// header timeout again while the body is read -- it counts from the start of
+/// that phase -- so with [`agent`] any download taking longer than 30 seconds
+/// failed with "timeout: receive response", however steadily it was arriving.
+/// A whole-transfer cap long enough for a PHP zip on a slow line would be too
+/// long to be worth anything, and the progress callback shows whether bytes
+/// are moving.
+fn download_agent() -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_connect(Some(Duration::from_secs(15)))
         .user_agent(concat!("devcrate/", env!("CARGO_PKG_VERSION")))
         .build()
         .new_agent()
@@ -888,7 +930,7 @@ fn stream_to(
 ) -> Result<String> {
     let url = &download.url;
     let mut response =
-        agent().get(url).call().with_context(|| format!("downloading {url}"))?;
+        download_agent().get(url).call().with_context(|| format!("downloading {url}"))?;
     let total = response.body().content_length();
 
     let mut reader = response.body_mut().as_reader();
@@ -1023,6 +1065,11 @@ fn github_releases(repo: &str) -> Result<String> {
     response.body_mut().read_to_string().with_context(|| format!("reading {url}"))
 }
 
+/// mkcert's releases: the Windows x64 executable, `mkcert-v<version>-windows-amd64.exe`.
+pub fn mkcert_catalogue() -> Result<Vec<GithubRelease>> {
+    parse_github_releases(&github_releases("FiloSottile/mkcert")?, |v| format!("mkcert-v{v}-windows-amd64.exe"))
+}
+
 /// Adminer's releases: the full single-file build (every driver, every
 /// language), `adminer-<version>.php`.
 pub fn adminer_catalogue() -> Result<Vec<GithubRelease>> {
@@ -1114,6 +1161,17 @@ pub fn pecl_build(extension: &str, version: Option<&str>, build: &str) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mariadb_checksums_are_found_by_file_name() {
+        let sums = "5fd2ef7c2df182d86549c47c992e870f1b820137da700518e2a81b21e1b8870e  ./mariadb-11.4.5-winx64-debugsymbols.zip\n\
+                    b7c11d38657f16b837e68199d73670510aadb78f42dfa5d5fdea31a7aab342e3  ./mariadb-11.4.5-winx64.zip\n";
+        assert_eq!(
+            sha256_for(sums, "mariadb-11.4.5-winx64.zip").as_deref(),
+            Some("b7c11d38657f16b837e68199d73670510aadb78f42dfa5d5fdea31a7aab342e3")
+        );
+        assert_eq!(sha256_for(sums, "mariadb-11.4.5-winx64.msi"), None);
+    }
 
     #[test]
     fn pecl_listings_give_stable_releases_newest_first() {

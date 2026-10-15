@@ -102,6 +102,11 @@ fn directives(text: &str) -> Vec<(usize, String)> {
         .collect()
 }
 
+/// The extensions a `php.ini`'s text switches on, in file order.
+pub fn enabled_in(text: &str) -> Vec<String> {
+    directives(text).into_iter().map(|(_, name)| name).collect()
+}
+
 fn source_of(text: &str, name: &str) -> Option<Source> {
     directives(text).into_iter().find(|(_, n)| n == name).map(|(index, _)| {
         if ini_block::inside(text, BLOCK, index) { Source::Block } else { Source::Ini(index + 1) }

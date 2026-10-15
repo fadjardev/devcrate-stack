@@ -26,6 +26,7 @@ mod download;
 mod erlang;
 mod mailpit;
 mod mariadb;
+pub mod mkcert;
 mod nginx;
 mod node;
 pub mod pecl;
@@ -217,6 +218,9 @@ pub struct PhpInstalled {
     pub fastcgi_port: Option<u16>,
     pub enabled_extensions: Vec<String>,
     pub missing_extensions: Vec<String>,
+    /// The folder held only the stack's own `php.ini`, which was kept rather
+    /// than generated over.
+    pub kept_ini: bool,
     /// Whether the Visual C++ runtime was found. `None` when the check could
     /// not run at all.
     pub vcredist: Option<bool>,
@@ -804,8 +808,11 @@ fn php_from_archive(
     let (version, release) = resolve_version(&file_name, opts.version.as_deref())?;
     let tag = format!("php-{version}");
     let dest = stack.php_dir.join(&tag);
+    // The stack's php.ini on its own, as a clone or the release zip has it,
+    // is filled in rather than refused -- and that php.ini is kept.
+    let config_only = php::is_config_only(&dest);
 
-    if dest.exists() && !opts.force {
+    if dest.exists() && !opts.force && !config_only {
         bail!(
             "{} already exists; pass --force to replace it",
             stack.rel(&dest)
@@ -835,7 +842,16 @@ fn php_from_archive(
     };
 
     progress(Progress::Installing);
-    let replaced = swap_into_place(stack, &stack.php_dir, &staging, &dest, &tag)?;
+    let keep: &[&str] = if config_only { &["php.ini"] } else { &[] };
+    let (replaced, _) = swap_keeping(stack, &stack.php_dir, &staging, &dest, &tag, keep)?;
+    let replaced = replaced && !config_only;
+    let (enabled_extensions, missing_extensions) = match config_only {
+        true => (
+            crate::php_ext::enabled_in(&std::fs::read_to_string(dest.join("php.ini")).unwrap_or_default()),
+            Vec::new(),
+        ),
+        false => (assembled.ini.enabled, assembled.ini.missing),
+    };
 
     let receipt = Receipt {
         runtime: Runtime::Php.as_str().to_string(),
@@ -859,8 +875,9 @@ fn php_from_archive(
         replaced,
         details: Details::Php(PhpInstalled {
             fastcgi_port: config::port_from_tag(&tag),
-            enabled_extensions: assembled.ini.enabled,
-            missing_extensions: assembled.ini.missing,
+            enabled_extensions,
+            missing_extensions,
+            kept_ini: config_only,
             vcredist: vcredist_present(),
         }),
     })
@@ -2078,7 +2095,8 @@ fn install_by_download(
     // The refusal --force overrides comes before the transfer, not after
     // thirty megabytes of it. Composer opts out: re-installing it is an update,
     // so an existing phar is never the thing that stops one.
-    if dest.exists() && !force && !replace_freely {
+    let config_only = runtime == Runtime::Php && php::is_config_only(&dest);
+    if dest.exists() && !force && !replace_freely && !config_only {
         bail!("{} already exists; pass --force to replace it", stack.rel(&dest));
     }
 
@@ -2339,7 +2357,8 @@ fn choose_mariadb(stack: &Stack, version: Option<&str>, emit: &mut dyn Emit) -> 
     let release = pick_by_version(&catalogue, wanted, |r| &r.version)
         .ok_or_else(|| anyhow!("no MariaDB release matching {wanted:?}"))?;
 
-    let download = release.download();
+    emit_line!(emit, "  fetching MariaDB's sha256sums.txt");
+    let download = release.download()?;
     let dest = stack.root.join("mariadb");
 
     Ok(Some(Chosen {
@@ -2581,7 +2600,7 @@ fn report_transfer(
     let against = match runtime {
         Runtime::Php => "the release list",
         Runtime::Composer => "getcomposer.org's checksum",
-        Runtime::MariaDb => "the vendor's archive",
+        Runtime::MariaDb => "MariaDB's sha256sums.txt",
         Runtime::RabbitMq => "GitHub releases",
         Runtime::Erlang => "GitHub releases",
         Runtime::Node => "nodejs.org releases index",
@@ -2622,7 +2641,7 @@ fn report_transfer(
             let host = match runtime {
                 Runtime::Postgres => "the download host",
                 Runtime::Python => "python.org",
-                Runtime::MariaDb => "archive.mariadb.org",
+                Runtime::MariaDb => "dlm.mariadb.com",
                 Runtime::RabbitMq
                 | Runtime::Erlang
                 | Runtime::Bun
@@ -3228,7 +3247,8 @@ fn print_erlang_installed(done: &Installed, erlang: &ErlangInstalled, emit: &mut
 
 fn print_php_installed(done: &Installed, php: &PhpInstalled, emit: &mut dyn Emit) {
     emit_line!(emit, 
-        "  php.ini generated from php.ini-development, {} extensions enabled",
+        "  php.ini {}, {} extensions enabled",
+        if php.kept_ini { "is the stack's own, kept" } else { "generated from php.ini-development" },
         php.enabled_extensions.len()
     );
     if done.replaced {

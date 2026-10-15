@@ -85,6 +85,17 @@ pub fn detect_build(dir: &Path) -> Build {
     }
 }
 
+/// A version folder holding nothing but the stack's `php.ini` -- what a clone
+/// of the repository or the release zip carries before the binaries are
+/// installed. Not an installation to protect: installing fills it in and
+/// keeps that `php.ini`.
+pub fn is_config_only(dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else { return false };
+    let names: Vec<String> =
+        entries.flatten().map(|e| e.file_name().to_string_lossy().to_ascii_lowercase()).collect();
+    names.iter().all(|name| name == "php.ini")
+}
+
 /// What generating a `php.ini` came to.
 #[derive(Debug)]
 pub struct Ini {
@@ -184,6 +195,22 @@ fn uncomment(line: &str) -> Option<(String, Option<String>)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What a clone carries -- the stack's php.ini alone -- is not an
+    /// installation; anything more is.
+    #[test]
+    fn a_folder_with_only_php_ini_is_config_only() {
+        let dir = std::env::temp_dir().join(format!("devcrate-php-config-only-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(is_config_only(&dir), "empty");
+        std::fs::write(dir.join("php.ini"), "").unwrap();
+        assert!(is_config_only(&dir), "php.ini alone");
+        std::fs::write(dir.join("php-cgi.exe"), "").unwrap();
+        assert!(!is_config_only(&dir), "binaries");
+        assert!(!is_config_only(&dir.join("missing")), "missing");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn versions_come_from_the_vendors_own_file_name() {

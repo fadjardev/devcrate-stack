@@ -24,6 +24,7 @@ mod php_ext;
 mod probe;
 mod python;
 mod root;
+mod setup;
 mod site;
 mod status;
 mod term;
@@ -153,6 +154,7 @@ fn run(cli: Cli) -> Result<u8> {
         Command::Start(args) => control::start(&stack, args.service.as_deref()),
         Command::Stop(args) => control::stop(&stack, args.service.as_deref()),
         Command::Restart(args) => control::restart(&stack, args.service.as_deref()),
+        Command::Setup(args) => setup::print(&stack, !args.no_start),
         Command::Install(args) => install::install(
             &stack,
             &args.runtime,
