@@ -1070,8 +1070,9 @@ delete a directory a process is executing out of, and `devcrate stop
   a peer).
 
 `mariadb`, `postgres`, `rabbitmq`, and `redis` keep a `data\` directory beside
-their binaries — the same directory an `install --force` reinstall already
-lifts across rather than overwrites (see [`devcrate install`](#devcrate-install)
+their binaries — the same directory an `install --force` reinstall lifts
+across rather than overwrites (with MariaDB's `my.ini` and Redis's
+`devcrate.conf`) (see [`devcrate install`](#devcrate-install)
 above). `uninstall` treats it the same way: everything else is removed, and
 `data\` is left in place unless `--data` is also given. `--data` alone is
 refused; it has to be paired with `--force`, since deleting a database's data

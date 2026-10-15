@@ -381,7 +381,8 @@ fn mariadb_from_archive(
     let configured = mariadb::configure(&staging)?;
 
     progress(Progress::Installing);
-    let replaced = swap_into_place(stack, &stack.root, &staging, &dest, "mariadb")?;
+    let (replaced, kept) =
+        swap_keeping(stack, &stack.root, &staging, &dest, "mariadb", &["data", "my.ini"])?;
 
     let receipt = Receipt {
         runtime: Runtime::MariaDb.as_str().to_string(),
@@ -404,8 +405,8 @@ fn mariadb_from_archive(
         replaced,
         details: Details::MariaDb(MariaDbInstalled {
             dir: stack.rel(&dest),
-            config_created: configured.config_created,
-            data_dir_created: configured.data_dir_created,
+            config_created: configured.config_created && !kept.iter().any(|k| k == "my.ini"),
+            data_dir_created: configured.data_dir_created && !kept.iter().any(|k| k == "data"),
         }),
     })
 }
@@ -453,7 +454,8 @@ fn rabbitmq_from_archive(
     let configured = rabbitmq::configure(&staging)?;
 
     progress(Progress::Installing);
-    let replaced = swap_into_place(stack, &stack.root, &staging, &dest, "rabbitmq")?;
+    let (replaced, kept) = swap_keeping(stack, &stack.root, &staging, &dest, "rabbitmq", &["data"])?;
+    let kept_data = kept.iter().any(|k| k == "data");
 
     let receipt = Receipt {
         runtime: Runtime::RabbitMq.as_str().to_string(),
@@ -476,17 +478,17 @@ fn rabbitmq_from_archive(
         replaced,
         details: Details::RabbitMq(RabbitMqInstalled {
             dir: stack.rel(&dest),
-            data_dir_created: configured.data_dir_created,
-            plugins_file_created: configured.plugins_file_created,
+            data_dir_created: configured.data_dir_created && !kept_data,
+            plugins_file_created: configured.plugins_file_created && !kept_data,
         }),
     })
 }
 
 /// Install Redis into `redis\`, seeding a `redis.conf` and `data\` the same
 /// way MariaDB's `my.ini` and `data\` are seeded -- see [`redis::configure`].
-/// No PostgreSQL-style careful swap: there is no equivalent-of-`initdb` step,
-/// so a plain [`swap_into_place`] is enough, and a reinstall's `data\` keeps
-/// whatever the last binaries wrote to it, exactly as MariaDB's does.
+/// No PostgreSQL-style careful swap: there is no equivalent-of-`initdb` step.
+/// [`swap_keeping`] carries `data\` and `devcrate.conf` across a reinstall, as
+/// it does MariaDB's `data\` and `my.ini`.
 fn redis_from_archive(
     stack: &Stack,
     archive_path: &Path,
@@ -534,7 +536,8 @@ fn redis_from_archive(
     let configured = redis::configure(&staging, port)?;
 
     progress(Progress::Installing);
-    let replaced = swap_into_place(stack, &stack.root, &staging, &dest, "redis")?;
+    let (replaced, kept) =
+        swap_keeping(stack, &stack.root, &staging, &dest, "redis", &["data", "devcrate.conf"])?;
 
     let receipt = Receipt {
         runtime: Runtime::Redis.as_str().to_string(),
@@ -557,8 +560,8 @@ fn redis_from_archive(
         replaced,
         details: Details::Redis(RedisInstalled {
             dir: stack.rel(&dest),
-            conf_created: configured.conf_created,
-            data_dir_created: configured.data_dir_created,
+            conf_created: configured.conf_created && !kept.iter().any(|k| k == "devcrate.conf"),
+            data_dir_created: configured.data_dir_created && !kept.iter().any(|k| k == "data"),
             port,
         }),
     })
@@ -1563,6 +1566,26 @@ fn swap_into_place(
     dest: &Path,
     tag: &str,
 ) -> Result<bool> {
+    swap_keeping(stack, dir, staging, dest, tag, &[]).map(|(replaced, _)| replaced)
+}
+
+/// [`swap_into_place`] for a service that keeps live state beside its
+/// binaries: each name in `keep` (`data`, `my.ini`, ...) that the replaced
+/// installation had is moved into the new one -- over the fresh copy the
+/// staging made -- before the old one is deleted. Returns whether something was
+/// replaced, and which of `keep` were carried across.
+///
+/// Without this a `--force` reinstall of MariaDB deleted every database with
+/// the retired binaries. If carrying one across fails, the retired folder is
+/// left where it is and the error names it, rather than deleting the only copy.
+fn swap_keeping(
+    stack: &Stack,
+    dir: &Path,
+    staging: &Path,
+    dest: &Path,
+    tag: &str,
+    keep: &[&str],
+) -> Result<(bool, Vec<String>)> {
     let replaced = dest.exists();
     let retired = dir.join(retired_name(tag));
 
@@ -1589,10 +1612,33 @@ fn swap_into_place(
             .context(format!("installing into {}", stack.rel(dest))));
     }
 
+    let mut kept = Vec::new();
     if replaced {
+        for name in keep {
+            let old = retired.join(name);
+            if !old.exists() {
+                continue;
+            }
+            let fresh = dest.join(name);
+            let cleared = if fresh.is_dir() {
+                std::fs::remove_dir_all(&fresh)
+            } else if fresh.exists() {
+                std::fs::remove_file(&fresh)
+            } else {
+                Ok(())
+            };
+            if let Err(err) = cleared.and_then(|()| std::fs::rename(&old, &fresh)) {
+                return Err(anyhow::Error::new(err).context(format!(
+                    "carrying {name} across to the new {tag}; the previous installation, \
+                     {name} included, is still in {}",
+                    stack.rel(&retired)
+                )));
+            }
+            kept.push(name.to_string());
+        }
         let _ = std::fs::remove_dir_all(&retired);
     }
-    Ok(replaced)
+    Ok((replaced, kept))
 }
 
 /// What was installed, left in the version directory.
@@ -3422,6 +3468,42 @@ mod tests {
         for runtime in ["php", "nginx", "composer", "mariadb", "postgres", "redis", "erlang", "rabbitmq", "node", "bun", "python"] {
             assert!(offerings.iter().any(|o| o.runtime == runtime), "{runtime} is missing");
         }
+    }
+
+    /// A `--force` reinstall carries the service's state across instead of
+    /// deleting it with the retired binaries -- it used to take every MariaDB
+    /// database with it.
+    #[test]
+    fn a_reinstall_keeps_data_and_config() {
+        let root = std::env::temp_dir().join(format!("devcrate-swap-keep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dest = root.join("mariadb");
+        std::fs::create_dir_all(dest.join("data").join("myapp")).unwrap();
+        std::fs::write(dest.join("data").join("myapp").join("t.frm"), "rows").unwrap();
+        std::fs::write(dest.join("my.ini"), "port=3307").unwrap();
+        std::fs::write(dest.join("old.exe"), "old").unwrap();
+
+        let staging = root.join("staging");
+        std::fs::create_dir_all(staging.join("data")).unwrap();
+        std::fs::write(staging.join("my.ini"), "port=3306").unwrap();
+        std::fs::write(staging.join("new.exe"), "new").unwrap();
+
+        let stack = Stack::open(crate::root::StackRoot {
+            path: root.clone(),
+            source: crate::root::RootSource::Flag,
+        })
+        .unwrap();
+        let (replaced, kept) =
+            swap_keeping(&stack, &root, &staging, &dest, "mariadb", &["data", "my.ini", "absent"]).unwrap();
+
+        assert!(replaced);
+        assert_eq!(kept, ["data", "my.ini"]);
+        assert!(dest.join("new.exe").is_file() && !dest.join("old.exe").exists(), "binaries replaced");
+        assert_eq!(std::fs::read_to_string(dest.join("data").join("myapp").join("t.frm")).unwrap(), "rows");
+        assert_eq!(std::fs::read_to_string(dest.join("my.ini")).unwrap(), "port=3307", "the hand-edited one");
+        assert!(!root.join(retired_name("mariadb")).exists(), "nothing left behind");
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
