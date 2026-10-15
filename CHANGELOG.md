@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-15
+
 ### Added
 
 - **Uninstall from the dashboard (`U`).** Lists everything installed and removes the one picked after a confirmation, through the same core as `devcrate uninstall` — never with `--force` or `--data`, so the active version, a version a vhost uses, and a database's `data\` stay CLI-only, and the refusal names the command.
@@ -30,112 +32,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - MariaDB creates a default `my.ini` and `data/` directory.
   - RabbitMQ sets up `data/` directory and enables `rabbitmq_management` plugin.
   - Erlang/OTP installs silently into `erlang/` for RabbitMQ dependency.
-
-### Fixed
-
-- **Every entry in the dashboard's install picker installs something.** Five of its nine entries (Bun, MariaDB, RabbitMQ, Redis, Composer) named no version and always failed. The picker is now read from the vendors' catalogues when it first opens, labelled with the exact release, and adds nginx, PostgreSQL, Erlang, and Python; offline it falls back to keyword entries. "RabbitMQ + Erlang" was misleading — installing RabbitMQ never installed Erlang — and they are now separate entries.
-- **The dashboard no longer force-replaces an installed version.** Installing from the picker always passed `--force`, so choosing a PHP version that was already there replaced its folder, hand-edited `php.ini` included, without asking. It now refuses and names the `--force` command instead.
-- **The dashboard's site delete (`d`) removes the hosts entry**, as `devcrate site remove` always did; the removal moved from the CLI's printing wrapper into `site::delete`, which both call.
-- **Hosts file writes are atomic.** The new content goes to a temp file beside the hosts file and is renamed over it, so an interrupted write cannot leave the system-wide file truncated. The elevation prompt's PowerShell output is also silenced, since the dashboard can trigger it now.
-- **`devcrate uninstall php` refuses the version `php\current` names without `--force`**, like every other versioned runtime and as documented; it used to remove it and clear the junction without asking.
-- **The TUI install modal no longer writes to stdout.** `Job::Install` called
-  the same `install::install` the CLI uses, which prints unconditionally —
-  including a raw `\r`-redrawn progress bar — straight to the terminal
-  ratatui's alternate screen owns, from a background thread. `install` is now
-  a thin wrapper around a pure `install_with` core (same split `site.rs`
-  already used for `create`/`add`); the dashboard calls a new
-  `install::install_quiet`, which reports through the existing `JobResult`
-  channel instead of the screen. See
-  [docs/issue/tui-install-stdout-corruption-2026-09-19.md](docs/issue/tui-install-stdout-corruption-2026-09-19.md).
-- **The install modal no longer reports false success.** Four of its eight
-  options (Bun, MariaDB, RabbitMQ, Composer "Latest") pass no version, which
-  `install` has always treated as "list what's available and install
-  nothing" — but the modal reported "Successfully installed" regardless. It
-  now reports honestly when nothing was installed.
-
-### Changed
-
-- **Dashboard visual refresh.** The header carries a `◆ devcrate` badge, highlighted pane tabs, and a stack summary (`● 3/4 up  ✗ 1 crashed`) beside the CLI PHP version; the root path is dropped first when the terminal is narrow. Service states gain an icon beside the word (`● up`, `○ stopped`, `✗ crashed`), listening ports are green, and the selected row is a soft bar with a `▌` marker instead of reversed video, so its colours survive selection. The active pane has an accent border, popups a heavier one (amber for confirmations), the footer shows keys as highlighted hints, a spinner turns while an action runs, and log lines are tinted by severity. Nothing about the keys or behaviour changed.
-- **The nginx directory is now a stable prefix with the versions inside it.**
-  `nginx\` holds everything belonging to the stack - `conf\` (the vhosts and
-  certificates), `logs\`, `temp\`, and the `projects` junction - while each
-  build lives in `nginx\nginx-<version>\` and `nginx\current` names the active
-  one. Previously the versioned folder *was* the prefix
-  (`nginx-1.31.1\nginx.exe` beside `nginx-1.31.1\conf\`), so unpacking a second
-  version would have created a second folder, silently changed which one
-  discovery picked, and abandoned every vhost and certificate configured in the
-  first.
-  - **The mirror image of PHP, deliberately.** PHP's configuration is genuinely
-    per-version - each `php.ini` differs, three FastCGI workers run at once, and
-    a vhost picks one by port - so a PHP version is a self-contained folder.
-    Only one nginx runs, and its vhosts and certificates belong to the stack
-    rather than to the build serving them, so those stay in the prefix and the
-    builds move underneath them.
-  - **No vhost conf changed, and none has to change to switch versions.** That
-    falls out of nginx's two path bases both being outside the versioned
-    folder: `root` and the logs resolve against the prefix, `ssl_certificate`
-    against the conf directory. `root projects/myapp.test/public` and
-    `certs/_wildcard.test.pem` mean the same thing whichever build reads them.
-  - **`devcrate nginx migrate` converts an existing stack**, with `--dry-run` to
-    see the plan first. It lifts the certificates, `logs\`, and `temp\` up into
-    the prefix - and the whole `conf\` if the prefix has none yet, which is the
-    case when migrating before pulling - then moves the build inside and creates
-    the `current` and `projects` junctions. It refuses while nginx is running,
-    and does nothing on a stack already converted, so running it twice is
-    harmless. The build moves *last*, after the certificates and logs are out of
-    it, which is what makes them land in the prefix rather than travel along.
-  - **Both layouts keep working.** A directory is recognised as a prefix by
-    holding `conf\nginx.conf` - the file `-c conf/nginx.conf` resolves to -
-    rather than by its name, so an unmigrated stack still starts. `start.bat`,
-    `stop.bat`, and `new-vhost.bat` resolve it the same way the binary does, and
-    none of them names a version any more.
-  - The tracked configuration moved from `nginx-1.31.1\conf\` to `nginx\conf\`,
-    and `.gitignore` follows: `nginx\conf\` is versioned, everything else under
-    `nginx\` is not, and the old `nginx-*\` is ignored wholesale.
-- **`devcrate nginx list` / `use` / `migrate`** - the versions in the prefix and
-  which one is active, switching by repointing `nginx\current`, and the
-  migration above. `use` matches on the *dotted* prefix rather than PHP's
-  digits-only rule, because nginx versions have three components and
-  `digits("1.31")` and `digits("1.3.1")` are the same string: `1.3` selects the
-  1.3 series and can never reach 1.31.something, and two releases of one series
-  are refused as ambiguous rather than guessed. Switching while nginx is running
-  says the change waits for a restart.
-
-- **PHP folders are named `php-7.4` / `php-8.2` / `php-8.5`** instead of
-  `php74` / `php82` / `php85`, and any version installed later follows the same
-  `php-<X.Y>` pattern. The dotted form matches how the version is written
-  everywhere else, and is unambiguous for a two-digit minor (`php-8.10` versus
-  `php810`).
-  - Nothing has to be typed the new way. Every command that takes a version
-    matches on its digits, so `8.5`, `85`, `php-8.5`, and the old `php85` are
-    interchangeable - in `phpuse.bat`, `new-vhost.bat`, `devcrate php use`,
-    `devcrate site add --php`, and the service argument to `devcrate start` /
-    `stop` / `restart`.
-  - `phpuse.bat` and `new-vhost.bat` now resolve the version against the
-    `php\php-*` folders that actually exist rather than a list baked into the
-    script, so a newly unpacked version works without editing either of them.
-    `new-vhost.bat` derives the FastCGI port the same way `start.bat` assigns
-    it (`90` + the digits) in place of its hard-coded three-entry port map.
-  - Existing vhost confs are unaffected: they name a port, not a folder.
-- **The stack is now location-independent** - it runs from any folder (the
-  *stack root*), not just `E:\dev`:
-  - `start.bat`, `stop.bat`, `phpuse.bat`, and `new-vhost.bat` resolve the
-    stack root from their own location (`%~dp0`) instead of hard-coding it.
-  - Vhost confs use nginx-prefix-relative paths: `root projects/<domain>`
-    (through a `nginx\projects -> ..\projects` junction that
-    `start.bat`/`new-vhost.bat` auto-create), `certs/...` (conf-relative), and
-    `logs/...`. The junction exists because PHP-CGI on Windows rejects `..` in
-    `SCRIPT_FILENAME` ("No input file specified"), so roots must stay dot-free.
-  - `php.ini` for 7.4/8.2 now uses relative `extension_dir = "ext"` and
-    `error_log = "php_errors.log"`; `start.bat` launches each `php-cgi.exe`
-    with its own folder as working directory so relative paths resolve there.
-  - Documentation now uses `C:\devcrate` as a stand-in example root and
-    describes the stack-root convention; first-time CLI setup is `phpuse 8.5`
-    (which creates the `php\current` junction) instead of a manual `mklink`.
-  - The only machine-specific absolute paths left are outside the repo: user
-    `PATH` entries and the `php\current` junction target.
-
-### Added
 
 - **PostgreSQL 13 is a managed service.** `devcrate install postgres 13.23`
   downloads EDB's Windows x64 *binaries* zip, unpacks it into `postgres\`, and
@@ -483,7 +379,109 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `hosts` entry + mkcert TLS), and Node.js/Bun as managed runtimes. Summarized
   in the README and linked from the docs index.
 
+### Changed
+
+- **Dashboard visual refresh.** The header carries a `◆ devcrate` badge, highlighted pane tabs, and a stack summary (`● 3/4 up  ✗ 1 crashed`) beside the CLI PHP version; the root path is dropped first when the terminal is narrow. Service states gain an icon beside the word (`● up`, `○ stopped`, `✗ crashed`), listening ports are green, and the selected row is a soft bar with a `▌` marker instead of reversed video, so its colours survive selection. The active pane has an accent border, popups a heavier one (amber for confirmations), the footer shows keys as highlighted hints, a spinner turns while an action runs, and log lines are tinted by severity. Nothing about the keys or behaviour changed.
+- **The nginx directory is now a stable prefix with the versions inside it.**
+  `nginx\` holds everything belonging to the stack - `conf\` (the vhosts and
+  certificates), `logs\`, `temp\`, and the `projects` junction - while each
+  build lives in `nginx\nginx-<version>\` and `nginx\current` names the active
+  one. Previously the versioned folder *was* the prefix
+  (`nginx-1.31.1\nginx.exe` beside `nginx-1.31.1\conf\`), so unpacking a second
+  version would have created a second folder, silently changed which one
+  discovery picked, and abandoned every vhost and certificate configured in the
+  first.
+  - **The mirror image of PHP, deliberately.** PHP's configuration is genuinely
+    per-version - each `php.ini` differs, three FastCGI workers run at once, and
+    a vhost picks one by port - so a PHP version is a self-contained folder.
+    Only one nginx runs, and its vhosts and certificates belong to the stack
+    rather than to the build serving them, so those stay in the prefix and the
+    builds move underneath them.
+  - **No vhost conf changed, and none has to change to switch versions.** That
+    falls out of nginx's two path bases both being outside the versioned
+    folder: `root` and the logs resolve against the prefix, `ssl_certificate`
+    against the conf directory. `root projects/myapp.test/public` and
+    `certs/_wildcard.test.pem` mean the same thing whichever build reads them.
+  - **`devcrate nginx migrate` converts an existing stack**, with `--dry-run` to
+    see the plan first. It lifts the certificates, `logs\`, and `temp\` up into
+    the prefix - and the whole `conf\` if the prefix has none yet, which is the
+    case when migrating before pulling - then moves the build inside and creates
+    the `current` and `projects` junctions. It refuses while nginx is running,
+    and does nothing on a stack already converted, so running it twice is
+    harmless. The build moves *last*, after the certificates and logs are out of
+    it, which is what makes them land in the prefix rather than travel along.
+  - **Both layouts keep working.** A directory is recognised as a prefix by
+    holding `conf\nginx.conf` - the file `-c conf/nginx.conf` resolves to -
+    rather than by its name, so an unmigrated stack still starts. `start.bat`,
+    `stop.bat`, and `new-vhost.bat` resolve it the same way the binary does, and
+    none of them names a version any more.
+  - The tracked configuration moved from `nginx-1.31.1\conf\` to `nginx\conf\`,
+    and `.gitignore` follows: `nginx\conf\` is versioned, everything else under
+    `nginx\` is not, and the old `nginx-*\` is ignored wholesale.
+- **`devcrate nginx list` / `use` / `migrate`** - the versions in the prefix and
+  which one is active, switching by repointing `nginx\current`, and the
+  migration above. `use` matches on the *dotted* prefix rather than PHP's
+  digits-only rule, because nginx versions have three components and
+  `digits("1.31")` and `digits("1.3.1")` are the same string: `1.3` selects the
+  1.3 series and can never reach 1.31.something, and two releases of one series
+  are refused as ambiguous rather than guessed. Switching while nginx is running
+  says the change waits for a restart.
+
+- **PHP folders are named `php-7.4` / `php-8.2` / `php-8.5`** instead of
+  `php74` / `php82` / `php85`, and any version installed later follows the same
+  `php-<X.Y>` pattern. The dotted form matches how the version is written
+  everywhere else, and is unambiguous for a two-digit minor (`php-8.10` versus
+  `php810`).
+  - Nothing has to be typed the new way. Every command that takes a version
+    matches on its digits, so `8.5`, `85`, `php-8.5`, and the old `php85` are
+    interchangeable - in `phpuse.bat`, `new-vhost.bat`, `devcrate php use`,
+    `devcrate site add --php`, and the service argument to `devcrate start` /
+    `stop` / `restart`.
+  - `phpuse.bat` and `new-vhost.bat` now resolve the version against the
+    `php\php-*` folders that actually exist rather than a list baked into the
+    script, so a newly unpacked version works without editing either of them.
+    `new-vhost.bat` derives the FastCGI port the same way `start.bat` assigns
+    it (`90` + the digits) in place of its hard-coded three-entry port map.
+  - Existing vhost confs are unaffected: they name a port, not a folder.
+- **The stack is now location-independent** - it runs from any folder (the
+  *stack root*), not just `E:\dev`:
+  - `start.bat`, `stop.bat`, `phpuse.bat`, and `new-vhost.bat` resolve the
+    stack root from their own location (`%~dp0`) instead of hard-coding it.
+  - Vhost confs use nginx-prefix-relative paths: `root projects/<domain>`
+    (through a `nginx\projects -> ..\projects` junction that
+    `start.bat`/`new-vhost.bat` auto-create), `certs/...` (conf-relative), and
+    `logs/...`. The junction exists because PHP-CGI on Windows rejects `..` in
+    `SCRIPT_FILENAME` ("No input file specified"), so roots must stay dot-free.
+  - `php.ini` for 7.4/8.2 now uses relative `extension_dir = "ext"` and
+    `error_log = "php_errors.log"`; `start.bat` launches each `php-cgi.exe`
+    with its own folder as working directory so relative paths resolve there.
+  - Documentation now uses `C:\devcrate` as a stand-in example root and
+    describes the stack-root convention; first-time CLI setup is `phpuse 8.5`
+    (which creates the `php\current` junction) instead of a manual `mklink`.
+  - The only machine-specific absolute paths left are outside the repo: user
+    `PATH` entries and the `php\current` junction target.
+
 ### Fixed
+
+- **Every entry in the dashboard's install picker installs something.** Five of its nine entries (Bun, MariaDB, RabbitMQ, Redis, Composer) named no version and always failed. The picker is now read from the vendors' catalogues when it first opens, labelled with the exact release, and adds nginx, PostgreSQL, Erlang, and Python; offline it falls back to keyword entries. "RabbitMQ + Erlang" was misleading — installing RabbitMQ never installed Erlang — and they are now separate entries.
+- **The dashboard no longer force-replaces an installed version.** Installing from the picker always passed `--force`, so choosing a PHP version that was already there replaced its folder, hand-edited `php.ini` included, without asking. It now refuses and names the `--force` command instead.
+- **The dashboard's site delete (`d`) removes the hosts entry**, as `devcrate site remove` always did; the removal moved from the CLI's printing wrapper into `site::delete`, which both call.
+- **Hosts file writes are atomic.** The new content goes to a temp file beside the hosts file and is renamed over it, so an interrupted write cannot leave the system-wide file truncated. The elevation prompt's PowerShell output is also silenced, since the dashboard can trigger it now.
+- **`devcrate uninstall php` refuses the version `php\current` names without `--force`**, like every other versioned runtime and as documented; it used to remove it and clear the junction without asking.
+- **The TUI install modal no longer writes to stdout.** `Job::Install` called
+  the same `install::install` the CLI uses, which prints unconditionally —
+  including a raw `\r`-redrawn progress bar — straight to the terminal
+  ratatui's alternate screen owns, from a background thread. `install` is now
+  a thin wrapper around a pure `install_with` core (same split `site.rs`
+  already used for `create`/`add`); the dashboard calls a new
+  `install::install_quiet`, which reports through the existing `JobResult`
+  channel instead of the screen. See
+  [docs/issue/tui-install-stdout-corruption-2026-09-19.md](docs/issue/tui-install-stdout-corruption-2026-09-19.md).
+- **The install modal no longer reports false success.** Four of its eight
+  options (Bun, MariaDB, RabbitMQ, Composer "Latest") pass no version, which
+  `install` has always treated as "list what's available and install
+  nothing" — but the modal reported "Successfully installed" regardless. It
+  now reports honestly when nothing was installed.
 
 - **A second unpacked nginx could have committed its binary and its TLS private
   keys.** The `.gitignore` rules for nginx spelled out `nginx-1.31.1` in all
@@ -555,5 +553,6 @@ entirely from `E:\dev`.
 
 - Double-encoded UTF-8 characters in the setup guide and the `stop.bat` banner.
 
-[Unreleased]: https://github.com/fadjardev/devcrate-stack/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/fadjardev/devcrate-stack/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/fadjardev/devcrate-stack/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/fadjardev/devcrate-stack/releases/tag/v0.1.0
