@@ -27,6 +27,12 @@
 //! would need the PHP bootstrap to use, whereas the sidecar hashes the phar the
 //! stack actually installs.
 //!
+//! **Adminer** is the fourth: GitHub releases, read from the
+//! releases API, whose assets carry a `digest` -- the sha256 GitHub recorded
+//! for the file the vendor uploaded. That is a real hash at full strength, the
+//! same as PHP's, with GitHub rather than the vendor's own host as the place it
+//! comes from; an API response without one falls back to the length check.
+//!
 //! Nothing here prints. The catalogues and the fetch return structured results
 //! and report progress through a callback, same as [`super::from_archive`],
 //! so the dashboard can drive them without touching stdout.
@@ -946,6 +952,77 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// One release asset off GitHub's releases API.
+#[derive(Debug, Clone)]
+pub struct GithubRelease {
+    /// The tag without its `v`: `6.1.2`.
+    pub version: String,
+    pub file_name: String,
+    pub url: String,
+    /// Lowercase hex sha256 from the asset's `digest`, when the API has one.
+    pub sha256: Option<String>,
+}
+
+impl GithubRelease {
+    pub fn download(&self) -> Download {
+        Download { url: self.url.clone(), file_name: self.file_name.clone(), sha256: self.sha256.clone() }
+    }
+}
+
+/// The non-draft, non-prerelease releases in a releases-API response, newest
+/// first as GitHub lists them, each with the one asset `asset` names for its
+/// version. A release without that asset is skipped rather than guessed at.
+pub fn parse_github_releases(
+    json_text: &str,
+    asset: impl Fn(&str) -> String,
+) -> Result<Vec<GithubRelease>> {
+    let val: serde_json::Value = serde_json::from_str(json_text).context("parsing the releases json")?;
+    let Some(items) = val.as_array() else {
+        bail!("the releases json is not an array");
+    };
+
+    let mut releases = Vec::new();
+    for item in items {
+        let flag = |key: &str| item.get(key).and_then(|v| v.as_bool()).unwrap_or(false);
+        if flag("draft") || flag("prerelease") {
+            continue;
+        }
+        let Some(tag) = item.get("tag_name").and_then(|v| v.as_str()) else { continue };
+        let version = tag.trim_start_matches('v').to_string();
+        let wanted = asset(&version);
+        let found = item
+            .get("assets")
+            .and_then(|a| a.as_array())
+            .and_then(|assets| assets.iter().find(|a| a.get("name").and_then(|n| n.as_str()) == Some(&wanted)));
+        let Some(found) = found else { continue };
+        let Some(url) = found.get("browser_download_url").and_then(|u| u.as_str()) else { continue };
+        let sha256 = found
+            .get("digest")
+            .and_then(|d| d.as_str())
+            .and_then(|d| d.strip_prefix("sha256:"))
+            .filter(|hex| hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit()))
+            .map(str::to_ascii_lowercase);
+        releases.push(GithubRelease { version, file_name: wanted, url: url.to_string(), sha256 });
+    }
+
+    if releases.is_empty() {
+        bail!("the releases json carried no release with the expected download");
+    }
+    Ok(releases)
+}
+
+fn github_releases(repo: &str) -> Result<String> {
+    let url = format!("https://api.github.com/repos/{repo}/releases?per_page=10");
+    let mut response = agent().get(&url).call().with_context(|| format!("fetching {url}"))?;
+    response.body_mut().read_to_string().with_context(|| format!("reading {url}"))
+}
+
+/// Adminer's releases: the full single-file build (every driver, every
+/// language), `adminer-<version>.php`.
+pub fn adminer_catalogue() -> Result<Vec<GithubRelease>> {
+    parse_github_releases(&github_releases("vrana/adminer")?, |v| format!("adminer-{v}.php"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1408,4 +1485,39 @@ pub fn fetch_bun_catalogue() -> Result<BunCatalogue> {
         .read_to_string()
         .with_context(|| format!("reading Bun releases from {url}"))?;
     parse_bun_catalogue(&text)
+}
+
+#[cfg(test)]
+mod github_tests {
+    use super::*;
+
+    /// Drafts and prereleases are skipped, a release without the wanted asset
+    /// is skipped, and the asset's `digest` becomes the sha256 to verify with.
+    #[test]
+    fn github_releases_carry_the_asset_and_its_digest() {
+        let json = r#"[
+            {"tag_name": "v6.2.0-rc1", "prerelease": true, "draft": false, "assets": []},
+            {"tag_name": "v6.1.2", "prerelease": false, "draft": false, "assets": [
+                {"name": "adminer-6.1.2-en.php", "browser_download_url": "https://x/en.php", "digest": "sha256:00"},
+                {"name": "adminer-6.1.2.php", "browser_download_url": "https://x/adminer-6.1.2.php",
+                 "digest": "sha256:B32316156BD18FFA99C1A27617142C2E5AD72260E37F15DA4E9937A3DBB15F57"}
+            ]},
+            {"tag_name": "v6.1.1", "prerelease": false, "draft": false, "assets": [
+                {"name": "adminer-6.1.1.php", "browser_download_url": "https://x/adminer-6.1.1.php"}
+            ]},
+            {"tag_name": "v6.0.0", "prerelease": false, "draft": false, "assets": []}
+        ]"#;
+        let releases = parse_github_releases(json, |v| format!("adminer-{v}.php")).unwrap();
+
+        assert_eq!(releases.len(), 2);
+        assert_eq!(releases[0].version, "6.1.2");
+        assert_eq!(releases[0].url, "https://x/adminer-6.1.2.php");
+        assert_eq!(
+            releases[0].sha256.as_deref(),
+            Some("b32316156bd18ffa99c1a27617142c2e5ad72260e37f15da4e9937a3dbb15f57")
+        );
+        assert_eq!(releases[1].sha256, None, "no digest is no hash, not a guess");
+
+        assert!(parse_github_releases("[]", |v| format!("adminer-{v}.php")).is_err());
+    }
 }

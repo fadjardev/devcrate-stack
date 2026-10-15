@@ -18,6 +18,7 @@
 //! and reports progress through a callback, because the dashboard drives the
 //! same function and must never write to the screen it just drew.
 
+mod adminer;
 mod archive;
 mod bun;
 mod composer;
@@ -69,6 +70,7 @@ pub enum Runtime {
     Postgres,
     Python,
     Redis,
+    Adminer,
 }
 
 impl Runtime {
@@ -86,10 +88,11 @@ impl Runtime {
             "postgres" | "postgresql" => Ok(Runtime::Postgres),
             "python" => Ok(Runtime::Python),
             "redis" => Ok(Runtime::Redis),
+            "adminer" => Ok(Runtime::Adminer),
             other => bail!(
                 "{other:?} is not a runtime devcrate manages.\n\
                  Known: php, nginx, composer, mariadb, rabbitmq, erlang, node, \
-                 bun, postgres, python, redis"
+                 bun, postgres, python, redis, adminer"
             ),
         }
     }
@@ -108,6 +111,7 @@ impl Runtime {
             Runtime::Postgres => "postgres",
             Runtime::Python => "python",
             Runtime::Redis => "redis",
+            Runtime::Adminer => "adminer",
         }
     }
 
@@ -125,6 +129,7 @@ impl Runtime {
             Runtime::Postgres => "PostgreSQL",
             Runtime::Python => "Python",
             Runtime::Redis => "Redis",
+            Runtime::Adminer => "Adminer",
         }
     }
 }
@@ -186,6 +191,7 @@ pub enum Details {
     Postgres(PostgresInstalled),
     Python(PythonInstalled),
     Redis(RedisInstalled),
+    Adminer(AdminerInstalled),
 }
 
 #[derive(Debug)]
@@ -290,6 +296,17 @@ pub struct RedisInstalled {
 }
 
 #[derive(Debug)]
+pub struct AdminerInstalled {
+    /// Root-relative `adminer\` directory: `adminer.php` and its `index.php`.
+    pub dir: String,
+    /// The version replaced, when one was there -- an update, like Composer.
+    pub replaced_version: Option<String>,
+    /// Each installed PHP version, and which database drivers its php.ini
+    /// enables -- what Adminer can reach when served by that version.
+    pub drivers: Vec<(String, adminer::Drivers)>,
+}
+
+#[derive(Debug)]
 pub struct ErlangInstalled {
     pub dir: String,
 }
@@ -314,6 +331,7 @@ pub fn from_archive(
         Runtime::Postgres => postgres_from_archive(stack, archive_path, opts, progress),
         Runtime::Python => python_from_archive(stack, archive_path, opts, progress),
         Runtime::Redis => redis_from_archive(stack, archive_path, opts, progress),
+        Runtime::Adminer => adminer_from_file(stack, archive_path, opts, progress),
     }
 }
 
@@ -1389,6 +1407,83 @@ fn composer_from_phar(
     })
 }
 
+/// Install Adminer: the verified file as `adminer\adminer.php`, beside the
+/// `index.php` devcrate serves it through. Like Composer, a tool -- installing
+/// over one updates it -- and like Composer the single file goes in by an
+/// atomic rename rather than a staged directory.
+fn adminer_from_file(
+    stack: &Stack,
+    file_path: &Path,
+    opts: &Options,
+    progress: &mut dyn FnMut(Progress),
+) -> Result<Installed> {
+    if !file_path.is_file() {
+        bail!("{} is not a file", file_path.display());
+    }
+    let file_name = file_path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    let source_sha256 = download::sha256_of(file_path)
+        .with_context(|| format!("hashing {}", file_path.display()))?;
+
+    progress(Progress::Validating);
+    adminer::check(file_path)?;
+
+    let dir = stack.root.join("adminer");
+    let dest = dir.join("adminer.php");
+    let version = opts
+        .version
+        .clone()
+        .or_else(|| adminer::version_from_file_name(&file_name))
+        .unwrap_or_else(|| "unknown".to_string());
+    let existed = dest.is_file();
+    let replaced_version = read_receipt_version(&dir).filter(|v| v != "unknown");
+
+    progress(Progress::Configuring);
+    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", stack.rel(&dir)))?;
+    adminer::write_wrapper(&dir)?;
+
+    progress(Progress::Installing);
+    let staged = dir.join(".devcrate-adminer.php.part");
+    std::fs::copy(file_path, &staged)
+        .with_context(|| format!("staging Adminer in {}", stack.rel(&dir)))?;
+    if let Err(err) = std::fs::rename(&staged, &dest) {
+        let _ = std::fs::remove_file(&staged);
+        return Err(anyhow::Error::new(err).context(format!("installing {}", stack.rel(&dest))));
+    }
+
+    let receipt = Receipt {
+        runtime: Runtime::Adminer.as_str().to_string(),
+        version: version.clone(),
+        release: version.clone(),
+        thread_safe: None,
+        source_archive: file_name,
+        source_bytes: std::fs::metadata(file_path).map(|m| m.len()).unwrap_or(0),
+        source_sha256,
+        files: 2,
+    };
+    write_receipt(&dir, &receipt)
+        .with_context(|| format!("writing the install receipt in {}", stack.rel(&dir)))?;
+
+    let drivers = stack
+        .php_services()
+        .filter(|php| php.is_installed())
+        .filter_map(|php| {
+            let ini = php.install_marker.parent()?.join("php.ini");
+            let text = std::fs::read_to_string(ini).unwrap_or_default();
+            Some((php.id.clone(), adminer::drivers(&text)))
+        })
+        .collect();
+
+    Ok(Installed {
+        runtime: Runtime::Adminer,
+        version: version.clone(),
+        release: version,
+        dir: stack.rel(&dir),
+        files: 2,
+        replaced: existed,
+        details: Details::Adminer(AdminerInstalled { dir: stack.rel(&dir), replaced_version, drivers }),
+    })
+}
+
 /// The version an install receipt records, if one is there.
 fn read_receipt_version(dir: &Path) -> Option<String> {
     let text = std::fs::read_to_string(dir.join(RECEIPT_FILE)).ok()?;
@@ -1651,6 +1746,7 @@ pub fn fallback_offerings() -> Vec<Offering> {
         Offering::new("node", "Node.js (newest LTS)", "lts"),
         Offering::new("bun", "Bun (newest)", "latest"),
         Offering::new("python", "Python 3.8", "3.8"),
+        Offering::new("adminer", "Adminer (newest) -- database browser", "latest"),
     ]
 }
 
@@ -1729,6 +1825,13 @@ pub fn offerings() -> Vec<Offering> {
     }
 
     keep("python", &mut out);
+
+    match download::adminer_catalogue().ok().and_then(|c| c.first().map(|r| r.version.clone())) {
+        Some(version) => {
+            out.push(Offering::new("adminer", format!("Adminer {version}  (database browser)"), version))
+        }
+        None => keep("adminer", &mut out),
+    }
     out
 }
 
@@ -1781,6 +1884,7 @@ fn install_by_download(
         Runtime::Postgres => choose_postgres(stack, version, emit)?,
         Runtime::Python => choose_python(stack, version, emit)?,
         Runtime::Redis => choose_redis(stack, version, emit)?,
+        Runtime::Adminer => choose_adminer(stack, version, emit)?,
     };
     // Nothing chosen means the catalogue was printed instead.
     let Some(Chosen { download: source, dest, replace_freely }) = chosen else {
@@ -1816,7 +1920,8 @@ struct Chosen {
     download: download::Download,
     dest: PathBuf,
     /// An existing installation at `dest` is replaced rather than refused.
-    /// True only for Composer, the one runtime that is a tool and not a version.
+    /// True for the tools -- Composer and Adminer -- which update in place
+    /// rather than being versions to protect.
     replace_freely: bool,
 }
 
@@ -2112,6 +2217,28 @@ fn choose_redis(stack: &Stack, version: Option<&str>, emit: &mut dyn Emit) -> Re
     }))
 }
 
+fn choose_adminer(stack: &Stack, version: Option<&str>, emit: &mut dyn Emit) -> Result<Option<Chosen>> {
+    emit_line!(emit, "  fetching the Adminer release list from GitHub");
+    let catalogue = download::adminer_catalogue()?;
+
+    let Some(wanted) = version else {
+        emit_line!(emit, "\n  Adminer releases (vrana/adminer on GitHub):");
+        for rel in catalogue.iter().take(5) {
+            emit_line!(emit, "    adminer {}", rel.version);
+        }
+        emit_line!(emit, "\n  Install the newest: `devcrate install adminer latest`");
+        return Ok(None);
+    };
+
+    let release = pick_by_version(&catalogue, wanted, |r| &r.version)
+        .ok_or_else(|| anyhow!("no Adminer release matching {wanted:?}"))?;
+    Ok(Some(Chosen {
+        download: release.download(),
+        dest: stack.root.join("adminer").join("adminer.php"),
+        replace_freely: true,
+    }))
+}
+
 fn choose_erlang(stack: &Stack, version: Option<&str>, emit: &mut dyn Emit) -> Result<Option<Chosen>> {
     emit_line!(emit, "  fetching the Erlang release list");
     let catalogue = download::erlang_catalogue()?;
@@ -2254,6 +2381,7 @@ fn report_transfer(
         Runtime::Node => "nodejs.org releases index",
         Runtime::Bun => "GitHub releases",
         Runtime::Redis => "GitHub releases",
+        Runtime::Adminer => "the sha256 GitHub records for the release",
         // nginx, PostgreSQL (EDB), and python.org publish no sha256, so these
         // arms are never the verified one -- the "no checksum" branch below
         // reports them instead.
@@ -2282,13 +2410,16 @@ fn report_transfer(
                 Runtime::Erlang => "Erlang/OTP",
                 Runtime::Bun => "Bun",
                 Runtime::Redis => "redis-windows",
+                Runtime::Adminer => "GitHub",
                 _ => "nginx",
             };
             let host = match runtime {
                 Runtime::Postgres => "the download host",
                 Runtime::Python => "python.org",
                 Runtime::MariaDb => "archive.mariadb.org",
-                Runtime::RabbitMq | Runtime::Erlang | Runtime::Bun | Runtime::Redis => "github.com",
+                Runtime::RabbitMq | Runtime::Erlang | Runtime::Bun | Runtime::Redis | Runtime::Adminer => {
+                    "github.com"
+                }
                 _ => "nginx.org",
             };
             emit_line!(emit, "  sha256 {}", fetched.sha256);
@@ -2425,6 +2556,7 @@ trait Emit {
                 self.end_progress();
                 match runtime {
                     Runtime::Composer => self.line("  checking the phar"),
+                    Runtime::Adminer => self.line("  checking the file"),
                     _ => self.line("  checking the build"),
                 }
             }
@@ -2445,6 +2577,7 @@ trait Emit {
                     Runtime::Postgres => "initialising the cluster (initdb)",
                     Runtime::Python => "enabling site (for pip)",
                     Runtime::Redis => "generating devcrate.conf",
+                    Runtime::Adminer => "writing the devcrate wrapper (index.php)",
                 };
                 self.line(&format!("  {text}"));
             }
@@ -2540,6 +2673,7 @@ fn print_installed(done: &Installed, emit: &mut dyn Emit) {
         Details::Postgres(postgres) => print_postgres_installed(done, postgres, emit),
         Details::Python(py) => print_python_installed(done, py, emit),
         Details::Redis(redis) => print_redis_installed(done, redis, emit),
+        Details::Adminer(adminer) => print_adminer_installed(done, adminer, emit),
     }
 }
 
@@ -3002,6 +3136,33 @@ fn print_postgres_installed(done: &Installed, postgres: &PostgresInstalled, emit
     emit_line!(emit, "  start it   devcrate start postgres        (listens on {})", postgres.port);
     emit_line!(emit, "  connect    psql -U {} -h 127.0.0.1 -p {}", postgres.superuser, postgres.port);
     emit_line!(emit, "  stop it    devcrate stop postgres");
+}
+
+fn print_adminer_installed(done: &Installed, installed: &AdminerInstalled, emit: &mut dyn Emit) {
+    match &installed.replaced_version {
+        Some(old) if old == &done.version => emit_line!(emit, "  reinstalled the same version"),
+        Some(old) => emit_line!(emit, "  updated from {old}"),
+        None => {}
+    }
+    emit_line!(emit);
+    emit_line!(emit, "Adminer {} installed in {}", done.version, installed.dir);
+    emit_line!(emit, "  {}\\index.php serves it: to this machine only, and with no", installed.dir);
+    emit_line!(emit, "  password needed (the stack's MariaDB root has none)");
+
+    if !installed.drivers.is_empty() {
+        emit_line!(emit);
+        emit_line!(emit, "  database drivers, by the PHP that serves it:");
+        let yes = |on: bool| if on { "yes" } else { "no " };
+        for (php, drivers) in &installed.drivers {
+            emit_line!(emit, "    {php:<9} MariaDB {}   PostgreSQL {}", yes(drivers.mariadb), yes(drivers.postgres));
+        }
+        if installed.drivers.iter().any(|(_, d)| !d.postgres) {
+            emit_line!(emit, "  PostgreSQL needs `extension=pgsql` in that version's php.ini");
+        }
+    }
+
+    emit_line!(emit);
+    emit_line!(emit, "  serve it   devcrate site add {} --path {}", adminer::SITE, installed.dir);
 }
 
 fn print_composer_installed(done: &Installed, composer: &ComposerInstalled, emit: &mut dyn Emit) {

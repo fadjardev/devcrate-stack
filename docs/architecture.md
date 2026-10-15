@@ -48,6 +48,7 @@ C:\devcrate\                   <- the stack root (any folder works)
 |- rabbitmq\ + erlang\         Portable RabbitMQ broker + Erlang runtime (not versioned)
 |- redis\                      Portable Redis (binaries + data\, not versioned)
 |- composer\                   composer.phar + shims + home/cache, in-root (not versioned)
+|- adminer\                    adminer.php + devcrate's index.php wrapper (not versioned)
 |- tools\rabbitmq-smoketest\   Standalone AMQP publish/consume test
 |- projects\                   Application code, one folder per site (NOT versioned)
 ```

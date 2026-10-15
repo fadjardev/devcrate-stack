@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`devcrate install adminer`** — Adminer as the stack's database browser (roadmap item 7): one PHP file in `adminer\`, sha256-verified against the digest GitHub records for the release, served as an ordinary site (`devcrate site add db.test --path adminer`). devcrate writes an `index.php` beside it that lets the password-less MariaDB `root` log in and refuses every request not from this machine, since nginx listens on all interfaces. The install reports which database drivers each PHP version enables — PostgreSQL needs `extension=pgsql`, which no version has on by default. Installable and removable from the dashboard too.
+
 ## [0.2.0] - 2026-10-15
 
 ### Added

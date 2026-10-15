@@ -125,6 +125,7 @@ visible rather than mysterious.
 | `devcrate install rabbitmq <version>` | **works** — downloads, unpacks, enables the management plugin |
 | `devcrate install erlang <version>` | **works** — downloads, unpacks the RabbitMQ dependency |
 | `devcrate install redis <version>` | **works** — downloads from GitHub (length/TLS), unpacks, generates `devcrate.conf` and `data\` |
+| `devcrate install adminer [version]` | **works** — downloads from GitHub, sha256-verified against the release's digest, writes `adminer\` (see below) |
 | `devcrate install node <version>` / `devcrate install bun <version>` | **works** — downloads and installs into `node\` / `bun\` |
 | `devcrate install <runtime> --from <file>` | **works** — the same install from an archive or phar on disk |
 | `devcrate uninstall <runtime> [version]` | **works** — see [`devcrate uninstall`](#devcrate-uninstall) |
@@ -574,7 +575,30 @@ devcrate install python                           REM how to name a version (no 
 devcrate install python 3.8                       REM newest 3.8.x Windows build, then bootstrap pip
 devcrate install python 3.8.10                    REM ...or an exact release
 devcrate install python --from C:\downloads\python-3.8.10-embed-amd64.zip
+
+devcrate install adminer                          REM list the releases on GitHub
+devcrate install adminer latest                   REM download, verify, install (or update)
+devcrate site add db.test --path adminer          REM ...then serve it
 ```
+
+**Adminer** is the stack's database browser: one PHP file, for MariaDB and
+PostgreSQL alike, served as an ordinary site rather than a service. It is a
+tool like Composer — `adminer\` holds `adminer.php` and an `index.php`
+devcrate writes, and installing over it updates it. The download is checked
+against the sha256 GitHub records for the release asset (its `digest`), at
+full strength.
+
+The `index.php` is devcrate's, rewritten by every install. Adminer refuses to
+log in without a password and the stack's MariaDB `root` has none, so the
+wrapper lets any login through — and first refuses every request not from
+`127.0.0.1` or `::1`, because nginx listens on all interfaces and anything
+else would put a password-less database admin on the network.
+
+The install reports which database drivers each PHP version's `php.ini`
+enables. Out of the box the stack's PHP versions have MariaDB's (`mysqli` /
+`pdo_mysql`) but not PostgreSQL's: Adminer reaches PostgreSQL only once
+`extension=pgsql` is enabled in the `php.ini` of the version serving
+`db.test`. The install says so rather than editing `php.ini` itself.
 
 The version is a positional argument, not a flag: `devcrate install php 8.4
 --from <zip>` names the version *and* the archive. (`--version` is not accepted

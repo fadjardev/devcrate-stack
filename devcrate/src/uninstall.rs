@@ -98,6 +98,7 @@ pub fn uninstall_quiet(
         Runtime::RabbitMq => uninstall_database_dir(stack, runtime, ServiceKind::RabbitMq, data, force)?,
         Runtime::Redis => uninstall_database_dir(stack, runtime, ServiceKind::Redis, data, force)?,
         Runtime::Erlang => uninstall_erlang(stack, force)?,
+        Runtime::Adminer => uninstall_adminer(stack)?,
     })
 }
 
@@ -152,6 +153,9 @@ pub fn removable(stack: &Stack) -> Vec<Removable> {
     }
     for (_, v) in python::versions(stack) {
         out.push(item("python", Some(v.clone()), format!("Python {v}")));
+    }
+    if stack.root.join("adminer").join("adminer.php").is_file() {
+        out.push(item("adminer", None, Runtime::Adminer.label().into()));
     }
     out
 }
@@ -448,6 +452,27 @@ fn uninstall_composer(stack: &Stack) -> Result<Uninstalled> {
 
     Ok(Uninstalled {
         runtime: Runtime::Composer,
+        version: String::new(),
+        dir: stack.rel(&dir),
+        data_dir: None,
+        data_removed: false,
+        current_cleared: false,
+    })
+}
+
+/// Adminer, like Composer, is a tool with no version or data: the folder goes.
+/// A `db.test` vhost serving it is left for `site remove`, the same as any
+/// site whose folder disappears.
+fn uninstall_adminer(stack: &Stack) -> Result<Uninstalled> {
+    let dir = stack.root.join("adminer");
+    if !dir.join("adminer.php").is_file() {
+        bail!("Adminer is not installed ({} not found)", stack.rel(&dir.join("adminer.php")));
+    }
+
+    std::fs::remove_dir_all(&dir).with_context(|| format!("removing {}", stack.rel(&dir)))?;
+
+    Ok(Uninstalled {
+        runtime: Runtime::Adminer,
         version: String::new(),
         dir: stack.rel(&dir),
         data_dir: None,

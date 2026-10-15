@@ -26,6 +26,7 @@ erl_crash.dump
 /rabbitmq/
 /redis/
 /composer/
+/adminer/
 /tools/
 /node/
 /bun/

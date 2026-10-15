@@ -18,7 +18,7 @@ not started. `in progress` - being built. `done` - shipped, see
 | 4 | Open an existing project: vhost + hosts entry + mkcert TLS, in one step | done — automated hosts block editing with UAC elevation, mkcert TLS issuance, smart web root & composer PHP constraint detection. **Not built:** certificate expiry reporting and reissue; mkcert as a managed install |
 | 5 | Node.js and Bun as managed runtimes | done — Node.js & Bun installer, version switcher, npm isolation, and smart .nvmrc / package.json detection. **Not built:** dev servers under supervision and the HMR proxy, both carried into item 9 |
 | 6 | One-command setup on a fresh machine, with shortcuts into the dashboard | proposed |
-| 7 | A database browser and per-project databases | proposed |
+| 7 | A database browser and per-project databases | in progress — `devcrate install adminer` built; `devcrate db` not yet |
 | 8 | A local mail catcher (Mailpit) | proposed |
 | 9 | Auto-vhost from a folder, and quick-create for Laravel / WordPress | proposed |
 | 10 | PHP extensions and Xdebug, toggled per version | proposed |
