@@ -132,12 +132,12 @@ pub fn read_devcrate_entries(content: &str) -> Vec<String> {
             in_block = false;
             continue;
         }
-        if in_block {
-            if let Some(rest) = trimmed.strip_prefix("127.0.0.1") {
-                let h = rest.trim();
-                if !h.is_empty() {
-                    entries.push(h.to_string());
-                }
+        if in_block
+            && let Some(rest) = trimmed.strip_prefix("127.0.0.1")
+        {
+            let h = rest.trim();
+            if !h.is_empty() {
+                entries.push(h.to_string());
             }
         }
     }

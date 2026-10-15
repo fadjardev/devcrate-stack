@@ -405,7 +405,7 @@ fn run(command: &mut Command) -> Result<()> {
         .map(|stream| String::from_utf8_lossy(stream).trim().to_string())
         .find(|text| !text.is_empty())
         .unwrap_or_else(|| format!("exit code {}", status.code().unwrap_or(-1)));
-    Err(anyhow!("{}", message.lines().next().unwrap_or(&message).to_string()))
+    Err(anyhow!("{}", message.lines().next().unwrap_or(&message)))
 }
 
 // ---------------------------------------------------------------------------

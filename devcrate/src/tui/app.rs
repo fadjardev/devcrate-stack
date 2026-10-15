@@ -94,7 +94,7 @@ pub fn pick_project_folder() -> Option<String> {
     None
 }
 
-pub const INSTALL_OPTIONS: [(&'static str, &'static str, Option<&'static str>); 9] = [
+pub const INSTALL_OPTIONS: [(&str, &str, Option<&'static str>); 9] = [
     ("node", "Node.js (v22.11.0)", Some("22.11.0")),
     ("bun", "Bun (Latest)", None),
     ("php", "PHP 8.4", Some("8.4")),
@@ -439,10 +439,10 @@ impl App {
                 KeyCode::Char('b') if form.active_field != 0 && form.active_field != 1 => {
                     if let Some(picked) = pick_project_folder() {
                         form.path = picked.clone();
-                        if form.host.trim().is_empty() {
-                            if let Some(name) = std::path::Path::new(&picked).file_name() {
-                                form.host = format!("{}.test", name.to_string_lossy());
-                            }
+                        if form.host.trim().is_empty()
+                            && let Some(name) = std::path::Path::new(&picked).file_name()
+                        {
+                            form.host = format!("{}.test", name.to_string_lossy());
                         }
                     }
                 }
@@ -450,10 +450,10 @@ impl App {
                     if form.active_field == 2 {
                         if let Some(picked) = pick_project_folder() {
                             form.path = picked.clone();
-                            if form.host.trim().is_empty() {
-                                if let Some(name) = std::path::Path::new(&picked).file_name() {
-                                    form.host = format!("{}.test", name.to_string_lossy());
-                                }
+                            if form.host.trim().is_empty()
+                                && let Some(name) = std::path::Path::new(&picked).file_name()
+                            {
+                                form.host = format!("{}.test", name.to_string_lossy());
                             }
                         }
                     } else if form.active_field == 6 || (!form.host.trim().is_empty() && (form.active_field == 0 || form.active_field == 1)) {
@@ -490,10 +490,10 @@ impl App {
                     2 => {
                         if let Some(picked) = pick_project_folder() {
                             form.path = picked.clone();
-                            if form.host.trim().is_empty() {
-                                if let Some(name) = std::path::Path::new(&picked).file_name() {
-                                    form.host = format!("{}.test", name.to_string_lossy());
-                                }
+                            if form.host.trim().is_empty()
+                                && let Some(name) = std::path::Path::new(&picked).file_name()
+                            {
+                                form.host = format!("{}.test", name.to_string_lossy());
                             }
                         }
                     }
