@@ -62,14 +62,31 @@ pub fn uninstall(
     data: bool,
     force: bool,
 ) -> Result<u8> {
-    let runtime = Runtime::parse(runtime)?;
-
-    if version.is_none() && needs_version(runtime) {
-        print_candidates(stack, runtime);
+    if version.is_none() && needs_version(Runtime::parse(runtime)?) {
+        print_candidates(stack, Runtime::parse(runtime)?);
         return Ok(exit::OK);
     }
 
-    let done = match runtime {
+    let done = uninstall_quiet(stack, runtime, version, data, force)?;
+    print_uninstalled(&done);
+    Ok(exit::OK)
+}
+
+/// The core [`uninstall`] wraps for the CLI, and the dashboard calls directly:
+/// the same removal and the same refusals, with no printing.
+pub fn uninstall_quiet(
+    stack: &Stack,
+    runtime: &str,
+    version: Option<&str>,
+    data: bool,
+    force: bool,
+) -> Result<Uninstalled> {
+    let runtime = Runtime::parse(runtime)?;
+    if version.is_none() && needs_version(runtime) {
+        bail!("name the {} version to remove", runtime.label());
+    }
+
+    Ok(match runtime {
         Runtime::Php => uninstall_php(stack, version.unwrap(), force)?,
         Runtime::Nginx => uninstall_nginx(stack, version.unwrap(), force)?,
         Runtime::Node => uninstall_node(stack, version.unwrap(), force)?,
@@ -81,10 +98,70 @@ pub fn uninstall(
         Runtime::RabbitMq => uninstall_database_dir(stack, runtime, ServiceKind::RabbitMq, data, force)?,
         Runtime::Redis => uninstall_database_dir(stack, runtime, ServiceKind::Redis, data, force)?,
         Runtime::Erlang => uninstall_erlang(stack, force)?,
-    };
+    })
+}
 
-    print_uninstalled(&done);
-    Ok(exit::OK)
+/// Something installed that the dashboard can offer to remove.
+#[derive(Debug, Clone)]
+pub struct Removable {
+    pub runtime: &'static str,
+    /// The version to name, for the side-by-side runtimes; `None` for the
+    /// ones that only ever have one install.
+    pub version: Option<String>,
+    pub label: String,
+}
+
+/// Everything currently installed, in the order the install picker lists
+/// runtimes -- found by the same discovery `status` and `uninstall` use, so
+/// nothing is offered that [`uninstall_quiet`] would not find.
+pub fn removable(stack: &Stack) -> Vec<Removable> {
+    let item = |runtime, version: Option<String>, label: String| Removable { runtime, version, label };
+    let mut out = Vec::new();
+
+    for php in stack.php_services().filter(|s| s.is_installed()) {
+        out.push(item("php", Some(php.id.clone()), php.name.clone()));
+    }
+    for build in nginx::versions(stack) {
+        out.push(item("nginx", Some(build.version.clone()), format!("nginx {}", build.version)));
+    }
+    if stack.root.join("composer").join("composer.phar").is_file() {
+        out.push(item("composer", None, "Composer".into()));
+    }
+    for (kind, runtime) in [
+        (ServiceKind::MariaDb, Runtime::MariaDb),
+        (ServiceKind::Postgres, Runtime::Postgres),
+        (ServiceKind::Redis, Runtime::Redis),
+        (ServiceKind::RabbitMq, Runtime::RabbitMq),
+    ] {
+        let installed = stack
+            .by_kind(kind)
+            .and_then(|service| service_dir(service).ok())
+            .is_some_and(|dir| dir.is_dir());
+        if installed {
+            out.push(item(kind.as_str(), None, runtime.label().into()));
+        }
+    }
+    if erlang_dir(stack).is_dir() {
+        out.push(item("erlang", None, Runtime::Erlang.label().into()));
+    }
+    for v in node::list_installed(stack) {
+        out.push(item("node", Some(v.version.clone()), format!("Node.js {}", v.version)));
+    }
+    for v in bun::list_installed(stack) {
+        out.push(item("bun", Some(v.version.clone()), format!("Bun {}", v.version)));
+    }
+    for (_, v) in python::versions(stack) {
+        out.push(item("python", Some(v.clone()), format!("Python {v}")));
+    }
+    out
+}
+
+/// Where Erlang lives: wherever the RabbitMQ service says, else `erlang\`.
+fn erlang_dir(stack: &Stack) -> PathBuf {
+    stack
+        .by_kind(ServiceKind::RabbitMq)
+        .map(|r| r.process_prefix.clone())
+        .unwrap_or_else(|| stack.root.join("erlang"))
 }
 
 fn needs_version(runtime: Runtime) -> bool {
@@ -472,7 +549,7 @@ fn remove_contents_except(dir: &Path, keep: &Path) -> Result<()> {
 
 fn uninstall_erlang(stack: &Stack, force: bool) -> Result<Uninstalled> {
     let rabbit = stack.by_kind(ServiceKind::RabbitMq);
-    let erlang_dir = rabbit.map(|r| r.process_prefix.clone()).unwrap_or_else(|| stack.root.join("erlang"));
+    let erlang_dir = erlang_dir(stack);
 
     if !erlang_dir.is_dir() {
         bail!("Erlang/OTP is not installed ({} not found)", stack.rel(&erlang_dir));
@@ -526,6 +603,34 @@ mod tests {
         assert!(dir.join("data").join("PG_VERSION").is_file());
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// What the dashboard offers to remove is what discovery finds installed --
+    /// and nothing that is not.
+    #[test]
+    fn removable_lists_what_is_installed() {
+        let root = std::env::temp_dir().join(format!("devcrate-removable-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("php").join("php-8.5")).unwrap();
+        std::fs::write(root.join("php").join("php-8.5").join("php-cgi.exe"), b"stub").unwrap();
+        std::fs::create_dir_all(root.join("composer")).unwrap();
+        std::fs::write(root.join("composer").join("composer.phar"), b"stub").unwrap();
+        std::fs::create_dir_all(root.join("redis")).unwrap();
+
+        let stack = Stack::open(crate::root::StackRoot {
+            path: root.clone(),
+            source: crate::root::RootSource::Flag,
+        })
+        .unwrap();
+        let found: Vec<(&str, Option<String>)> =
+            removable(&stack).into_iter().map(|r| (r.runtime, r.version)).collect();
+
+        assert!(found.contains(&("php", Some("php-8.5".into()))), "{found:?}");
+        assert!(found.contains(&("composer", None)), "{found:?}");
+        assert!(found.contains(&("redis", None)), "{found:?}");
+        assert!(!found.iter().any(|(r, _)| *r == "mariadb"), "not installed: {found:?}");
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// The same guard every other versioned runtime has: the version the CLI

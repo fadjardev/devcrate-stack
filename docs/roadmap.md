@@ -13,9 +13,9 @@ not started. `in progress` - being built. `done` - shipped, see
 | # | Item | Status |
 | --- | --- | --- |
 | 1 | Rust TUI (`ratatui`), shipped as a single executable | done — see [tui.md](tui.md) |
-| 2 | Built-in runtime downloader / installer with version selection | done — PHP, nginx, Composer, MariaDB, RabbitMQ, Erlang/OTP, Node.js, Bun, PostgreSQL, Python, and Redis all done end to end, plus `uninstall`. **Not built:** a catalogue cache for listing versions offline; the dashboard picker still uses a fixed list |
+| 2 | Built-in runtime downloader / installer with version selection | done — PHP, nginx, Composer, MariaDB, RabbitMQ, Erlang/OTP, Node.js, Bun, PostgreSQL, Python, and Redis all done end to end, plus `uninstall`. **Not built:** a catalogue cache for listing versions offline; MariaDB, RabbitMQ, Erlang, and Redis read lists built into the binary rather than the vendor's |
 | 3 | Runs from any terminal, scriptable as well as interactive | done — see [cli.md](cli.md) |
-| 4 | Open an existing project: vhost + hosts entry + mkcert TLS, in one step | done — automated hosts block editing with UAC elevation, mkcert TLS issuance, smart web root & composer PHP constraint detection. **Not built:** certificate expiry reporting and reissue; mkcert as a managed install; an atomic hosts write when no elevation is needed; hosts removal from the dashboard's delete |
+| 4 | Open an existing project: vhost + hosts entry + mkcert TLS, in one step | done — automated hosts block editing with UAC elevation, mkcert TLS issuance, smart web root & composer PHP constraint detection. **Not built:** certificate expiry reporting and reissue; mkcert as a managed install |
 | 5 | Node.js and Bun as managed runtimes | done — Node.js & Bun installer, version switcher, npm isolation, and smart .nvmrc / package.json detection. **Not built:** dev servers under supervision and the HMR proxy, both carried into item 9 |
 | 6 | One-command setup on a fresh machine, with shortcuts into the dashboard | proposed |
 | 7 | A database browser and per-project databases | proposed |

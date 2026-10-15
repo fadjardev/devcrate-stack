@@ -580,6 +580,15 @@ The version is a positional argument, not a flag: `devcrate install php 8.4
 --from <zip>` names the version *and* the archive. (`--version` is not accepted
 here — it is clap's own flag on `devcrate` itself.)
 
+Where a runtime has a catalogue, a keyword can stand in for the version:
+`latest` (every runtime but PostgreSQL and Python, which have no index to
+pick from), `stable` / `mainline` for nginx, `lts` for Node.js, and the lines
+Composer already had (`stable`, `lts`, `preview`, `snapshot`). A version can
+also be a prefix — `devcrate install mariadb 11.4` takes the newest 11.4.x on
+the list. MariaDB, RabbitMQ, Erlang, and Redis are the exception to "the
+vendor's catalogue": their lists are built into the binary rather than
+fetched, so `latest` there means the newest release this build knows about.
+
 ```
   fetching the release list from windows.php.net
   downloading  100%  33.2 MB / 33.2 MB
@@ -1023,10 +1032,7 @@ delete a directory a process is executing out of, and `devcrate stop
 
 - Removing the version `php\current`, `nginx\current`, `node\current`,
   `bun\current`, or `python\current` names, since the CLI would resolve to
-  nothing afterwards. The junction is cleared, not left dangling. *PHP does
-  not enforce this yet:* removing the version `php\current` names succeeds
-  without `--force` and clears the junction — see
-  [docs-drift-audit-2026-10-15.md](issue/docs-drift-audit-2026-10-15.md).
+  nothing afterwards. The junction is cleared, not left dangling.
 - Removing a PHP version a vhost's `fastcgi_pass` still points at, or removing
   `erlang` while `rabbitmq\` is still installed (Erlang is its dependency, not
   a peer).
@@ -1117,11 +1123,12 @@ ignored, so a typo is an error instead of a setting that silently does nothing.
 - **Never touches the hosts file outside its own block.** `site add` writes
   `127.0.0.1 <host>` between `# --- devcrate begin/end ---` markers, backing the
   file up to `hosts.bak` once, and `site remove` takes the line out again;
-  `--no-hosts` skips it. When writing needs elevation, the new content goes to a
-  temp file and a UAC prompt copies it into place; declining leaves the file
-  untouched and the line printed for you. The unelevated write is *not* atomic
-  yet — it writes the file directly rather than a temp file then a replace,
-  which roadmap item 4 asks for.
+  `--no-hosts` skips it. A write goes to a temp file beside the hosts file and
+  is renamed over it, so an interrupted write never leaves it half-written
+  (if the rename is refused while writing is allowed, it falls back to a plain
+  write). When writing needs elevation, a UAC prompt copies the new content
+  into place instead; declining leaves the file untouched and the line printed
+  for you.
 - **Never installs mkcert.** `site add` issues or reuses a certificate (`*.test`
   for `myapp.test`, `*.mygroup.test` for `api.mygroup.test`) with an mkcert it
   finds in the stack root, in `mkcert\`, or on `PATH`, running `mkcert -install`

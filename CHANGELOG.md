@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Uninstall from the dashboard (`U`).** Lists everything installed and removes the one picked after a confirmation, through the same core as `devcrate uninstall` — never with `--force` or `--data`, so the active version, a version a vhost uses, and a database's `data\` stay CLI-only, and the refusal names the command.
+- **Install progress in the dashboard.** The footer shows download and extraction progress while an install runs, instead of only the result.
+- **Version keywords for `devcrate install`.** `latest` for every runtime with a catalogue (not PostgreSQL or Python), `stable` / `mainline` for nginx, and `lts` for Node.js; a version prefix such as `mariadb 11.4` takes the newest match.
 - **`devcrate install redis`** — Redis as a managed service, following the same `ServiceKind` shape as MariaDB: one un-versioned `redis\` directory, started and stopped by `devcrate start` / `stop` / `status` and the dashboard, in the database layer of the start/stop order (port 6379). Downloads the msys2 Windows build from `redis-windows/redis-windows` on GitHub, which publishes no checksum, so the transfer is length/TLS-checked like nginx and PostgreSQL. First install seeds a `devcrate.conf` (loopback-only bind, `data\` for persistence) rather than touching the vendor's own bundled `redis.conf`, and creates `data\`; both are left alone on a reinstall. Graceful shutdown is `redis-cli shutdown`.
 - **`devcrate uninstall <runtime> [version]`** — The mirror of `install`, closing the one gap left in Roadmap Item 2. A versioned runtime (php, nginx, node, bun, python) is removed by deleting its folder, guarded by `--force` when it is the version `current` points at, or — for PHP — when a vhost's `fastcgi_pass` still names it. A single-directory service that keeps `data\` beside its binaries (mariadb, postgres, rabbitmq) has that data preserved by default, the same as an `install --force` reinstall; deleting it needs `--data` paired with `--force`. Erlang refuses to remove itself while RabbitMQ still depends on it, without `--force`. A service that is still running is always refused.
 - **Interactive TUI Install Modal (Key `i`)** — Added one-click service & runtime downloader modal directly inside the TUI dashboard for Node.js, Bun, PHP, MariaDB, RabbitMQ, Composer, and Nginx.
@@ -30,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Every entry in the dashboard's install picker installs something.** Five of its nine entries (Bun, MariaDB, RabbitMQ, Redis, Composer) named no version and always failed. The picker is now read from the vendors' catalogues when it first opens, labelled with the exact release, and adds nginx, PostgreSQL, Erlang, and Python; offline it falls back to keyword entries. "RabbitMQ + Erlang" was misleading — installing RabbitMQ never installed Erlang — and they are now separate entries.
+- **The dashboard no longer force-replaces an installed version.** Installing from the picker always passed `--force`, so choosing a PHP version that was already there replaced its folder, hand-edited `php.ini` included, without asking. It now refuses and names the `--force` command instead.
+- **The dashboard's site delete (`d`) removes the hosts entry**, as `devcrate site remove` always did; the removal moved from the CLI's printing wrapper into `site::delete`, which both call.
+- **Hosts file writes are atomic.** The new content goes to a temp file beside the hosts file and is renamed over it, so an interrupted write cannot leave the system-wide file truncated. The elevation prompt's PowerShell output is also silenced, since the dashboard can trigger it now.
+- **`devcrate uninstall php` refuses the version `php\current` names without `--force`**, like every other versioned runtime and as documented; it used to remove it and clear the junction without asking.
 - **The TUI install modal no longer writes to stdout.** `Job::Install` called
   the same `install::install` the CLI uses, which prints unconditionally —
   including a raw `\r`-redrawn progress bar — straight to the terminal

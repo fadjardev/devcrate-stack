@@ -12,6 +12,7 @@ use std::time::Instant;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::config::{Stack, ServiceKind};
+use crate::install::Offering;
 use crate::site::Site;
 use crate::status::{State, StatusReport};
 use crate::tui::logs::{self, LogFile};
@@ -43,6 +44,9 @@ pub enum Modal {
     PhpPicker { purpose: PhpPurpose, index: usize },
     /// Choose a runtime/service to install from the TUI.
     InstallPicker { index: usize },
+    /// Choose something installed to remove. The list is taken when the
+    /// picker opens, so it cannot shift under the cursor.
+    UninstallPicker { index: usize, items: Vec<crate::uninstall::Removable> },
     /// Type details for a new vhost.
     NewSite(NewSiteForm),
     /// Confirm something that cannot be undone.
@@ -94,17 +98,6 @@ pub fn pick_project_folder() -> Option<String> {
     None
 }
 
-pub const INSTALL_OPTIONS: [(&str, &str, Option<&'static str>); 9] = [
-    ("node", "Node.js (v22.11.0)", Some("22.11.0")),
-    ("bun", "Bun (Latest)", None),
-    ("php", "PHP 8.4", Some("8.4")),
-    ("php", "PHP 8.3", Some("8.3")),
-    ("php", "PHP 8.2", Some("8.2")),
-    ("mariadb", "MariaDB Server", None),
-    ("rabbitmq", "RabbitMQ + Erlang", None),
-    ("redis", "Redis Server", None),
-    ("composer", "Composer (Latest)", None),
-];
 
 pub enum PhpPurpose {
     /// Repoint `php\current`.
@@ -157,6 +150,8 @@ pub struct App {
     pub modal: Option<Modal>,
     /// Set while the actor is working. Nothing else may be submitted.
     pub busy: Option<String>,
+    /// Where the running action is up to, when it reports it (installs do).
+    pub progress: Option<String>,
     pub note: Option<Note>,
     pub quit: bool,
 
@@ -167,6 +162,15 @@ pub struct App {
     pub log_target_dirty: bool,
     /// Set by `r`, cleared by the caller once the scanner has been nudged.
     pub rescan_wanted: bool,
+    /// What the install picker offers: the fallback list until the vendors'
+    /// catalogues have been read, then those.
+    pub install_options: Vec<Offering>,
+    /// The catalogues have been asked for (once per session) / have arrived.
+    pub offerings_requested: bool,
+    pub offerings_loaded: bool,
+    /// Set when the picker first opens, cleared by the caller once the
+    /// catalogue thread is running.
+    pub offerings_wanted: bool,
 }
 
 impl App {
@@ -187,12 +191,17 @@ impl App {
             follow: true,
             modal: None,
             busy: None,
+            progress: None,
             note: None,
             quit: false,
             watches: HashMap::new(),
             deliberate: HashSet::new(),
             log_target_dirty: true,
             rescan_wanted: false,
+            install_options: crate::install::fallback_offerings(),
+            offerings_requested: false,
+            offerings_loaded: false,
+            offerings_wanted: false,
         }
     }
 
@@ -262,8 +271,27 @@ impl App {
         self.report = Some(report);
     }
 
+    /// The catalogues arrived: swap them in, keeping the cursor on the list.
+    pub fn on_offerings(&mut self, offerings: Vec<Offering>) {
+        self.offerings_loaded = true;
+        if offerings.is_empty() {
+            return;
+        }
+        self.install_options = offerings;
+        if let Some(Modal::InstallPicker { index }) = &mut self.modal {
+            *index = (*index).min(self.install_options.len() - 1);
+        }
+    }
+
+    pub fn on_progress(&mut self, text: String) {
+        if self.busy.is_some() {
+            self.progress = Some(text);
+        }
+    }
+
     pub fn on_done(&mut self, result: JobResult) {
         self.busy = None;
+        self.progress = None;
         if result.sites_changed {
             self.sites = read_sites(&self.stack);
             self.site_row = self.site_row.min(self.sites.len().saturating_sub(1));
@@ -372,6 +400,15 @@ impl App {
             }
             KeyCode::Char('i') => {
                 self.modal = Some(Modal::InstallPicker { index: 0 });
+                if !self.offerings_requested {
+                    self.offerings_requested = true;
+                    self.offerings_wanted = true;
+                }
+                None
+            }
+            KeyCode::Char('U') => {
+                let items = crate::uninstall::removable(&self.stack);
+                self.modal = Some(Modal::UninstallPicker { index: 0, items });
                 None
             }
             _ => None,
@@ -551,16 +588,46 @@ impl App {
                 KeyCode::Esc => self.modal = None,
                 KeyCode::Up | KeyCode::Char('k') => *index = index.saturating_sub(1),
                 KeyCode::Down | KeyCode::Char('j') => {
-                    *index = (*index + 1).min(INSTALL_OPTIONS.len().saturating_sub(1));
+                    *index = (*index + 1).min(self.install_options.len().saturating_sub(1));
                 }
                 KeyCode::Enter => {
-                    let (runtime, _label, version) = INSTALL_OPTIONS[*index];
+                    let Some(offering) = self.install_options.get(*index) else {
+                        return None;
+                    };
                     let job = Job::Install {
-                        runtime: runtime.to_string(),
-                        version: version.map(|v| v.to_string()),
+                        runtime: offering.runtime.to_string(),
+                        version: Some(offering.version.clone()),
                     };
                     self.modal = None;
                     return self.submit(job);
+                }
+                _ => {}
+            },
+            Some(Modal::UninstallPicker { index, items }) => match key.code {
+                KeyCode::Esc => self.modal = None,
+                KeyCode::Up | KeyCode::Char('k') => *index = index.saturating_sub(1),
+                KeyCode::Down | KeyCode::Char('j') => {
+                    *index = (*index + 1).min(items.len().saturating_sub(1));
+                }
+                KeyCode::Enter => {
+                    let Some(item) = items.get(*index).cloned() else {
+                        return None;
+                    };
+                    let mut question = format!("Remove {}?\n\n", item.label);
+                    question.push_str(match item.version {
+                        Some(_) => "Its folder is deleted. The version `current` points at is refused \
+                                    -- that needs `--force` from a terminal.",
+                        None => "A running service is refused; stop it first. A database keeps its \
+                                 data\\ folder -- deleting that needs `--data --force` from a terminal.",
+                    });
+                    self.modal = Some(Modal::Confirm {
+                        question,
+                        job: Job::Uninstall {
+                            runtime: item.runtime.to_string(),
+                            version: item.version,
+                            label: item.label,
+                        },
+                    });
                 }
                 _ => {}
             },

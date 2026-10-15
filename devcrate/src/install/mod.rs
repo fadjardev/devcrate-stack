@@ -1603,14 +1603,133 @@ pub fn install(
 /// printing, plus the outcome the CLI's printing is normally built from --
 /// see docs/issue/tui-install-stdout-corruption-2026-09-19.md. Always
 /// downloads (the `--from` archive path is a CLI-only affordance).
+///
+/// `on_progress` receives the same in-place progress text the CLI redraws
+/// (`downloading  42%  12.0 MB / 28.6 MB`, `extracting  80%`) -- and nothing
+/// else, so the caller decides how often to show it.
 pub fn install_quiet(
     stack: &Stack,
     runtime: &str,
     version: Option<&str>,
     force: bool,
+    on_progress: &mut dyn FnMut(&str),
 ) -> Result<InstallOutcome> {
-    let mut emit = NullEmit;
+    let mut emit = ProgressEmit(on_progress);
     install_with(stack, runtime, version, None, force, &mut emit)
+}
+
+/// One entry in the dashboard's install picker: a runtime and a version
+/// spelling [`install_quiet`] resolves -- always named, so choosing it installs
+/// something rather than listing a catalogue.
+#[derive(Debug, Clone)]
+pub struct Offering {
+    pub runtime: &'static str,
+    pub label: String,
+    pub version: String,
+}
+
+impl Offering {
+    fn new(runtime: &'static str, label: impl Into<String>, version: impl Into<String>) -> Offering {
+        Offering { runtime, label: label.into(), version: version.into() }
+    }
+}
+
+/// What the picker offers before the catalogues are read, or when one cannot
+/// be: every runtime by a line or keyword rather than a version, so nothing
+/// here goes stale. Installing still needs the network either way.
+pub fn fallback_offerings() -> Vec<Offering> {
+    vec![
+        Offering::new("php", "PHP (newest branch)", "latest"),
+        Offering::new("nginx", "nginx (stable line)", "stable"),
+        Offering::new("nginx", "nginx (mainline)", "mainline"),
+        Offering::new("composer", "Composer (stable)", "stable"),
+        Offering::new("mariadb", "MariaDB (newest)", "latest"),
+        Offering::new("postgres", "PostgreSQL 13.23", "13.23"),
+        Offering::new("redis", "Redis (newest)", "latest"),
+        Offering::new("erlang", "Erlang/OTP (newest) -- RabbitMQ needs it", "latest"),
+        Offering::new("rabbitmq", "RabbitMQ (newest)", "latest"),
+        Offering::new("node", "Node.js (newest LTS)", "lts"),
+        Offering::new("bun", "Bun (newest)", "latest"),
+        Offering::new("python", "Python 3.8", "3.8"),
+    ]
+}
+
+/// The picker's entries, named from the vendors' catalogues so the label says
+/// exactly what will be installed. Network-bound and silent -- the dashboard
+/// runs it on a thread of its own. A runtime whose catalogue cannot be read
+/// keeps its [`fallback_offerings`] entries instead, so the list is never
+/// shorter offline, only vaguer. PostgreSQL and Python have no index to read
+/// (see [`choose_postgres`], [`choose_python`]) and always use the fallback.
+pub fn offerings() -> Vec<Offering> {
+    let fallback = fallback_offerings();
+    let mut out = Vec::new();
+    let keep = |runtime: &str, out: &mut Vec<Offering>| {
+        out.extend(fallback.iter().filter(|o| o.runtime == runtime).cloned());
+    };
+
+    match download::php_catalogue() {
+        // Sorted oldest first; the newest few branches are the useful ones.
+        Ok(catalogue) => out.extend(catalogue.iter().rev().take(5).map(|r| {
+            Offering::new("php", format!("PHP {}  ({})", r.version, r.release), r.version.clone())
+        })),
+        Err(_) => keep("php", &mut out),
+    }
+
+    match download::nginx_catalogue() {
+        Ok(catalogue) => {
+            for (channel, name) in
+                [(download::Channel::Stable, "stable"), (download::Channel::Mainline, "mainline")]
+            {
+                if let Some(r) = catalogue.iter().find(|r| r.channel == channel) {
+                    out.push(Offering::new("nginx", format!("nginx {}  ({name})", r.version), r.version.clone()));
+                }
+            }
+        }
+        Err(_) => keep("nginx", &mut out),
+    }
+
+    match download::composer_catalogue().ok().and_then(|c| c.latest_stable().map(|r| r.version.clone())) {
+        Some(version) => out.push(Offering::new("composer", format!("Composer {version}  (stable)"), "stable")),
+        None => keep("composer", &mut out),
+    }
+
+    // These four lists are built into the binary rather than fetched (see
+    // download.rs), newest first -- the head is what `latest` would pick.
+    let mut newest = |runtime: &'static str, label: &str, head: Option<String>| match head {
+        Some(v) => out.push(Offering::new(runtime, label.replace("{v}", &v), v)),
+        None => keep(runtime, &mut out),
+    };
+    newest("mariadb", "MariaDB {v}", download::mariadb_catalogue().ok().and_then(|c| c.first().map(|r| r.version.clone())));
+    newest("postgres", "", None);
+    newest("redis", "Redis {v}", download::redis_catalogue().ok().and_then(|c| c.first().map(|r| r.version.clone())));
+    newest(
+        "erlang",
+        "Erlang/OTP {v} -- RabbitMQ needs it",
+        download::erlang_catalogue().ok().and_then(|c| c.first().map(|r| r.version.clone())),
+    );
+    newest("rabbitmq", "RabbitMQ {v}", download::rabbitmq_catalogue().ok().and_then(|c| c.first().map(|r| r.version.clone())));
+
+    match download::fetch_node_catalogue() {
+        Ok(catalogue) => {
+            let lts = catalogue.releases.iter().find(|r| r.lts.is_some());
+            if let Some(r) = lts {
+                let line = r.lts.as_deref().unwrap_or_default();
+                out.push(Offering::new("node", format!("Node.js {}  (LTS {line})", r.version), r.version.clone()));
+            }
+            if let Some(r) = catalogue.releases.first().filter(|r| Some(r.version.as_str()) != lts.map(|l| l.version.as_str())) {
+                out.push(Offering::new("node", format!("Node.js {}  (current)", r.version), r.version.clone()));
+            }
+        }
+        Err(_) => keep("node", &mut out),
+    }
+
+    match download::fetch_bun_catalogue().ok().and_then(|c| c.releases.first().map(|r| r.version.clone())) {
+        Some(version) => out.push(Offering::new("bun", format!("Bun {version}"), version)),
+        None => keep("bun", &mut out),
+    }
+
+    keep("python", &mut out);
+    out
 }
 
 fn install_with(
@@ -1710,6 +1829,12 @@ fn choose_php(stack: &Stack, version: Option<&str>, emit: &mut dyn Emit) -> Resu
         return Ok(None);
     };
 
+    // The feed is sorted oldest branch first, so the newest is the last.
+    let latest = wanted.trim().eq_ignore_ascii_case("latest");
+    let wanted = match catalogue.last() {
+        Some(newest) if latest => newest.version.as_str(),
+        _ => wanted,
+    };
     let digits = crate::php::digits(wanted);
     if digits.len() < 2 {
         bail!("{wanted:?} does not name a PHP version (try 8.4)");
@@ -1880,6 +2005,35 @@ fn python_versions_installed(stack: &Stack) -> Vec<String> {
         .collect()
 }
 
+/// The entry of a newest-first catalogue a spelling names: `latest` is the
+/// first, anything else an exact version or a prefix of one (`11.4` reaches
+/// the newest 11.4.x), with a leading `v` ignored.
+fn pick_by_version<'a, T>(
+    catalogue: &'a [T],
+    wanted: &str,
+    version: impl Fn(&T) -> &str,
+) -> Option<&'a T> {
+    let wanted = wanted.trim().trim_start_matches(['v', 'V']);
+    if wanted.eq_ignore_ascii_case("latest") {
+        return catalogue.first();
+    }
+    catalogue
+        .iter()
+        .find(|r| version(r) == wanted)
+        .or_else(|| catalogue.iter().find(|r| version(r).starts_with(wanted)))
+}
+
+/// As [`pick_by_version`], plus `lts` for the newest long-term-support release.
+fn pick_node<'a>(
+    catalogue: &'a [download::NodeRelease],
+    wanted: &str,
+) -> Option<&'a download::NodeRelease> {
+    if wanted.trim().eq_ignore_ascii_case("lts") {
+        return catalogue.iter().find(|r| r.lts.is_some());
+    }
+    pick_by_version(catalogue, wanted, |r| &r.version)
+}
+
 fn choose_mariadb(stack: &Stack, version: Option<&str>, emit: &mut dyn Emit) -> Result<Option<Chosen>> {
     emit_line!(emit, "  fetching the MariaDB release list");
     let catalogue = download::mariadb_catalogue()?;
@@ -1893,9 +2047,7 @@ fn choose_mariadb(stack: &Stack, version: Option<&str>, emit: &mut dyn Emit) -> 
         return Ok(None);
     };
 
-    let release = catalogue
-        .iter()
-        .find(|r| r.version == wanted || r.version.starts_with(wanted))
+    let release = pick_by_version(&catalogue, wanted, |r| &r.version)
         .ok_or_else(|| anyhow!("no MariaDB release matching {wanted:?}"))?;
 
     let download = release.download();
@@ -1921,9 +2073,7 @@ fn choose_rabbitmq(stack: &Stack, version: Option<&str>, emit: &mut dyn Emit) ->
         return Ok(None);
     };
 
-    let release = catalogue
-        .iter()
-        .find(|r| r.version == wanted || r.version.starts_with(wanted))
+    let release = pick_by_version(&catalogue, wanted, |r| &r.version)
         .ok_or_else(|| anyhow!("no RabbitMQ release matching {wanted:?}"))?;
 
     let download = release.download();
@@ -1949,9 +2099,7 @@ fn choose_redis(stack: &Stack, version: Option<&str>, emit: &mut dyn Emit) -> Re
         return Ok(None);
     };
 
-    let release = catalogue
-        .iter()
-        .find(|r| r.version == wanted || r.version.starts_with(wanted))
+    let release = pick_by_version(&catalogue, wanted, |r| &r.version)
         .ok_or_else(|| anyhow!("no Redis release matching {wanted:?}"))?;
 
     let download = release.download();
@@ -1977,9 +2125,7 @@ fn choose_erlang(stack: &Stack, version: Option<&str>, emit: &mut dyn Emit) -> R
         return Ok(None);
     };
 
-    let release = catalogue
-        .iter()
-        .find(|r| r.version == wanted || r.version.starts_with(wanted))
+    let release = pick_by_version(&catalogue, wanted, |r| &r.version)
         .ok_or_else(|| anyhow!("no Erlang release matching {wanted:?}"))?;
 
     let download = release.download();
@@ -2039,10 +2185,24 @@ fn pick_composer<'a>(
 /// The release a spelling names, by the same rule `devcrate nginx use` uses on
 /// the versions already installed -- exact, or an unambiguous dotted prefix, so
 /// `1.30` reaches the current stable release without naming its patch level.
+/// A line by name works too: `stable`, or `mainline` (also `latest`).
 fn pick_nginx<'a>(
     catalogue: &'a [download::NginxRelease],
     wanted: &str,
 ) -> Result<&'a download::NginxRelease> {
+    let keyword = wanted.trim().to_ascii_lowercase();
+    let line = match keyword.as_str() {
+        "stable" => Some(download::Channel::Stable),
+        "mainline" | "latest" => Some(download::Channel::Mainline),
+        _ => None,
+    };
+    if let Some(line) = line {
+        return catalogue
+            .iter()
+            .find(|r| r.channel == line)
+            .ok_or_else(|| anyhow!("nginx.org's download page lists no {keyword} release right now"));
+    }
+
     let wanted = crate::nginx::spelled(wanted);
     if wanted.is_empty() {
         bail!("no nginx version named");
@@ -2339,11 +2499,15 @@ impl Emit for TerminalEmit {
 /// Discards everything. The dashboard's `Job::Install` uses this: it already
 /// reports its own result through `JobResult`, and must never write to the
 /// screen ratatui owns.
-struct NullEmit;
+/// Hands progress text to a callback and drops every line -- the dashboard's
+/// `Emit`, which shows where an install is up to and builds its own summary.
+struct ProgressEmit<'a>(&'a mut dyn FnMut(&str));
 
-impl Emit for NullEmit {
+impl Emit for ProgressEmit<'_> {
     fn line(&mut self, _text: &str) {}
-    fn progress(&mut self, _text: &str) {}
+    fn progress(&mut self, text: &str) {
+        (self.0)(text.trim());
+    }
     fn end_progress(&mut self) {}
 }
 
@@ -2432,8 +2596,7 @@ fn choose_node(stack: &Stack, version: Option<&str>, emit: &mut dyn Emit) -> Res
         return Ok(None);
     };
 
-    let wanted_clean = wanted.trim_start_matches('v');
-    let Some(release) = catalogue.releases.iter().find(|r| r.version == wanted_clean || r.version.starts_with(wanted_clean)) else {
+    let Some(release) = pick_node(&catalogue.releases, wanted) else {
         bail!(
             "Node.js {wanted:?} is not on nodejs.org's release list.\n\
              An archive can still be installed with --from."
@@ -2471,8 +2634,7 @@ fn choose_bun(stack: &Stack, version: Option<&str>, emit: &mut dyn Emit) -> Resu
         return Ok(None);
     };
 
-    let wanted_clean = wanted.trim_start_matches('v');
-    let Some(release) = catalogue.releases.iter().find(|r| r.version == wanted_clean || r.version.starts_with(wanted_clean)) else {
+    let Some(release) = pick_by_version(&catalogue.releases, wanted, |r| &r.version) else {
         bail!(
             "Bun {wanted:?} is not on GitHub release list.\n\
              An archive can still be installed with --from."
@@ -3048,5 +3210,56 @@ mod tests {
         // ...and `1.3` is its own series, not a prefix of 1.30 or 1.31.
         let err = pick_nginx(&catalogue, "1.3").unwrap_err().to_string();
         assert!(err.contains("not on nginx.org's download page"), "{err}");
+    }
+
+    /// A line by name, so the dashboard can offer nginx without baking a
+    /// version into the binary.
+    #[test]
+    fn a_line_names_the_release_on_it() {
+        let catalogue = nginx_catalogue();
+        assert_eq!(pick_nginx(&catalogue, "stable").unwrap().version, "1.30.4");
+        assert_eq!(pick_nginx(&catalogue, "mainline").unwrap().version, "1.31.3");
+        assert_eq!(pick_nginx(&catalogue, "Latest").unwrap().version, "1.31.3");
+    }
+
+    /// `latest` is the head of a newest-first list; anything else is an exact
+    /// version or a prefix of one, the first (newest) match winning.
+    #[test]
+    fn latest_and_prefixes_pick_from_a_newest_first_list() {
+        let versions = ["11.4.5", "11.4.4", "10.11.11"];
+        let pick = |wanted| pick_by_version(&versions, wanted, |v| v).copied();
+        assert_eq!(pick("latest"), Some("11.4.5"));
+        assert_eq!(pick("11.4"), Some("11.4.5"));
+        assert_eq!(pick("11.4.4"), Some("11.4.4"));
+        assert_eq!(pick("v10"), Some("10.11.11"));
+        assert_eq!(pick("12"), None);
+    }
+
+    /// Live: reads every vendor's catalogue. `cargo test -- --ignored
+    /// offerings_from_the_live_catalogues --nocapture` prints the picker.
+    #[test]
+    #[ignore = "needs the network"]
+    fn offerings_from_the_live_catalogues() {
+        let offerings = offerings();
+        for o in &offerings {
+            println!("{:<9} {:<10} {}", o.runtime, o.version, o.label);
+        }
+        for runtime in ["php", "nginx", "composer", "mariadb", "postgres", "redis", "erlang", "rabbitmq", "node", "bun", "python"] {
+            assert!(offerings.iter().any(|o| o.runtime == runtime), "{runtime} is missing");
+        }
+    }
+
+    #[test]
+    fn node_lines_pick_lts_or_current() {
+        let release = |version: &str, lts: Option<&str>| download::NodeRelease {
+            version: version.to_string(),
+            lts: lts.map(str::to_string),
+            url: String::new(),
+            archive_name: String::new(),
+        };
+        let catalogue = [release("24.1.0", None), release("22.16.0", Some("Jod")), release("22.15.1", Some("Jod"))];
+        assert_eq!(pick_node(&catalogue, "lts").unwrap().version, "22.16.0");
+        assert_eq!(pick_node(&catalogue, "latest").unwrap().version, "24.1.0");
+        assert_eq!(pick_node(&catalogue, "22").unwrap().version, "22.16.0");
     }
 }

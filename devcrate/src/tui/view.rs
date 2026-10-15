@@ -423,6 +423,10 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
             Span::styled(format!(" {} ", spinner()), Style::new().fg(WARN).bold()),
             Span::styled(" working ", Style::new().bg(WARN).fg(Color::Black).bold()),
             Span::raw(format!(" {busy}...")),
+            Span::styled(
+                app.progress.as_deref().map(|p| format!("  {p}")).unwrap_or_default(),
+                Style::new().fg(ACCENT),
+            ),
         ]),
         (None, Some(note)) if !note.is_stale() => {
             let (icon, colour) = if note.failed { ("✗", BAD) } else { ("✓", OK) };
@@ -437,8 +441,9 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
             ("s", "start"),
             ("x", "stop"),
             ("t", "restart"),
-            ("S X T", "whole stack"),
+            ("S X T", "all"),
             ("i", "install"),
+            ("U", "uninstall"),
             ("u", "CLI PHP"),
             ("?", "help"),
             ("q", "quit"),
@@ -611,18 +616,38 @@ fn render_modal(frame: &mut Frame, app: &App, modal: &Modal) {
             picker(frame, &title, items, *index);
         }
         Modal::InstallPicker { index } => {
-            let items: Vec<ListItem> = crate::tui::app::INSTALL_OPTIONS
+            let items: Vec<ListItem> = app
+                .install_options
                 .iter()
-                .map(|(_, label, _)| ListItem::new(*label))
+                .map(|offering| ListItem::new(offering.label.clone()))
                 .collect();
-            picker(frame, "Install Service / Runtime", items, *index);
+            let title = if app.offerings_loaded {
+                "Install Service / Runtime".to_string()
+            } else {
+                format!("Install Service / Runtime  {} reading catalogues", spinner())
+            };
+            picker(frame, &title, items, *index);
+        }
+        Modal::UninstallPicker { index, items } => {
+            let items: Vec<ListItem> = items
+                .iter()
+                .map(|item| ListItem::new(item.label.clone()))
+                .collect();
+            picker(frame, "Uninstall", items, *index);
         }
     }
 }
 
 fn picker(frame: &mut Frame, title: &str, items: Vec<ListItem>, index: usize) {
+    if items.is_empty() {
+        return popup(frame, title, Text::from(" Nothing is installed.".fg(MUTED)), 48, 3);
+    }
     let height = (items.len() + 2).max(3) as u16;
-    let area = centred(frame.area(), 48, height);
+    // Wide enough for the longest entry and the title, plus the marker and
+    // the frame; never narrower than the 48 the short lists use.
+    let widest = items.iter().map(ListItem::width).max().unwrap_or(0);
+    let width = (widest + 6).max(title.chars().count() + 6).max(48) as u16;
+    let area = centred(frame.area(), width, height);
     frame.render_widget(Clear, area);
     let mut state = ListState::default().with_selected(Some(index));
     frame.render_stateful_widget(
@@ -655,6 +680,7 @@ fn help_text() -> Text<'static> {
         row("s / x / t", "start / stop / restart the selected service"),
         row("S / X / T", "...the whole stack, in dependency order"),
         row("i", "install service or runtime (Node, Bun, PHP, etc)"),
+        row("U", "uninstall one (never forces, never deletes data)"),
         row("u", "repoint php\\current (the CLI version)"),
         Line::from(""),
         section("Sites"),

@@ -60,7 +60,7 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, stack: Arc<Stac
     worker::spawn_input(tx.clone());
     let nudge = worker::spawn_scanner(Arc::clone(&stack), tx.clone());
     let actor = worker::spawn_actor(Arc::clone(&stack), tx.clone(), nudge.clone());
-    let tailer = worker::spawn_tailer(tx);
+    let tailer = worker::spawn_tailer(tx.clone());
 
     let mut app = App::new(stack);
 
@@ -69,7 +69,8 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, stack: Arc<Stac
 
         // Block for the first event, then take whatever else has piled up
         // behind it: a scan and three keystrokes should cost one redraw.
-        let wait = if app.busy.is_some() { BUSY } else { IDLE };
+        let reading = app.offerings_requested && !app.offerings_loaded;
+        let wait = if app.busy.is_some() || reading { BUSY } else { IDLE };
         let mut events = match rx.recv_timeout(wait) {
             Ok(event) => vec![event],
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Vec::new(),
@@ -91,6 +92,8 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, stack: Arc<Stac
                 Event::Status(report) => app.on_status(*report),
                 Event::Log(view) => app.on_log(*view),
                 Event::Done(result) => app.on_done(*result),
+                Event::Offerings(offerings) => app.on_offerings(offerings),
+                Event::Progress(text) => app.on_progress(text),
             }
         }
 
@@ -100,6 +103,10 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, stack: Arc<Stac
         if app.rescan_wanted {
             app.rescan_wanted = false;
             let _ = nudge.send(());
+        }
+        if app.offerings_wanted {
+            app.offerings_wanted = false;
+            worker::spawn_offerings(tx.clone());
         }
         if app.log_target_dirty {
             app.log_target_dirty = false;
@@ -322,6 +329,90 @@ mod tests {
         app.on_key(KeyEvent::from(KeyCode::Char('?')));
         let help = draw(&app);
         assert!(help.contains("start / stop / restart"), "{help}");
+    }
+
+    /// Every entry the install picker offers names a version, so choosing it
+    /// installs something -- the picker used to hold five that only listed a
+    /// catalogue and reported failure.
+    #[test]
+    fn every_install_picker_entry_names_a_version() {
+        let mut app = App::new(stack());
+        app.on_key(KeyEvent::from(KeyCode::Char('i')));
+        assert!(app.offerings_wanted, "opening the picker asks for the catalogues");
+        app.offerings_wanted = false; // as the event loop does once it has spawned the thread
+        let reading = draw(&app);
+        assert!(reading.contains("reading catalogues"), "{reading}");
+        assert!(reading.contains("PHP (newest branch)"), "{reading}");
+
+        for index in 0..app.install_options.len() {
+            app.busy = None;
+            app.modal = Some(app::Modal::InstallPicker { index });
+            let job = app.on_key(KeyEvent::from(KeyCode::Enter)).expect("Enter installs");
+            let worker::Job::Install { version, .. } = job else { panic!("not an install") };
+            assert!(version.is_some_and(|v| !v.is_empty()), "entry {index} names no version");
+        }
+
+        // The catalogues replace the fallback list, and the title settles.
+        app.busy = None;
+        app.on_key(KeyEvent::from(KeyCode::Char('i')));
+        assert!(!app.offerings_wanted, "asked for once per session");
+        app.on_offerings(vec![crate::install::Offering {
+            runtime: "php",
+            label: "PHP 8.5  (8.5.1)".into(),
+            version: "8.5".into(),
+        }]);
+        let loaded = draw(&app);
+        assert!(loaded.contains("PHP 8.5  (8.5.1)"), "{loaded}");
+        assert!(!loaded.contains("reading catalogues"), "{loaded}");
+    }
+
+    /// An install's progress shows in the footer while it runs, and goes with it.
+    #[test]
+    fn install_progress_shows_in_the_footer() {
+        let mut app = App::new(stack());
+        app.on_progress("downloading  42%".into());
+        assert!(app.progress.is_none(), "nothing is running, so nothing to show");
+
+        app.busy = Some("Downloading & installing redis latest".into());
+        app.on_progress("downloading  42%  12.0 MB / 28.6 MB".into());
+        let running = draw(&app);
+        assert!(running.contains("downloading  42%"), "{running}");
+
+        app.on_done(worker::JobResult {
+            label: "Downloading & installing redis latest".into(),
+            lines: vec!["Redis 8.10.2 installed into redis".into()],
+            failed: false,
+            sites_changed: false,
+        });
+        assert!(app.progress.is_none());
+        assert!(!draw(&app).contains("downloading  42%"));
+    }
+
+    /// `U` lists what is installed, asks before removing, and the job it
+    /// submits names exactly the version picked.
+    #[test]
+    fn uninstalling_from_the_dashboard_is_confirmed() {
+        let mut app = App::new(stack());
+        app.on_key(KeyEvent::from(KeyCode::Char('U')));
+        assert!(draw(&app).contains("Nothing is installed"), "the fixture root is empty");
+
+        app.modal = Some(app::Modal::UninstallPicker {
+            index: 0,
+            items: vec![crate::uninstall::Removable {
+                runtime: "php",
+                version: Some("php-8.5".into()),
+                label: "PHP 8.5".into(),
+            }],
+        });
+        assert!(app.on_key(KeyEvent::from(KeyCode::Enter)).is_none(), "asks first");
+        let asking = draw(&app);
+        assert!(asking.contains("Remove PHP 8.5?"), "{asking}");
+
+        let job = app.on_key(KeyEvent::from(KeyCode::Char('y'))).expect("y confirms");
+        assert!(matches!(
+            job,
+            worker::Job::Uninstall { runtime, version: Some(v), .. } if runtime == "php" && v == "php-8.5"
+        ));
     }
 
     /// Deleting a vhost asks first.

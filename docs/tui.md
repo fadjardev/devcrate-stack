@@ -57,7 +57,8 @@ a rescan rather than waiting for the next one.
 | --- | --- |
 | `s` `x` `t` | Start / stop / restart the **selected** service |
 | `S` `X` `T` | ...the **whole stack**, in dependency order |
-| `i` | Open the **Install Service / Runtime** picker (Node.js 22.11.0, Bun, PHP 8.4 / 8.3 / 8.2, MariaDB, RabbitMQ + Erlang, Redis, Composer) |
+| `i` | Open the **Install Service / Runtime** picker — see [Installing and removing](#installing-and-removing) |
+| `U` | Open the **Uninstall** picker: everything installed, removed after a confirmation |
 | `u` | Repoint `php\current` — the CLI PHP version |
 
 Start and stop go through the same order, the same graceful commands, and the
@@ -71,6 +72,30 @@ MariaDB pointed at a datadir the first one still holds.
 
 Quitting while an action is in flight asks once. Answering `q` a second time
 leaves anyway, which may abandon a shutdown halfway through.
+
+### Installing and removing
+
+`i` lists every runtime `devcrate install` can fetch: the newest five PHP
+branches, nginx stable and mainline, Composer stable, MariaDB, PostgreSQL 13.23,
+Redis, Erlang/OTP, RabbitMQ, Node.js LTS and current, Bun, and Python 3.8.
+The labels name the exact release, read from the vendors' catalogues on a
+thread of its own the first time the picker opens (the title shows a spinner
+until they arrive). Offline, or when a catalogue cannot be read, that runtime
+falls back to a keyword entry — "PHP (newest branch)", "nginx (stable line)" —
+which resolves the same way `devcrate install php latest` does. While an
+install runs, the footer shows its download and extraction progress.
+
+The dashboard never forces. Choosing a version that is already installed is
+refused with the `devcrate install ... --force` command to run instead, because
+replacing a version folder replaces whatever was hand-edited inside it — a PHP
+version's `php.ini`, for one.
+
+`U` lists what is installed, by the same discovery `status` uses, and asks
+before removing anything. It is `devcrate uninstall` without `--force` or
+`--data`: a running service, the version a `current` junction names, a PHP
+version a vhost still uses, Erlang under an installed RabbitMQ, and a
+database's `data\` are all refused or kept, with the command that would do it
+named in the result.
 
 ### Sites
 
@@ -87,12 +112,8 @@ it rewrites the `fastcgi_pass` line and nothing else, so a hand-edited conf
 survives. `d` deletes only the conf — the project folder under `projects\` and
 the certificate are left alone, and the confirmation says so.
 
-Unlike `devcrate site remove`, `d` does **not** take the host out of the hosts
-file: the CLI does that in its printing wrapper, which the dashboard does not
-call. Use `devcrate site remove` *instead of* `d` — after `d` the conf is gone
-and the command refuses — or remove the line by hand, until that moves into the
-shared core — see
-[docs-drift-audit-2026-10-15.md](issue/docs-drift-audit-2026-10-15.md).
+`d` also takes the host out of the devcrate hosts block, as `devcrate site
+remove` does — both call the same `site::delete`.
 
 ### Logs
 
@@ -140,15 +161,10 @@ escape sequences into a file.
 
 ## What it deliberately does not do
 
-- **Install everything the CLI can, or show progress while it does.** The `i`
-  picker is a fixed list of nine entries rather than the vendors' catalogues, so
-  nginx, PostgreSQL, and Python are not on it, and the versions it names are
-  built into the binary. The five entries with no version — Bun, MariaDB,
-  RabbitMQ, Redis, Composer — install nothing and report a failure that names
-  the `devcrate install` command to run instead. An install shows only its
-  result, not download progress. See
-  [docs-drift-audit-2026-10-15.md](issue/docs-drift-audit-2026-10-15.md).
-- **Uninstall.** `devcrate uninstall` has no key in the dashboard.
+- **Force anything.** Replacing an installed version, removing the active one,
+  and deleting a database's data are CLI-only (`--force`, `--data`), and the
+  dashboard names the command when it refuses.
+- **Install from a local archive.** `--from` is a CLI affordance.
 - **Report certificate expiry.** The New Site form adds the hosts entry and
   issues the certificate, as `site add` does (see
   [cli.md](cli.md#what-this-deliberately-does-not-do)), but nothing shows when a

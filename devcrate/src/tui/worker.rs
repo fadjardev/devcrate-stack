@@ -46,6 +46,10 @@ pub enum Event {
     Status(Box<StatusReport>),
     Log(Box<LogView>),
     Done(Box<JobResult>),
+    /// Where a running install is up to, for the footer.
+    Progress(String),
+    /// The install picker's entries, read from the vendors' catalogues.
+    Offerings(Vec<crate::install::Offering>),
 }
 
 /// Work the UI can ask for. One at a time, in the order requested.
@@ -65,6 +69,7 @@ pub enum Job {
     SiteSetPhp { host: String, version: String },
     SiteRemove(String),
     Install { runtime: String, version: Option<String> },
+    Uninstall { runtime: String, version: Option<String>, label: String },
 }
 
 impl Job {
@@ -88,6 +93,7 @@ impl Job {
                     version.as_ref().map(|v| format!(" {v}")).unwrap_or_default()
                 )
             }
+            Job::Uninstall { label, .. } => format!("Removing {label}"),
         }
     }
 
@@ -173,7 +179,7 @@ pub fn spawn_actor(stack: Arc<Stack>, tx: Sender<Event>, nudge: Sender<()>) -> S
     let (job_tx, job_rx) = channel::<Job>();
     thread::spawn(move || {
         for job in job_rx {
-            let result = run(&stack, job);
+            let result = run(&stack, job, &tx);
             if tx.send(Event::Done(Box::new(result))).is_err() {
                 return;
             }
@@ -181,6 +187,14 @@ pub fn spawn_actor(stack: Arc<Stack>, tx: Sender<Event>, nudge: Sender<()>) -> S
         }
     });
     job_tx
+}
+
+/// Read the vendors' catalogues once, for the install picker. A thread of its
+/// own rather than a job, so a slow catalogue never holds up a start or stop.
+pub fn spawn_offerings(tx: Sender<Event>) {
+    thread::spawn(move || {
+        let _ = tx.send(Event::Offerings(crate::install::offerings()));
+    });
 }
 
 /// Follow one file at a time. Send `Some(path)` to switch, `None` to stop.
@@ -262,7 +276,7 @@ fn read_tail(path: &Path, size: u64) -> LogView {
 
 /// Every job goes through the same core the subcommands call. Nothing here
 /// reimplements an action; it only turns the structured result into lines.
-fn run(stack: &Stack, job: Job) -> JobResult {
+fn run(stack: &Stack, job: Job, tx: &Sender<Event>) -> JobResult {
     let label = job.label();
     match job {
         Job::Start(only) => steps(label, control::run_start(stack, only.as_deref()), |step| {
@@ -369,7 +383,21 @@ fn run(stack: &Stack, job: Job) -> JobResult {
             // it never writes to stdout, unlike `install` itself, which this
             // job used to call directly. See
             // docs/issue/tui-install-stdout-corruption-2026-09-19.md.
-            match crate::install::install_quiet(stack, &runtime, version.as_deref(), true) {
+            //
+            // Not forced: replacing an installed version would also replace
+            // whatever was hand-edited inside it (a PHP version's php.ini, for
+            // one) without asking. That stays a deliberate CLI `--force`.
+            //
+            // Progress arrives per chunk read; ten updates a second is plenty
+            // for a footer and keeps the channel from flooding.
+            let mut last = None::<std::time::Instant>;
+            let mut on_progress = |text: &str| {
+                if last.is_none_or(|at| at.elapsed() >= Duration::from_millis(100)) {
+                    last = Some(std::time::Instant::now());
+                    let _ = tx.send(Event::Progress(text.to_string()));
+                }
+            };
+            match crate::install::install_quiet(stack, &runtime, version.as_deref(), false, &mut on_progress) {
                 Ok(crate::install::InstallOutcome::Installed(done)) => JobResult {
                     label,
                     lines: vec![format!(
@@ -390,6 +418,52 @@ fn run(stack: &Stack, job: Job) -> JobResult {
                     lines: vec![format!(
                         "No version named for {runtime} -- nothing installed. \
                          Run `devcrate install {runtime} <version>` from a terminal."
+                    )],
+                    failed: true,
+                    sites_changed: false,
+                },
+                // `--force` cannot be passed from here, so name the command
+                // that can, rather than an instruction the user cannot follow.
+                Err(err) if format!("{err:#}").contains("pass --force") => JobResult {
+                    label,
+                    lines: vec![format!(
+                        "{err:#} -- already installed. To replace it, run \
+                         `devcrate install {runtime} {} --force` from a terminal.",
+                        version.as_deref().unwrap_or("<version>")
+                    )],
+                    failed: true,
+                    sites_changed: false,
+                },
+                Err(err) => failure(label, err),
+            }
+        }
+
+        // Never `--data`, never `--force`: deleting a database's data, the
+        // version `current` names, or Erlang under an installed RabbitMQ stays
+        // a deliberate command, so those refusals are passed on with it named.
+        Job::Uninstall { runtime, version, .. } => {
+            match crate::uninstall::uninstall_quiet(stack, &runtime, version.as_deref(), false, false) {
+                Ok(done) => {
+                    let what = match done.version.is_empty() {
+                        true => done.runtime.label().to_string(),
+                        false => format!("{} {}", done.runtime.label(), done.version),
+                    };
+                    let mut lines = vec![format!("{what} removed from {}", done.dir)];
+                    if let Some(data) = &done.data_dir {
+                        lines.push(format!(
+                            "{data} was left in place -- `devcrate uninstall {runtime} --data --force` deletes it"
+                        ));
+                    }
+                    if done.current_cleared {
+                        lines.push("it was the active version; `current` has been cleared".into());
+                    }
+                    JobResult { label, lines, failed: false, sites_changed: false }
+                }
+                Err(err) if format!("{err:#}").contains("--force") => JobResult {
+                    label,
+                    lines: vec![format!(
+                        "{err:#} -- the dashboard never forces; run `devcrate uninstall {runtime}{} --force` from a terminal.",
+                        version.as_deref().map(|v| format!(" {v}")).unwrap_or_default()
                     )],
                     failed: true,
                     sites_changed: false,

@@ -1,8 +1,7 @@
 # Docs and the dashboard's install picker have drifted from what the code does
 
-**Status: open.** The documentation fixes (items 1–5, 9, 10) and the GitHub
-sync (8) are done; the code fixes (6, 7, 11–13) are not. See
-[Definition of done](#definition-of-done).
+**Status: open.** Items 1–13 are fixed. Item 14, found while fixing the
+picker, is not. See [Definition of done](#definition-of-done).
 
 ## Summary
 
@@ -108,6 +107,20 @@ breaks.
     Node, Bun, and Python all do — and the module doc, `cli.md`, and the
     changelog all say PHP does too.
 
+**Found while fixing the picker**
+
+14. Four of the catalogues are not catalogues. `mariadb_catalogue`,
+    `rabbitmq_catalogue`, `erlang_catalogue`, and `redis_catalogue`
+    (`devcrate/src/install/download.rs`) return a list written into the
+    binary — two releases each — rather than reading the vendor. Roadmap item
+    2 lists MariaDB's REST API and GitHub releases as their sources. Until
+    they are fetched, `latest` for these four means the newest release this
+    build knows about, and `cli.md` says so.
+15. The dashboard's install always passed `force = true` to `install_quiet`
+    (`devcrate/src/tui/worker.rs`), so picking a version already installed
+    replaced its folder — a hand-edited `php.ini` with it — without asking.
+    Fixed with the picker: the dashboard never forces now.
+
 ## Impact
 
 Items 1–5 make the docs undersell the tool: a reader of `cli.md` or `tui.md`
@@ -158,16 +171,22 @@ and the catalogue code in `install/`; 6–8 touch `site.rs`, `hosts.rs`, and
 - [x] `tui.md`'s picker list matches `INSTALL_OPTIONS` exactly.
 - [x] `index.md` lists every managed service and an accurate roadmap summary.
 - [x] `roadmap.md`'s opening and status table no longer hide open scope.
-- [ ] Every option in the install picker installs something, or is removed.
-- [ ] The picker's versions come from the upstream catalogues, with an offline
+- [x] Every option in the install picker installs something, or is removed.
+- [x] The picker's versions come from the upstream catalogues, with an offline
       fallback; nginx, PostgreSQL, and Python are offered.
 - [x] `issue-2.md` reflects that uninstall is built.
-- [ ] The dashboard's `d` removes the hosts entry, as `site remove` does.
-- [ ] An unelevated hosts write is atomic (temp file, then rename).
-- [ ] `uninstall php` refuses the `current` version without `--force`.
+- [x] The dashboard's `d` removes the hosts entry, as `site remove` does.
+- [x] An unelevated hosts write is atomic (temp file, then rename).
+- [x] `uninstall php` refuses the `current` version without `--force`.
+- [x] The dashboard never forces an install over an existing version (15).
+- [ ] MariaDB, RabbitMQ, Erlang, and Redis read their vendors' release lists
+      instead of a list built into the binary (14).
 - [x] Each GitHub issue's checkboxes match its mirror; finished issues are
       closed. — *Bodies of #1–#3 replaced with their mirrors on 2026-10-15,
       after the mirrors' own stale notes were corrected (#1's site creation,
       #2's `my.ini` and definition of done, #3's hosts entry). #1 closed as
       completed; #2 (catalogue cache) and #3 (platform abstraction) stay open.*
-- [ ] `cargo build --release` is warning-free and `cargo test` passes.
+- [x] `cargo build --release` is warning-free and `cargo test` passes (124
+      tests, plus one network test, `offerings_from_the_live_catalogues`, run
+      by hand against the live vendors). The dashboard itself has not been
+      driven in a real terminal — only rendered through `TestBackend`.
