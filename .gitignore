@@ -24,6 +24,7 @@ erl_crash.dump
 /mariadb/
 /erlang/
 /rabbitmq/
+/redis/
 /composer/
 /tools/
 /node/

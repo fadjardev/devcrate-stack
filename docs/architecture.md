@@ -46,6 +46,7 @@ C:\devcrate\                   <- the stack root (any folder works)
 |- mariadb\                    Portable MariaDB (binaries + data, not versioned)
 |- postgres\                   Portable PostgreSQL 13 (bin\ + data\ cluster, not versioned)
 |- rabbitmq\ + erlang\         Portable RabbitMQ broker + Erlang runtime (not versioned)
+|- redis\                      Portable Redis (binaries + data\, not versioned)
 |- composer\                   composer.phar + shims + home/cache, in-root (not versioned)
 |- tools\rabbitmq-smoketest\   Standalone AMQP publish/consume test
 |- projects\                   Application code, one folder per site (NOT versioned)
@@ -84,6 +85,7 @@ selected by `phpuse`.
 | PHP 8.5 FastCGI | `127.0.0.1:9085` | `php-cgi.exe` |
 | RabbitMQ AMQP | `127.0.0.1:5672` | broker |
 | RabbitMQ mgmt UI | `127.0.0.1:15672` | `guest` / `guest` |
+| Redis | `127.0.0.1:6379` | no password (loopback-only bind) |
 | Nginx HTTP | `0.0.0.0:80` | redirects to HTTPS |
 | Nginx HTTPS | `0.0.0.0:443` | TLS via mkcert |
 
@@ -134,7 +136,7 @@ that takes a version accepts `8.5`, `85`, or `php-8.5` interchangeably.
   the repo tracks the scripts, `nginx.conf`, `sites\*.conf`, and each
   `php.ini`. TLS private keys and `projects/` are never committed.
 - **Services and toolchains are different things.** MariaDB, PostgreSQL,
-  RabbitMQ, nginx, and the PHP FastCGI workers are *services* — they listen on a
+  RabbitMQ, Redis, nginx, and the PHP FastCGI workers are *services* — they listen on a
   port and are started, stopped, and supervised (`ServiceKind` in the binary).
   PHP-on-`PATH`, Python, and (planned) Node/Bun are *toolchains* — no port,
   nothing to start, switched by a `current` junction. PHP is the one runtime

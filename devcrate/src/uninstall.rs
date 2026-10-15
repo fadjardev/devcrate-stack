@@ -8,7 +8,7 @@
 //!   it, the CLI would resolve to nothing afterwards, so that needs `--force`
 //!   and the junction is cleared rather than left dangling.
 //! - **Single directory holding both binaries and live data** (mariadb,
-//!   postgres, rabbitmq): the `data\` a service keeps beside its binaries is
+//!   postgres, rabbitmq, redis): the `data\` a service keeps beside its binaries is
 //!   not something `uninstall` destroys by default, the same way `install
 //!   --force` never overwrites an existing cluster (see
 //!   `install::postgres::initialise`). Everything *but* `data\` is removed;
@@ -40,7 +40,7 @@ use crate::{bun, exit, junction, nginx, node, php, python, site};
 pub struct Uninstalled {
     pub runtime: Runtime,
     /// Empty for the runtimes that carry no version: composer, mariadb,
-    /// postgres, rabbitmq, erlang.
+    /// postgres, rabbitmq, erlang, redis.
     pub version: String,
     /// Root-relative path of what was removed.
     pub dir: String,
@@ -79,6 +79,7 @@ pub fn uninstall(
         Runtime::MariaDb => uninstall_database_dir(stack, runtime, ServiceKind::MariaDb, data, force)?,
         Runtime::Postgres => uninstall_database_dir(stack, runtime, ServiceKind::Postgres, data, force)?,
         Runtime::RabbitMq => uninstall_database_dir(stack, runtime, ServiceKind::RabbitMq, data, force)?,
+        Runtime::Redis => uninstall_database_dir(stack, runtime, ServiceKind::Redis, data, force)?,
         Runtime::Erlang => uninstall_erlang(stack, force)?,
     };
 
@@ -379,14 +380,13 @@ fn uninstall_composer(stack: &Stack) -> Result<Uninstalled> {
 /// `service.install_marker` is `<dir>\bin\<exe>` (mariadb, postgres) or
 /// `<dir>\sbin\<script>` (rabbitmq) -- two levels up from either is the
 /// directory this runtime actually lives in, the same walk
-/// [`Stack::to_config`](crate::config::Stack::to_config) does.
+/// [`Stack::to_config`](crate::config::Stack::to_config) does. Redis is flat
+/// (`<dir>\redis-server.exe`, no bin\), so it needs only one.
 fn service_dir(service: &Service) -> Result<PathBuf> {
-    service
-        .install_marker
-        .ancestors()
-        .nth(2)
-        .map(Path::to_path_buf)
-        .ok_or_else(|| anyhow!("{} has no ancestor 2 levels up", service.install_marker.display()))
+    let levels = if service.kind == ServiceKind::Redis { 1 } else { 2 };
+    service.install_marker.ancestors().nth(levels).map(Path::to_path_buf).ok_or_else(|| {
+        anyhow!("{} has no ancestor {levels} levels up", service.install_marker.display())
+    })
 }
 
 fn uninstall_database_dir(

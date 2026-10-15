@@ -37,6 +37,17 @@ pub fn discover(stack: &Stack) -> Vec<LogFile> {
         collect(&mut files, "rabbitmq", &dir.join("data").join("log"), &["log"]);
     }
 
+    // redis-server.exe chdir's into the configured `dir` (devcrate.conf's
+    // `./data`, see install::redis::configure) early at startup, before it
+    // opens `logfile`, so the relative `logfile "redis.log"` lands inside
+    // data\ rather than beside the binaries the way mariadb's and rabbitmq's
+    // logs sit relative to theirs.
+    if let Some(redis) = stack.by_kind(ServiceKind::Redis)
+        && let Some(dir) = redis.install_marker.parent()
+    {
+        collect(&mut files, "redis", &dir.join("data"), &["log"]);
+    }
+
     files.sort_by(|a, b| {
         // Error logs first within a group; the group prefix keeps services
         // together because it sorts as part of the label.

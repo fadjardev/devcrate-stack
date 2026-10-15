@@ -18,8 +18,8 @@ it. `devcrate install postgres 13.23` downloads EDB's binaries zip and runs
 `initdb` (a database service beside MariaDB), and `devcrate install python 3.8`
 fetches the embeddable zip from python.org and bootstraps pip (a toolchain on
 `PATH`, switched by `python use`). `--from` does the same from an archive already
-on disk. MariaDB, RabbitMQ, Erlang, Node.js, and Bun are all installable end to
-end too.
+on disk. MariaDB, RabbitMQ, Erlang, Node.js, Bun, and Redis are all installable
+end to end too.
 
 The batch scripts stay in the repo and keep working; nothing about them has
 changed.
@@ -124,6 +124,7 @@ visible rather than mysterious.
 | `devcrate install mariadb <version>` | **works** — downloads, unpacks, generates `my.ini` and `data\` |
 | `devcrate install rabbitmq <version>` | **works** — downloads, unpacks, enables the management plugin |
 | `devcrate install erlang <version>` | **works** — downloads, unpacks the RabbitMQ dependency |
+| `devcrate install redis <version>` | **works** — downloads from GitHub (length/TLS), unpacks, generates `devcrate.conf` and `data\` |
 | `devcrate install node <version>` / `devcrate install bun <version>` | **works** — downloads and installs into `node\` / `bun\` |
 | `devcrate install <runtime> --from <file>` | **works** — the same install from an archive or phar on disk |
 | `devcrate uninstall <runtime> [version]` | **works** — see [`devcrate uninstall`](#devcrate-uninstall) |
@@ -1014,7 +1015,7 @@ The mirror of `install`, one runtime at a time. `runtime` is the same name
 `install` accepts. `version` is required for the versioned, side-by-side
 runtimes (`php`, `nginx`, `node`, `bun`, `python`) and lists what is installed
 when omitted; it is ignored for the ones that have only one install
-(`composer`, `mariadb`, `postgres`, `rabbitmq`, `erlang`).
+(`composer`, `mariadb`, `postgres`, `rabbitmq`, `erlang`, `redis`).
 
 A service that is still running is always refused — Windows will not cleanly
 delete a directory a process is executing out of, and `devcrate stop
@@ -1027,9 +1028,9 @@ delete a directory a process is executing out of, and `devcrate stop
   `erlang` while `rabbitmq\` is still installed (Erlang is its dependency, not
   a peer).
 
-`mariadb`, `postgres`, and `rabbitmq` keep a `data\` directory beside their
-binaries — the same directory an `install --force` reinstall already lifts
-across rather than overwrites (see [`devcrate install`](#devcrate-install)
+`mariadb`, `postgres`, `rabbitmq`, and `redis` keep a `data\` directory beside
+their binaries — the same directory an `install --force` reinstall already
+lifts across rather than overwrites (see [`devcrate install`](#devcrate-install)
 above). `uninstall` treats it the same way: everything else is removed, and
 `data\` is left in place unless `--data` is also given. `--data` alone is
 refused; it has to be paired with `--force`, since deleting a database's data

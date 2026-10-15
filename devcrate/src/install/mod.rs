@@ -30,6 +30,7 @@ mod php;
 mod postgres;
 mod python;
 mod rabbitmq;
+mod redis;
 
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -67,6 +68,7 @@ pub enum Runtime {
     Bun,
     Postgres,
     Python,
+    Redis,
 }
 
 impl Runtime {
@@ -83,10 +85,11 @@ impl Runtime {
             "bun" => Ok(Runtime::Bun),
             "postgres" | "postgresql" => Ok(Runtime::Postgres),
             "python" => Ok(Runtime::Python),
+            "redis" => Ok(Runtime::Redis),
             other => bail!(
                 "{other:?} is not a runtime devcrate manages.\n\
                  Known: php, nginx, composer, mariadb, rabbitmq, erlang, node, \
-                 bun, postgres, python"
+                 bun, postgres, python, redis"
             ),
         }
     }
@@ -104,6 +107,7 @@ impl Runtime {
             Runtime::Bun => "bun",
             Runtime::Postgres => "postgres",
             Runtime::Python => "python",
+            Runtime::Redis => "redis",
         }
     }
 
@@ -120,6 +124,7 @@ impl Runtime {
             Runtime::Bun => "Bun",
             Runtime::Postgres => "PostgreSQL",
             Runtime::Python => "Python",
+            Runtime::Redis => "Redis",
         }
     }
 }
@@ -180,6 +185,7 @@ pub enum Details {
     Bun(BunInstalledDetails),
     Postgres(PostgresInstalled),
     Python(PythonInstalled),
+    Redis(RedisInstalled),
 }
 
 #[derive(Debug)]
@@ -276,6 +282,14 @@ pub struct RabbitMqInstalled {
 }
 
 #[derive(Debug)]
+pub struct RedisInstalled {
+    pub dir: String,
+    pub conf_created: bool,
+    pub data_dir_created: bool,
+    pub port: u16,
+}
+
+#[derive(Debug)]
 pub struct ErlangInstalled {
     pub dir: String,
 }
@@ -299,6 +313,7 @@ pub fn from_archive(
         Runtime::Bun => bun_from_archive(stack, archive_path, opts, progress),
         Runtime::Postgres => postgres_from_archive(stack, archive_path, opts, progress),
         Runtime::Python => python_from_archive(stack, archive_path, opts, progress),
+        Runtime::Redis => redis_from_archive(stack, archive_path, opts, progress),
     }
 }
 
@@ -442,6 +457,88 @@ fn rabbitmq_from_archive(
             dir: stack.rel(&dest),
             data_dir_created: configured.data_dir_created,
             plugins_file_created: configured.plugins_file_created,
+        }),
+    })
+}
+
+/// Install Redis into `redis\`, seeding a `redis.conf` and `data\` the same
+/// way MariaDB's `my.ini` and `data\` are seeded -- see [`redis::configure`].
+/// No PostgreSQL-style careful swap: there is no equivalent-of-`initdb` step,
+/// so a plain [`swap_into_place`] is enough, and a reinstall's `data\` keeps
+/// whatever the last binaries wrote to it, exactly as MariaDB's does.
+fn redis_from_archive(
+    stack: &Stack,
+    archive_path: &Path,
+    opts: &Options,
+    progress: &mut dyn FnMut(Progress),
+) -> Result<Installed> {
+    if !archive_path.is_file() {
+        bail!("{} is not a file", archive_path.display());
+    }
+    let file_name = archive_path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    let source_sha256 = download::sha256_of(archive_path)
+        .with_context(|| format!("hashing {}", archive_path.display()))?;
+
+    let version = opts
+        .version
+        .clone()
+        .or_else(|| redis::version_from_file_name(&file_name))
+        .unwrap_or_else(|| "8.10.2".to_string());
+
+    let dest = stack.root.join("redis");
+    let port = stack
+        .by_kind(config::ServiceKind::Redis)
+        .and_then(|s| s.ports.first().copied())
+        .unwrap_or(6379);
+
+    if dest.exists() && !opts.force {
+        bail!("{} already exists; pass --force to replace it", stack.rel(&dest));
+    }
+
+    let staging = stack.root.join(staging_name("redis"));
+    if staging.exists() {
+        let _ = std::fs::remove_dir_all(&staging);
+    }
+    std::fs::create_dir_all(&staging)?;
+
+    progress(Progress::Extracting { done: 0, total: 1 });
+    let extracted = archive::extract(archive_path, &staging, &mut |done, total| {
+        progress(Progress::Extracting { done, total });
+    })?;
+
+    progress(Progress::Validating);
+    redis::check(&staging, archive_path)?;
+
+    progress(Progress::Configuring);
+    let configured = redis::configure(&staging, port)?;
+
+    progress(Progress::Installing);
+    let replaced = swap_into_place(stack, &stack.root, &staging, &dest, "redis")?;
+
+    let receipt = Receipt {
+        runtime: Runtime::Redis.as_str().to_string(),
+        version: version.clone(),
+        release: version.clone(),
+        thread_safe: None,
+        source_archive: file_name,
+        source_bytes: std::fs::metadata(archive_path).map(|m| m.len()).unwrap_or(0),
+        source_sha256,
+        files: extracted.files,
+    };
+    write_receipt(&dest, &receipt)?;
+
+    Ok(Installed {
+        runtime: Runtime::Redis,
+        version: version.clone(),
+        release: version,
+        dir: stack.rel(&dest),
+        files: extracted.files,
+        replaced,
+        details: Details::Redis(RedisInstalled {
+            dir: stack.rel(&dest),
+            conf_created: configured.conf_created,
+            data_dir_created: configured.data_dir_created,
+            port,
         }),
     })
 }
@@ -1564,6 +1661,7 @@ fn install_by_download(
         Runtime::Bun => choose_bun(stack, version, emit)?,
         Runtime::Postgres => choose_postgres(stack, version, emit)?,
         Runtime::Python => choose_python(stack, version, emit)?,
+        Runtime::Redis => choose_redis(stack, version, emit)?,
     };
     // Nothing chosen means the catalogue was printed instead.
     let Some(Chosen { download: source, dest, replace_freely }) = chosen else {
@@ -1838,6 +1936,34 @@ fn choose_rabbitmq(stack: &Stack, version: Option<&str>, emit: &mut dyn Emit) ->
     }))
 }
 
+fn choose_redis(stack: &Stack, version: Option<&str>, emit: &mut dyn Emit) -> Result<Option<Chosen>> {
+    emit_line!(emit, "  fetching the Redis release list");
+    let catalogue = download::redis_catalogue()?;
+
+    let Some(wanted) = version else {
+        emit_line!(emit, "\n  Available Redis releases (redis-windows/redis-windows on GitHub):");
+        for rel in &catalogue {
+            emit_line!(emit, "    redis {} ({})", rel.version, rel.file_name);
+        }
+        emit_line!(emit, "\n  Pass a version to install: `devcrate install redis 8.10.2`");
+        return Ok(None);
+    };
+
+    let release = catalogue
+        .iter()
+        .find(|r| r.version == wanted || r.version.starts_with(wanted))
+        .ok_or_else(|| anyhow!("no Redis release matching {wanted:?}"))?;
+
+    let download = release.download();
+    let dest = stack.root.join("redis");
+
+    Ok(Some(Chosen {
+        download,
+        dest,
+        replace_freely: false,
+    }))
+}
+
 fn choose_erlang(stack: &Stack, version: Option<&str>, emit: &mut dyn Emit) -> Result<Option<Chosen>> {
     emit_line!(emit, "  fetching the Erlang release list");
     let catalogue = download::erlang_catalogue()?;
@@ -1967,13 +2093,14 @@ fn report_transfer(
         Runtime::Erlang => "GitHub releases",
         Runtime::Node => "nodejs.org releases index",
         Runtime::Bun => "GitHub releases",
+        Runtime::Redis => "GitHub releases",
         // nginx, PostgreSQL (EDB), and python.org publish no sha256, so these
         // arms are never the verified one -- the "no checksum" branch below
         // reports them instead.
         Runtime::Nginx | Runtime::Postgres | Runtime::Python => "the vendor's checksum",
     };
     match (fetched.cached, fetched.verified) {
-        (true, true) => emit_line!(emit, 
+        (true, true) => emit_line!(emit,
             "  already in {}, checksum still good -- nothing downloaded",
             stack.rel(downloads)
         ),
@@ -1983,15 +2110,25 @@ fn report_transfer(
         (false, true) => emit_line!(emit, "  sha256 verified against {against}"),
         (false, false) => {
             // The vendor that publishes no hash, named so the weaker check is
-            // attributed rather than mysterious.
+            // attributed rather than mysterious. RabbitMQ, Erlang, and Bun's
+            // catalogues here are hardcoded lists with no hash either (see
+            // download.rs), so they fall into this branch too -- named
+            // properly rather than defaulting to "nginx".
             let vendor = match runtime {
                 Runtime::Postgres => "EDB",
                 Runtime::Python => "python.org",
+                Runtime::MariaDb => "MariaDB",
+                Runtime::RabbitMq => "RabbitMQ",
+                Runtime::Erlang => "Erlang/OTP",
+                Runtime::Bun => "Bun",
+                Runtime::Redis => "redis-windows",
                 _ => "nginx",
             };
             let host = match runtime {
                 Runtime::Postgres => "the download host",
                 Runtime::Python => "python.org",
+                Runtime::MariaDb => "archive.mariadb.org",
+                Runtime::RabbitMq | Runtime::Erlang | Runtime::Bun | Runtime::Redis => "github.com",
                 _ => "nginx.org",
             };
             emit_line!(emit, "  sha256 {}", fetched.sha256);
@@ -2147,6 +2284,7 @@ trait Emit {
                     Runtime::Bun => "preparing bun environment",
                     Runtime::Postgres => "initialising the cluster (initdb)",
                     Runtime::Python => "enabling site (for pip)",
+                    Runtime::Redis => "generating devcrate.conf",
                 };
                 self.line(&format!("  {text}"));
             }
@@ -2237,6 +2375,7 @@ fn print_installed(done: &Installed, emit: &mut dyn Emit) {
         Details::Bun(bun) => print_bun_installed(done, bun, emit),
         Details::Postgres(postgres) => print_postgres_installed(done, postgres, emit),
         Details::Python(py) => print_python_installed(done, py, emit),
+        Details::Redis(redis) => print_redis_installed(done, redis, emit),
     }
 }
 
@@ -2551,6 +2690,23 @@ fn print_rabbitmq_installed(done: &Installed, rabbitmq: &RabbitMqInstalled, emit
     emit_line!(emit);
     emit_line!(emit, "RabbitMQ {} installed to {}", done.version, rabbitmq.dir);
     emit_line!(emit, "  start RabbitMQ service  devcrate start rabbitmq");
+}
+
+fn print_redis_installed(done: &Installed, redis: &RedisInstalled, emit: &mut dyn Emit) {
+    if redis.conf_created {
+        emit_line!(emit, "  devcrate.conf generated with default settings");
+    }
+    if redis.data_dir_created {
+        emit_line!(emit, "  created data/ directory");
+    }
+    if done.replaced {
+        emit_line!(emit, "  replaced the previous Redis installation");
+    }
+    emit_line!(emit);
+    emit_line!(emit, "Redis {} installed to {}", done.version, redis.dir);
+    emit_line!(emit, "  start it   devcrate start redis        (listens on {})", redis.port);
+    emit_line!(emit, "  connect    redis-cli -p {}", redis.port);
+    emit_line!(emit, "  stop it    devcrate stop redis");
 }
 
 fn print_erlang_installed(done: &Installed, erlang: &ErlangInstalled, emit: &mut dyn Emit) {

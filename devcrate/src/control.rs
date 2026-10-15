@@ -8,8 +8,9 @@
 //!
 //! Both orders are the scripts' own. Down: nginx first so no new request
 //! reaches a backend that is about to disappear, then the PHP pools, then
-//! RabbitMQ, then MariaDB last because it has the most to flush. Up: the
-//! reverse, so nginx only starts once the backends it proxies to are answering.
+//! RabbitMQ, then Redis and MariaDB last because they have the most to flush.
+//! Up: the reverse, so nginx only starts once the backends it proxies to are
+//! answering.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -49,6 +50,7 @@ const SHUTDOWN: &[ServiceKind] = &[
     ServiceKind::Node,
     ServiceKind::Bun,
     ServiceKind::RabbitMq,
+    ServiceKind::Redis,
     ServiceKind::Postgres,
     ServiceKind::MariaDb,
 ];
@@ -58,6 +60,7 @@ const SHUTDOWN: &[ServiceKind] = &[
 const STARTUP: &[ServiceKind] = &[
     ServiceKind::MariaDb,
     ServiceKind::Postgres,
+    ServiceKind::Redis,
     ServiceKind::Php,
     ServiceKind::Node,
     ServiceKind::Bun,
@@ -85,6 +88,10 @@ fn grace(kind: ServiceKind) -> Duration {
         // clients rather than waiting them out, so this is a ceiling it rarely
         // reaches.
         ServiceKind::Postgres => Duration::from_secs(30),
+        // `redis-cli shutdown` triggers a synchronous save when the conf has
+        // save points configured (it does -- see install::redis::configure),
+        // so this covers a save of a dev-sized dataset rather than a bulk one.
+        ServiceKind::Redis => Duration::from_secs(15),
     }
 }
 
@@ -366,6 +373,22 @@ fn ask_nicely(stack: &Stack, service: &Service) -> Result<()> {
                 .arg(&data)
                 .args(["-m", "fast", "stop"]))
         }
+        ServiceKind::Redis => {
+            // The binary sits flat in its own directory (no bin\), so this is
+            // the whole of it -- unlike MariaDB's and PostgreSQL's `parent()`,
+            // which lands in a bin\ to join a sibling tool onto.
+            let dir = parent(&service.install_marker)?;
+            let cli = dir.join("redis-cli.exe");
+            if !cli.is_file() {
+                return Err(anyhow!("{} not found", stack.rel(&cli)));
+            }
+            let port = service.ports.first().copied().unwrap_or(6379);
+            // No -a: the default conf sets no password (loopback-only bind is
+            // the guard, the same trust model postgres.rs documents). A bare
+            // `shutdown` saves first when the conf has save points, which it
+            // does.
+            run(Command::new(&cli).args(["-p", &port.to_string(), "shutdown"]))
+        }
     }
 }
 
@@ -427,6 +450,10 @@ fn boot(kind: ServiceKind) -> Duration {
         ServiceKind::Postgres => Duration::from_secs(30),
         // A cold Erlang node with the management plugin is the slow one here.
         ServiceKind::RabbitMq => Duration::from_secs(90),
+        // Redis binds its port before it finishes loading any RDB/AOF file on
+        // disk, so this is generous for a dev-sized dataset rather than
+        // tight.
+        ServiceKind::Redis => Duration::from_secs(15),
         ServiceKind::Node | ServiceKind::Bun => Duration::ZERO,
     }
 }
@@ -660,6 +687,21 @@ fn launch(stack: &Stack, service: &Service) -> Result<()> {
             background(&mut command)
         }
 
+        ServiceKind::Redis => {
+            let dir = parent(&service.install_marker)?;
+            // devcrate.conf, not the vendor's own redis.conf sitting right
+            // beside it (see install::redis::configure for why). A relative
+            // name rather than the drive-letter path `dir` would otherwise
+            // be -- the msys2/Cygwin build wants `/cygdrive/c/...` for a path
+            // given as a CLI argument, but reads an ordinary Windows path
+            // fine once it is inside the conf file itself. current_dir
+            // sidesteps the whole translation by making the argument
+            // driveless.
+            let mut command = Command::new(&service.install_marker);
+            command.arg("devcrate.conf").current_dir(&dir);
+            background(&mut command)
+        }
+
         ServiceKind::Node | ServiceKind::Bun => Ok(()),
     }
 }
@@ -824,6 +866,7 @@ mod tests {
             ServiceKind::MariaDb,
             ServiceKind::Postgres,
             ServiceKind::RabbitMq,
+            ServiceKind::Redis,
         ];
         for kind in all {
             assert!(STARTUP.contains(&kind), "{kind} is missing from STARTUP");
@@ -854,8 +897,11 @@ mod tests {
 
         let db_pos = |order: &[ServiceKind], kind| order.iter().position(|k| *k == kind).unwrap();
         // Postgres starts in the DB half (before PHP/nginx) and stops in it
-        // (after nginx/PHP).
+        // (after nginx/PHP). Redis sits in the same half, for the same reason
+        // -- a request handler may talk to it.
         assert!(db_pos(STARTUP, ServiceKind::Postgres) < db_pos(STARTUP, ServiceKind::Php));
         assert!(db_pos(SHUTDOWN, ServiceKind::Postgres) > db_pos(SHUTDOWN, ServiceKind::Php));
+        assert!(db_pos(STARTUP, ServiceKind::Redis) < db_pos(STARTUP, ServiceKind::Php));
+        assert!(db_pos(SHUTDOWN, ServiceKind::Redis) > db_pos(SHUTDOWN, ServiceKind::Php));
     }
 }

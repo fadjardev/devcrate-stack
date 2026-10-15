@@ -29,6 +29,8 @@ pub struct Config {
     pub postgres: PostgresConfig,
     #[serde(default)]
     pub rabbitmq: RabbitMqConfig,
+    #[serde(default)]
+    pub redis: RedisConfig,
     /// One table per installed PHP version. Empty means "discover them".
     #[serde(default)]
     pub php: Vec<PhpConfig>,
@@ -79,6 +81,17 @@ pub struct RabbitMqConfig {
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct RedisConfig {
+    /// Directory holding `redis-server.exe`, `redis.conf`, and `data\`,
+    /// relative to the stack root. One version at a time, unlike PHP -- there
+    /// is no compelling reason for a dev stack to run two Redis builds side
+    /// by side, so it is a single directory like MariaDB's.
+    pub dir: Option<PathBuf>,
+    pub port: Option<u16>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct PhpConfig {
     /// Display version, e.g. `"8.5"`. Derived from `dir` when absent.
     pub version: Option<String>,
@@ -113,6 +126,7 @@ pub enum ServiceKind {
     MariaDb,
     Postgres,
     RabbitMq,
+    Redis,
     Node,
     Bun,
 }
@@ -125,6 +139,7 @@ impl ServiceKind {
             ServiceKind::MariaDb => "mariadb",
             ServiceKind::Postgres => "postgres",
             ServiceKind::RabbitMq => "rabbitmq",
+            ServiceKind::Redis => "redis",
             ServiceKind::Node => "node",
             ServiceKind::Bun => "bun",
         }
@@ -278,6 +293,21 @@ impl Stack {
             ],
         });
 
+        let redis_dir =
+            base.join(config.redis.dir.clone().unwrap_or_else(|| PathBuf::from("redis")));
+        services.push(Service {
+            id: "redis".into(),
+            name: "Redis".into(),
+            kind: ServiceKind::Redis,
+            // The vendor's zip is flat -- no bin\ subfolder the way MariaDB's
+            // and PostgreSQL's are -- so the binary sits directly under its
+            // own directory.
+            install_marker: redis_dir.join("redis-server.exe"),
+            process_prefix: redis_dir.join("redis-server.exe"),
+            exclude_names: Vec::new(),
+            ports: vec![config.redis.port.unwrap_or(6379)],
+        });
+
         let node_dir = base.join("node");
         services.push(Service {
             id: "node".into(),
@@ -412,6 +442,13 @@ impl Stack {
             config.rabbitmq.erlang_dir = Some(self.rel_path(&rabbit.process_prefix));
             config.rabbitmq.port = rabbit.ports.first().copied();
             config.rabbitmq.management_port = rabbit.ports.get(1).copied();
+        }
+
+        if let Some(redis) = self.by_kind(ServiceKind::Redis) {
+            // One level up, not two: the binary sits directly under its own
+            // directory, with no bin\ the way MariaDB's and PostgreSQL's do.
+            config.redis.dir = ancestor(&redis.install_marker, 1).map(|d| self.rel_path(d));
+            config.redis.port = redis.ports.first().copied();
         }
 
         config.php = self

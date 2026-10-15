@@ -10,7 +10,7 @@ stack for you.
 | # | Item | Status |
 | --- | --- | --- |
 | 1 | Rust TUI (`ratatui`), shipped as a single executable | done — see [tui.md](tui.md) |
-| 2 | Built-in runtime downloader / installer with version selection | done — PHP, nginx, Composer, MariaDB, RabbitMQ, Erlang/OTP, Node.js, Bun, PostgreSQL, and Python all done end to end |
+| 2 | Built-in runtime downloader / installer with version selection | done — PHP, nginx, Composer, MariaDB, RabbitMQ, Erlang/OTP, Node.js, Bun, PostgreSQL, Python, and Redis all done end to end |
 | 3 | Runs from any terminal, scriptable as well as interactive | done — see [cli.md](cli.md) |
 | 4 | Open an existing project: vhost + hosts entry + mkcert TLS, in one step | done — automated hosts block editing with UAC elevation, mkcert TLS issuance, smart web root & composer PHP constraint detection |
 | 5 | Node.js and Bun as managed runtimes | done — Node.js & Bun installer, version switcher, npm isolation, and smart .nvmrc / package.json detection |
@@ -90,7 +90,7 @@ Right now every runtime is fetched manually from a website and extracted by
 hand ([installation.md](installation.md)). Devcrate should do that itself.
 
 **Managed runtimes:** PHP, Nginx, MariaDB, PostgreSQL, RabbitMQ, Erlang/OTP,
-Composer, Python.
+Composer, Python, Redis.
 
 **Built for PHP, end to end.** `devcrate install php 8.4` fetches the
 catalogue from windows.php.net, downloads the thread-safe x64 zip, verifies
@@ -463,6 +463,16 @@ system-wide, everything inside the stack root.
    deleted (guarded by `--force` when it is the active `current` or, for PHP,
    still named by a vhost), and a database's `data\` directory survives by
    default, only actually removed with `--data --force` together.
+
+   **Redis followed**, completing the managed-runtime list with a service
+   shaped like MariaDB's rather than PostgreSQL's: one un-versioned directory,
+   no `initdb`-equivalent to run, `data\` and a config seeded on first install
+   and left alone after. The build comes from `redis-windows/redis-windows` on
+   GitHub, which -- like nginx and EDB -- publishes no checksum, so the
+   download is length/TLS-checked. The one wrinkle particular to it: the
+   vendor's zip already ships its own full `redis.conf`, so devcrate writes its
+   own settings to a `devcrate.conf` it owns outright rather than risk either
+   clobbering the vendor's file or silently doing nothing against it.
 6. The full site workflow on top of `site add`: hosts-file management and
    mkcert issuance/renewal (item 4). The mkcert half depends on the installer
    from step 5, since mkcert becomes a managed tool.

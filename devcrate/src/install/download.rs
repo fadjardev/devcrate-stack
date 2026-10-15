@@ -328,6 +328,45 @@ pub fn rabbitmq_catalogue() -> Result<Vec<RabbitMqRelease>> {
     ])
 }
 
+/// One installable Redis release, from `redis-windows/redis-windows` on
+/// GitHub -- a community compile of the official Redis source for Windows.
+/// There is no vendor-published checksum for these builds, so `sha256` is
+/// `None`, the same shape as [`RabbitMqRelease`] and [`ErlangRelease`].
+#[derive(Debug, Clone)]
+pub struct RedisRelease {
+    pub version: String,
+    pub file_name: String,
+    pub sha256: Option<String>,
+}
+
+impl RedisRelease {
+    pub fn download(&self) -> Download {
+        Download {
+            url: format!(
+                "https://github.com/redis-windows/redis-windows/releases/download/{}/{}",
+                self.version, self.file_name
+            ),
+            file_name: self.file_name.clone(),
+            sha256: self.sha256.clone(),
+        }
+    }
+}
+
+pub fn redis_catalogue() -> Result<Vec<RedisRelease>> {
+    Ok(vec![
+        RedisRelease {
+            version: "8.10.2".to_string(),
+            file_name: "Redis-8.10.2-Windows-x64-msys2.zip".to_string(),
+            sha256: None,
+        },
+        RedisRelease {
+            version: "8.8.3".to_string(),
+            file_name: "Redis-8.8.3-Windows-x64-msys2.zip".to_string(),
+            sha256: None,
+        },
+    ])
+}
+
 /// One installable Erlang/OTP release.
 #[derive(Debug, Clone)]
 pub struct ErlangRelease {
@@ -1154,6 +1193,23 @@ mod tests {
     }
 
     #[test]
+    fn the_redis_url_is_the_github_release_asset() {
+        let release = RedisRelease {
+            version: "8.10.2".into(),
+            file_name: "Redis-8.10.2-Windows-x64-msys2.zip".into(),
+            sha256: None,
+        };
+        let download = release.download();
+        assert_eq!(
+            download.url,
+            "https://github.com/redis-windows/redis-windows/releases/download/8.10.2/Redis-8.10.2-Windows-x64-msys2.zip"
+        );
+        // redis-windows publishes no hash, and that must be visible rather
+        // than faked.
+        assert_eq!(download.sha256, None);
+    }
+
+    #[test]
     fn the_python_url_is_the_embeddable_zip_under_its_release() {
         let release = embed_release("3.8", "3.8.10");
         assert_eq!(release.version, "3.8");
@@ -1244,9 +1300,8 @@ pub fn parse_node_catalogue(json_text: &str) -> Result<NodeCatalogue> {
             None => continue,
         };
         let files = item.get("files").and_then(|f| f.as_array());
-        let is_win_zip = files.map_or(false, |arr| {
-            arr.iter().any(|f| f.as_str() == Some("win-x64-zip"))
-        });
+        let is_win_zip =
+            files.is_some_and(|arr| arr.iter().any(|f| f.as_str() == Some("win-x64-zip")));
 
         if !is_win_zip {
             continue;

@@ -94,7 +94,7 @@ pub fn pick_project_folder() -> Option<String> {
     None
 }
 
-pub const INSTALL_OPTIONS: [(&'static str, &'static str, Option<&'static str>); 8] = [
+pub const INSTALL_OPTIONS: [(&'static str, &'static str, Option<&'static str>); 9] = [
     ("node", "Node.js (v22.11.0)", Some("22.11.0")),
     ("bun", "Bun (Latest)", None),
     ("php", "PHP 8.4", Some("8.4")),
@@ -102,6 +102,7 @@ pub const INSTALL_OPTIONS: [(&'static str, &'static str, Option<&'static str>); 
     ("php", "PHP 8.2", Some("8.2")),
     ("mariadb", "MariaDB Server", None),
     ("rabbitmq", "RabbitMQ + Erlang", None),
+    ("redis", "Redis Server", None),
     ("composer", "Composer (Latest)", None),
 ];
 
