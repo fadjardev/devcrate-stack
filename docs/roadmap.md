@@ -4,8 +4,9 @@ Where Devcrate is going. Today it is a set of batch scripts plus configuration
 that you drive by hand; the goal is a single executable that manages the whole
 stack for you.
 
-**Status legend:** `planned` - agreed, not started. `in progress` - being built.
-`done` - shipped, see [CHANGELOG.md](../CHANGELOG.md).
+**Status legend:** `proposed` - a candidate, not yet agreed. `planned` - agreed,
+not started. `in progress` - being built. `done` - shipped, see
+[CHANGELOG.md](../CHANGELOG.md).
 
 | # | Item | Status |
 | --- | --- | --- |
@@ -14,6 +15,17 @@ stack for you.
 | 3 | Runs from any terminal, scriptable as well as interactive | done — see [cli.md](cli.md) |
 | 4 | Open an existing project: vhost + hosts entry + mkcert TLS, in one step | done — automated hosts block editing with UAC elevation, mkcert TLS issuance, smart web root & composer PHP constraint detection |
 | 5 | Node.js and Bun as managed runtimes | done — Node.js & Bun installer, version switcher, npm isolation, and smart .nvmrc / package.json detection |
+| 6 | One-command setup on a fresh machine, with shortcuts into the dashboard | proposed |
+| 7 | A database browser and per-project databases | proposed |
+| 8 | A local mail catcher (Mailpit) | proposed |
+| 9 | Auto-vhost from a folder, and quick-create for Laravel / WordPress | proposed |
+| 10 | PHP extensions and Xdebug, toggled per version | proposed |
+
+Items 6–10 come from a review on 2026-10-15 of what Devcrate needs to stand as an
+alternative to Laragon and XAMPP; see
+[Toward a Laragon / XAMPP alternative](#toward-a-laragon--xampp-alternative).
+The same review recorded where the docs had drifted from the code, in
+[docs/issue/docs-drift-audit-2026-10-15.md](issue/docs-drift-audit-2026-10-15.md).
 
 ---
 
@@ -378,6 +390,164 @@ system-wide, everything inside the stack root.
   into the user profile.
 - Node and Bun are additions, not replacements: the stack must keep working
   with neither installed.
+
+---
+
+## Toward a Laragon / XAMPP alternative
+
+Items 1–5 are done, which makes this the point to ask what Devcrate was for in
+the first place: an alternative to Laragon and XAMPP. This section records the
+review of 2026-10-15 — where Devcrate already stands, where it falls short, and
+the candidates that came out of it. Every item here is `proposed`: a candidate,
+not an agreement.
+
+**Already ahead of both**
+
+- Several PHP versions *serving at once*, each vhost picking its own — not one
+  active version switched globally.
+- Scriptable: every action is a subcommand, `status` has `--json`, exit codes
+  are meaningful.
+- Crash detection — `crashed`, not just `stopped` — in the dashboard.
+- Downloads verified against the vendor's own sha256 where one is published,
+  and the gap stated honestly where it is not.
+- PostgreSQL, Redis, RabbitMQ, Node.js, Bun, and Python in the same stack,
+  installable from the same binary.
+- Runs from any folder, with nothing installed system-wide.
+
+**Behind both**
+
+- **Getting started.** XAMPP is one installer. Devcrate is a clone of a
+  configuration repo followed by an install per runtime.
+- **No database browser.** XAMPP ships phpMyAdmin; Laragon ships HeidiSQL.
+- **No mail catcher.** Every Laravel or WordPress project sends mail.
+- **No quick-create** for a Laravel or WordPress project, and **no
+  auto-vhost** — Laragon's folder-becomes-`<name>.test` is its signature.
+- **No Xdebug or extension toggle.** Turning on a debugger means editing
+  `php.ini` by hand and finding the right DLL.
+
+**A decision that shapes all of it:** Devcrate stays a terminal tool — the TUI
+and the CLI. There is no GUI or tray app planned. What a GUI would give a user
+who avoids the terminal is met instead by a shortcut that opens the dashboard,
+autostart, and quick actions inside the dashboard; anything that genuinely
+needs a visual interface (a database browser, an inbox) runs in the browser, as
+a site the stack serves.
+
+### 6. One-command setup on a fresh machine
+
+**What it should do**
+
+- `devcrate setup` installs a working default stack in one step — nginx, the
+  newest PHP, MariaDB, Composer, and mkcert — through the installers item 2
+  already built, then runs `mkcert -install` and starts the stack.
+- A release zip holding `devcrate.exe` and the configuration this repo carries,
+  so a new user downloads one file instead of cloning.
+- A Start Menu / Desktop shortcut and a Windows Terminal profile that open the
+  dashboard, so Devcrate can be launched without typing a command.
+- Autostart at login through Task Scheduler — no Administrator needed — off by
+  default.
+- A first-run screen in the dashboard when nothing is installed, naming the one
+  key to press, instead of an empty table.
+
+**Constraints**
+
+- Everything still lands inside the stack root; the shortcut and the Task
+  Scheduler entry are the only things written outside it, and `devcrate setup
+  --undo` (or `uninstall`) must remove them.
+- Re-running `setup` on a stack that is already set up changes nothing.
+
+### 7. A database browser and per-project databases
+
+**What it should do**
+
+- Adminer — a single PHP file — installed as a managed tool and served as a
+  built-in site (`db.test`), using whichever PHP and database the stack already
+  runs. Covers MariaDB and PostgreSQL alike, where phpMyAdmin covers only the
+  first.
+- `devcrate db create|drop|import|export <name>` for MariaDB and PostgreSQL,
+  so a project's database is one command, and callable from item 9.
+
+**Constraints**
+
+- The built-in site binds to loopback only, like the services it reaches.
+- Adminer's download is verified the same way as the rest (item 2): to the
+  strength the vendor publishes, and stated when that is only TLS.
+
+### 8. A local mail catcher (Mailpit)
+
+**What it should do**
+
+- Mailpit as a managed service — a new `ServiceKind`, shaped like Redis: one
+  un-versioned directory, SMTP on 1025, its inbox UI on 8025, in the start/stop
+  order beside the databases.
+- Each PHP version's `php.ini` pointed at it (`SMTP` / `smtp_port`, or
+  `sendmail_path`), so `mail()` and framework mailers are caught locally
+  without per-project configuration.
+
+**Constraints**
+
+- The `php.ini` change is made inside a marked block, the same discipline the
+  hosts file follows, so a hand-edited `php.ini` is never rewritten.
+
+### 9. Auto-vhost from a folder, and quick-create
+
+**What it should do**
+
+- **Auto-vhost** - a new folder under `projects\` becomes `https://<name>.test`
+  without a `site add`, the way Laragon does it: discovered by the scanner,
+  written through the same `site::create`, and switchable off in
+  `devcrate.toml`.
+- **Quick-create** - `devcrate new laravel <name>` / `devcrate new wordpress
+  <name>` runs `composer create-project` (or downloads WordPress), creates the
+  vhost, creates a database (item 7), and fills in the project's `.env` /
+  `wp-config.php`. Offered from the Sites pane as well.
+- **Quick actions in the Sites pane** - open the site in the browser, open its
+  folder, open a terminal in it.
+- **Dev servers under supervision** and **the HMR proxy** — the two parts of
+  item 5 that are not built — belong here as well, since they are what make a
+  quick-created Laravel + Vite project work end to end.
+
+**Constraints**
+
+- Auto-vhost never overwrites a conf that already exists, and never removes one
+  when a folder disappears — it only adds.
+- Quick-create never writes into a folder that already has content.
+
+### 10. PHP extensions and Xdebug, toggled per version
+
+**What it should do**
+
+- `devcrate php ext list|enable|disable <ext> [--php <ver>]` — edits that
+  version's `php.ini` and restarts only that version's FastCGI worker.
+- Xdebug (and other PECL extensions without a bundled DLL) downloaded to match
+  the version exactly: thread-safe, x64, and the same Visual C++ toolchain as
+  the PHP build. A mismatched DLL is the usual cause of a worker that refuses to
+  start, so a mismatch is refused, not installed.
+- A toggle for the selected PHP version in the dashboard.
+
+**Constraints**
+
+- Same marked-block rule as item 8 for every `php.ini` change.
+
+### Further candidates
+
+Lower in the ranking, recorded so they are not lost:
+
+- `devcrate share <host>` — expose a site through a tunnel (cloudflared or
+  ngrok) for a client demo or a webhook test.
+- `devcrate shell` — a terminal with the stack's `PATH` already set.
+- A command palette in the dashboard, searching every action by name.
+- `devcrate self-update`.
+- Certificate expiry shown in the Sites pane, with a reissue key — still open
+  from item 4.
+
+### Considered and not planned
+
+- **A GUI or tray app.** Devcrate stays a terminal tool; see the decision above.
+- **Apache as an alternative to nginx.** Some XAMPP users would want
+  `.htaccess`, but every vhost path, the FastCGI wiring, and the docs would all
+  need a second form. The cost is much larger than the audience.
+- **XAMPP's extras** — FileZilla, Mercury, Tomcat, Perl. Little used for modern
+  PHP development.
 
 ---
 
