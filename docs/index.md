@@ -22,6 +22,7 @@ install walkthrough.
 | [cli.md](cli.md) | The `devcrate` binary: building it, stack-root resolution, `devcrate.toml`, and the subcommands. |
 | [tui.md](tui.md) | The dashboard `devcrate` opens with no arguments: panes, keys, crash detection. |
 | [roadmap.md](roadmap.md) | What is built (items 1–5: the dashboard, the runtime installer, the scriptable CLI, one-step project setup, Node and Bun) and the candidates proposed next to stand as a Laragon / XAMPP alternative (items 6–10). |
+| [releasing.md](releasing.md) | How a version is cut, tagged, and published: versioning, the changelog cut, the tag, and the GitHub Release. |
 | [issue/](issue) | Mirrors of the GitHub issues, kept ticked to match the code, plus write-ups of findings from reviews. |
 
 ## The stack at a glance

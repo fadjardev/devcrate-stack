@@ -25,6 +25,7 @@ and the application code under `projects/` are deliberately not committed.
 | Layout, request flow, design decisions | [docs/architecture.md](docs/architecture.md) |
 | Known failures and their causes | [docs/troubleshooting.md](docs/troubleshooting.md) |
 | The GitHub issues | [docs/issue/](docs/issue) — mirrors, kept ticked to match reality |
+| Cutting a release | [docs/releasing.md](docs/releasing.md) |
 
 ## Build and test
 
@@ -136,6 +137,7 @@ Each of these cost real effort to find.
 - `CHANGELOG.md` follows Keep a Changelog + SemVer. Log user-visible changes
   under `[Unreleased]` with `### Added` / `### Changed` / `### Fixed`. Leave
   released sections alone: they describe what shipped then, not what is true now.
+  Cutting a release follows [docs/releasing.md](docs/releasing.md).
 - **Document what the code actually does, not what it ought to do.** Read the
   `.bat` or the `.rs` before writing about it.
 - Prefer an honest "not delivered, and here is why" over quietly dropping scope.
