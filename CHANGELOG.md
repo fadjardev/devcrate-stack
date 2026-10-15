@@ -47,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Dashboard visual refresh.** The header carries a `◆ devcrate` badge, highlighted pane tabs, and a stack summary (`● 3/4 up  ✗ 1 crashed`) beside the CLI PHP version; the root path is dropped first when the terminal is narrow. Service states gain an icon beside the word (`● up`, `○ stopped`, `✗ crashed`), listening ports are green, and the selected row is a soft bar with a `▌` marker instead of reversed video, so its colours survive selection. The active pane has an accent border, popups a heavier one (amber for confirmations), the footer shows keys as highlighted hints, a spinner turns while an action runs, and log lines are tinted by severity. Nothing about the keys or behaviour changed.
 - **The nginx directory is now a stable prefix with the versions inside it.**
   `nginx\` holds everything belonging to the stack - `conf\` (the vhosts and
   certificates), `logs\`, `temp\`, and the `projects` junction - while each

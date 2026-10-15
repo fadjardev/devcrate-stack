@@ -35,6 +35,8 @@ use crate::tui::worker::Event;
 /// How long to wait for an event before redrawing anyway. Nothing depends on
 /// it, but a clock that never ticks makes "working..." look frozen.
 const IDLE: Duration = Duration::from_millis(500);
+/// ...and while an action runs, often enough for the spinner to turn.
+const BUSY: Duration = Duration::from_millis(100);
 
 pub fn run(stack: Stack) -> Result<u8> {
     if !io::stdout().is_terminal() {
@@ -67,7 +69,8 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, stack: Arc<Stac
 
         // Block for the first event, then take whatever else has piled up
         // behind it: a scan and three keystrokes should cost one redraw.
-        let mut events = match rx.recv_timeout(IDLE) {
+        let wait = if app.busy.is_some() { BUSY } else { IDLE };
+        let mut events = match rx.recv_timeout(wait) {
             Ok(event) => vec![event],
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Vec::new(),
             // Every sender is gone, which can only mean the threads died.

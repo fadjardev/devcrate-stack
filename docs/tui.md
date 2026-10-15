@@ -10,18 +10,19 @@ devcrate
 ```
 
 ```
-╭devcrate──────────────────────────────────────╮╭──────────────────────────────────────────────╮
-│  1 Services    2 Sites    3 Logs             ││                 C:\devcrate   CLI PHP php-8.5│
-╰──────────────────────────────────────────────╯╰──────────────────────────────────────────────╯
-╭Services──────────────────────────────────────────────────────────────────────────────────────╮
-│SERVICE    STATE       PORTS          UPTIME    PIDS       PATH                               │
-│nginx      up          80 443         1h 06m    9184 +2    nginx\current\nginx.exe             │
-│PHP 7.4    up          9074           1h 06m    4212 +4    php\php-7.4\php-cgi.exe            │
-│PHP 8.2    crashed     (9082)         -         -          php\php-8.2\php-cgi.exe            │
-│MariaDB    up          3306           1h 06m    7768       mariadb\bin\mariadbd.exe           │
-╰──────────────────────────────────────────────────────────────────────────────────────────────╯
- ready
- s start  x stop  t restart  (SHIFT: whole stack)  u CLI PHP  ? help  q quit
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ ◆ devcrate    1 Services   2 Sites   3 Logs     ● 3/4 up  ✗ 1 crashed  │  CLI PHP php-8.5  │  C:\devcrate │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭ Services (4) ────────────────────────────────────────────────────────────────────────────────────────────╮
+│  SERVICE     STATE         PORTS           UPTIME     PIDS        PATH                                   │
+│                                                                                                          │
+│▌ nginx       ● up          80 443          1h 06m     9184 +2     nginx\current\nginx.exe                │
+│  PHP 7.4     ● up          9074            1h 06m     4212 +4     php\php-7.4\php-cgi.exe                │
+│  PHP 8.2     ✗ crashed     (9082)          -          -           php\php-8.2\php-cgi.exe                │
+│  MariaDB     ● up          3306            1h 06m     7768        mariadb\bin\mariadbd.exe               │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ● ready
+ s start   x stop   t restart   S X T whole stack   i install   u CLI PHP   ? help   q quit
 ```
 
 Press `?` at any time for the key list.

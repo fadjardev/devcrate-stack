@@ -5,8 +5,8 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
-    Block, BorderType, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, TableState,
-    Tabs, Wrap,
+    Block, BorderType, Cell, Clear, HighlightSpacing, List, ListItem, ListState, Padding,
+    Paragraph, Row, Table, TableState, Wrap,
 };
 
 use crate::status::{ServiceStatus, State};
@@ -15,6 +15,14 @@ use crate::tui::logs;
 
 const ACCENT: Color = Color::Cyan;
 const MUTED: Color = Color::DarkGray;
+const OK: Color = Color::Green;
+const WARN: Color = Color::Yellow;
+const BAD: Color = Color::Red;
+/// The selected row: a soft bar rather than reversed video, so the row's own
+/// colours (a red `crashed`, a green port) survive being selected.
+const SELECTED: Color = Color::Rgb(38, 50, 66);
+
+const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 pub fn render(frame: &mut Frame, app: &App) {
     let [header, body, footer] =
@@ -35,40 +43,85 @@ pub fn render(frame: &mut Frame, app: &App) {
 }
 
 fn render_header(frame: &mut Frame, app: &App, area: Rect) {
-    let [tabs_area, root_area] =
-        Layout::horizontal([Constraint::Min(30), Constraint::Length(48)]).areas(area);
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(MUTED));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
 
-    let titles: Vec<Line> = Tab::ALL
-        .iter()
-        .enumerate()
-        .map(|(i, tab)| Line::from(format!(" {} {} ", i + 1, tab.title())))
-        .collect();
-    let selected = Tab::ALL.iter().position(|tab| *tab == app.tab).unwrap_or(0);
-    frame.render_widget(
-        Tabs::new(titles)
-            .select(selected)
-            .highlight_style(Style::new().fg(ACCENT).add_modifier(Modifier::BOLD))
-            .divider("")
-            .block(bordered("devcrate")),
-        tabs_area,
-    );
+    let mut tabs = vec![
+        Span::styled(" ◆ devcrate ", Style::new().bg(ACCENT).fg(Color::Black).bold()),
+        Span::raw("  "),
+    ];
+    for (i, tab) in Tab::ALL.iter().enumerate() {
+        if *tab == app.tab {
+            tabs.push(Span::styled(
+                format!(" {} {} ", i + 1, tab.title()),
+                Style::new().bg(SELECTED).fg(ACCENT).bold(),
+            ));
+        } else {
+            tabs.push(Span::styled(format!(" {}", i + 1), Style::new().fg(ACCENT)));
+            tabs.push(Span::styled(format!(" {} ", tab.title()), Style::new().fg(MUTED)));
+        }
+        tabs.push(Span::raw(" "));
+    }
+    let tabs = Line::from(tabs);
 
     let php = app
         .report
         .as_ref()
         .and_then(|report| report.cli_php.clone())
         .unwrap_or_else(|| "not set".into());
-    let root = app.stack.root.display().to_string();
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(root, Style::new().fg(MUTED)),
-            Span::raw("   CLI PHP "),
-            Span::styled(php, Style::new().fg(ACCENT)),
-        ]))
-        .alignment(Alignment::Right)
-        .block(bordered("")),
-        root_area,
-    );
+    let mut right = summary_spans(app);
+    if !right.is_empty() {
+        right.push(Span::styled("  │  ", Style::new().fg(MUTED)));
+    }
+    right.extend([
+        Span::styled("CLI PHP ", Style::new().fg(MUTED)),
+        Span::styled(php, Style::new().fg(ACCENT).bold()),
+        Span::raw(" "),
+    ]);
+    let mut right = Line::from(right);
+
+    let [left_area, right_area] =
+        Layout::horizontal([Constraint::Length(tabs.width() as u16), Constraint::Min(0)])
+            .areas(inner);
+    // The root is the first thing to go on a narrow screen: it is the one
+    // fact here that never changes while the dashboard is open.
+    let root = format!("  │  {} ", app.stack.root.display());
+    if right.width() + root.chars().count() <= right_area.width as usize {
+        right.spans.pop();
+        right.spans.push(Span::styled(root, Style::new().fg(MUTED)));
+    }
+    frame.render_widget(Paragraph::new(tabs), left_area);
+    frame.render_widget(Paragraph::new(right).alignment(Alignment::Right), right_area);
+}
+
+/// `● 3/4 up  ✗ 1 crashed` -- the stack at a glance, for the header.
+fn summary_spans(app: &App) -> Vec<Span<'static>> {
+    let Some(report) = &app.report else {
+        return Vec::new();
+    };
+    let installed: Vec<&ServiceStatus> =
+        report.services.iter().filter(|service| service.installed).collect();
+    let up = installed.iter().filter(|service| service.state == State::Up).count();
+    let crashed = installed.iter().filter(|service| app.crashed(&service.id)).count();
+
+    let dot = if up == 0 {
+        MUTED
+    } else if up == installed.len() {
+        OK
+    } else {
+        WARN
+    };
+    let mut spans = vec![
+        Span::styled("● ", Style::new().fg(dot)),
+        Span::styled(format!("{up}/{} up", installed.len()), Style::new().bold()),
+    ];
+    if crashed > 0 {
+        spans.push(Span::styled(format!("  ✗ {crashed} crashed"), Style::new().fg(BAD).bold()));
+    }
+    spans
 }
 
 // ---------------------------------------------------------------------------
@@ -78,7 +131,8 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
 fn render_services(frame: &mut Frame, app: &App, area: Rect) {
     let Some(report) = &app.report else {
         frame.render_widget(
-            Paragraph::new("Scanning...").block(bordered("Services")),
+            Paragraph::new(Line::from(format!(" {} Scanning...", spinner()).fg(MUTED)))
+                .block(focused("Services")),
             area,
         );
         return;
@@ -108,58 +162,70 @@ fn render_services(frame: &mut Frame, app: &App, area: Rect) {
 
     let widths = [
         Constraint::Length(10),
-        Constraint::Length(11),
+        Constraint::Length(12),
         Constraint::Length(14),
         Constraint::Length(9),
         Constraint::Length(10),
         Constraint::Min(20),
     ];
-    let header = Row::new(["SERVICE", "STATE", "PORTS", "UPTIME", "PIDS", "PATH"])
-        .style(Style::new().fg(MUTED).add_modifier(Modifier::BOLD));
+    let header = table_header(["SERVICE", "STATE", "PORTS", "UPTIME", "PIDS", "PATH"]);
 
     let mut state = TableState::default().with_selected(Some(app.service_row));
     frame.render_stateful_widget(
         Table::new(rows, widths)
             .header(header)
-            .block(bordered("Services"))
-            .row_highlight_style(Style::new().add_modifier(Modifier::REVERSED)),
+            .block(focused(&format!("Services ({})", report.services.len())))
+            .column_spacing(2)
+            .row_highlight_style(highlight())
+            .highlight_symbol("▌ ")
+            .highlight_spacing(HighlightSpacing::Always),
         table_area,
         &mut state,
     );
 
     if !holders.is_empty() {
         let lines: Vec<Line> =
-            holders.into_iter().map(|line| Line::from(line.fg(Color::Red))).collect();
+            holders.into_iter().map(|line| Line::from(format!(" ⚠ {line}").fg(BAD))).collect();
         frame.render_widget(
-            Paragraph::new(lines).block(bordered("Ports held by something else")),
+            Paragraph::new(lines).block(
+                bordered("Ports held by something else").border_style(Style::new().fg(BAD)),
+            ),
             notice_area,
         );
     }
 }
 
 fn service_row<'a>(app: &App, service: &'a ServiceStatus) -> Row<'a> {
-    let crashed = app.crashed(&service.id);
-    let (label, style) = if crashed {
-        ("crashed".to_string(), Style::new().fg(Color::Red).add_modifier(Modifier::BOLD))
+    // The icon is a second channel beside the word, never instead of it.
+    let (icon, label, style) = if app.crashed(&service.id) {
+        ("✗", "crashed", Style::new().fg(BAD).bold())
     } else {
-        (service.state.as_str().to_string(), Style::new().fg(state_color(service.state)))
+        let style = Style::new().fg(state_color(service.state));
+        let icon = match service.state {
+            State::Up => "●",
+            State::Starting => "◐",
+            State::PortBusy => "⚠",
+            State::Stopped => "○",
+            State::Absent => "·",
+        };
+        (icon, service.state.as_str(), style)
     };
 
     let ports = if service.ports.is_empty() {
-        "-".to_string()
+        Line::from("-".fg(MUTED))
     } else {
-        service
-            .ports
-            .iter()
-            .map(|port| {
-                if port.listening {
-                    port.port.to_string()
-                } else {
-                    format!("({})", port.port)
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(" ")
+        let mut spans = Vec::new();
+        for (i, port) in service.ports.iter().enumerate() {
+            if i > 0 {
+                spans.push(Span::raw(" "));
+            }
+            spans.push(if port.listening {
+                Span::styled(port.port.to_string(), Style::new().fg(OK))
+            } else {
+                Span::styled(format!("({})", port.port), Style::new().fg(MUTED))
+            });
+        }
+        Line::from(spans)
     };
 
     let pids = match service.pids.split_first() {
@@ -168,22 +234,23 @@ fn service_row<'a>(app: &App, service: &'a ServiceStatus) -> Row<'a> {
         Some((first, rest)) => format!("{first} +{}", rest.len()),
     };
 
+    let name = if service.installed { Style::new().bold() } else { Style::new().fg(MUTED) };
     Row::new(vec![
-        Cell::from(service.name.clone()),
-        Cell::from(label).style(style),
+        Cell::from(service.name.clone()).style(name),
+        Cell::from(format!("{icon} {label}")).style(style),
         Cell::from(ports),
         Cell::from(crate::status::format_uptime(service.uptime_secs)),
-        Cell::from(pids),
+        Cell::from(pids).style(Style::new().fg(MUTED)),
         Cell::from(service.path.clone()).style(Style::new().fg(MUTED)),
     ])
 }
 
 fn state_color(state: State) -> Color {
     match state {
-        State::Up => Color::Green,
-        State::Starting => Color::Yellow,
-        State::PortBusy => Color::Red,
-        State::Stopped | State::Absent => Color::DarkGray,
+        State::Up => OK,
+        State::Starting => WARN,
+        State::PortBusy => BAD,
+        State::Stopped | State::Absent => MUTED,
     }
 }
 
@@ -194,8 +261,17 @@ fn state_color(state: State) -> Color {
 fn render_sites(frame: &mut Frame, app: &App, area: Rect) {
     if app.sites.is_empty() {
         frame.render_widget(
-            Paragraph::new("No vhosts yet. Press n to create one.")
-                .block(bordered("Sites")),
+            Paragraph::new(vec![
+                Line::from(""),
+                Line::from("No vhosts yet.".fg(MUTED)).centered(),
+                Line::from(vec![
+                    Span::styled("Press ", Style::new().fg(MUTED)),
+                    key("n"),
+                    Span::styled(" to create one.", Style::new().fg(MUTED)),
+                ])
+                .centered(),
+            ])
+            .block(focused("Sites")),
             area,
         );
         return;
@@ -205,15 +281,22 @@ fn render_sites(frame: &mut Frame, app: &App, area: Rect) {
         .sites
         .iter()
         .map(|site| {
-            let php = app
-                .php_for_port(site.fastcgi_port)
-                .map(str::to_string)
-                .or_else(|| site.fastcgi_port.map(|port| format!("port {port}")))
-                .unwrap_or_else(|| "no fastcgi_pass".into());
+            let php = match app.php_for_port(site.fastcgi_port) {
+                Some(name) => Span::styled(name.to_string(), Style::new().fg(ACCENT)),
+                None => Span::styled(
+                    site.fastcgi_port
+                        .map(|port| format!("port {port}"))
+                        .unwrap_or_else(|| "no fastcgi_pass".into()),
+                    Style::new().fg(WARN),
+                ),
+            };
             let root = site.root.clone().unwrap_or_else(|| "no root directive".into());
             Row::new(vec![
-                Cell::from(format!("https://{}", site.host)),
-                Cell::from(php),
+                Cell::from(Line::from(vec![
+                    Span::styled("https://", Style::new().fg(MUTED)),
+                    Span::styled(site.host.clone(), Style::new().bold()),
+                ])),
+                Cell::from(Line::from(php)),
                 Cell::from(root).style(Style::new().fg(MUTED)),
             ])
         })
@@ -225,12 +308,12 @@ fn render_sites(frame: &mut Frame, app: &App, area: Rect) {
             rows,
             [Constraint::Min(24), Constraint::Length(12), Constraint::Min(20)],
         )
-        .header(
-            Row::new(["VHOST", "PHP", "ROOT"])
-                .style(Style::new().fg(MUTED).add_modifier(Modifier::BOLD)),
-        )
-        .block(bordered(&format!("Sites ({})", app.sites.len())))
-        .row_highlight_style(Style::new().add_modifier(Modifier::REVERSED)),
+        .header(table_header(["VHOST", "PHP", "ROOT"]))
+        .block(focused(&format!("Sites ({})", app.sites.len())))
+        .column_spacing(2)
+        .row_highlight_style(highlight())
+        .highlight_symbol("▌ ")
+        .highlight_spacing(HighlightSpacing::Always),
         area,
         &mut state,
     );
@@ -242,7 +325,7 @@ fn render_sites(frame: &mut Frame, app: &App, area: Rect) {
 
 fn render_logs(frame: &mut Frame, app: &App, area: Rect) {
     let [picker_area, tail_area] =
-        Layout::horizontal([Constraint::Length(34), Constraint::Min(30)]).areas(area);
+        Layout::horizontal([Constraint::Length(36), Constraint::Min(30)]).areas(area);
 
     let items: Vec<ListItem> = app
         .logs
@@ -261,19 +344,13 @@ fn render_logs(frame: &mut Frame, app: &App, area: Rect) {
     let mut state = ListState::default().with_selected(Some(app.log_row));
     frame.render_stateful_widget(
         List::new(items)
-            .block(bordered("Files"))
-            .highlight_style(Style::new().add_modifier(Modifier::REVERSED)),
+            .block(focused(&format!("Files ({})", app.logs.len())))
+            .highlight_style(highlight())
+            .highlight_symbol("▌ ")
+            .highlight_spacing(HighlightSpacing::Always),
         picker_area,
         &mut state,
     );
-
-    let title = match (&app.log, app.follow) {
-        (None, _) => "Log".to_string(),
-        (Some(view), true) => format!("{}  [following]", view.path.display()),
-        (Some(view), false) => {
-            format!("{}  [paused, {} lines up]", view.path.display(), app.log_scroll)
-        }
-    };
 
     let Some(view) = &app.log else {
         let message = if app.logs.is_empty() {
@@ -281,7 +358,10 @@ fn render_logs(frame: &mut Frame, app: &App, area: Rect) {
         } else {
             "Reading..."
         };
-        frame.render_widget(Paragraph::new(message).block(bordered(&title)), tail_area);
+        frame.render_widget(
+            Paragraph::new(Line::from(format!(" {message}").fg(MUTED))).block(bordered("Log")),
+            tail_area,
+        );
         return;
     };
 
@@ -289,8 +369,7 @@ fn render_logs(frame: &mut Frame, app: &App, area: Rect) {
     let height = tail_area.height.saturating_sub(2) as usize;
     let end = view.lines.len().saturating_sub(app.log_scroll);
     let start = end.saturating_sub(height);
-    let mut lines: Vec<Line> =
-        view.lines[start..end].iter().map(|line| Line::from(line.as_str())).collect();
+    let mut lines: Vec<Line> = view.lines[start..end].iter().map(|line| log_line(line)).collect();
     if start == 0 && view.truncated {
         lines.insert(0, Line::from("(earlier lines not shown)".fg(MUTED)));
     }
@@ -298,7 +377,37 @@ fn render_logs(frame: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from("(empty)".fg(MUTED)));
     }
 
-    frame.render_widget(Paragraph::new(lines).block(bordered(&title)), tail_area);
+    let badge = if app.follow {
+        Span::styled(" ● following ", Style::new().fg(OK))
+    } else {
+        Span::styled(format!(" ‖ paused, {} lines up ", app.log_scroll), Style::new().fg(WARN))
+    };
+    let title = view.path.display().to_string();
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(bordered(&title).title_bottom(Line::from(badge).right_aligned())),
+        tail_area,
+    );
+}
+
+/// Colour a log line by the severity it names, as nginx, PHP, and MariaDB spell
+/// it. Only a hint: the text itself is shown unchanged.
+fn log_line(line: &str) -> Line<'_> {
+    let lower = line.to_ascii_lowercase();
+    let mentions = |words: &[&str]| words.iter().any(|word| lower.contains(word));
+    let colour = if mentions(&["[error]", "[crit]", "[alert]", "[emerg]", "fatal error", "[error "]) {
+        Some(BAD)
+    } else if mentions(&["[warn]", "[warning]", "warning:"]) {
+        Some(WARN)
+    } else if mentions(&["[notice]", "[note]", "[info]"]) {
+        Some(MUTED)
+    } else {
+        None
+    };
+    match colour {
+        Some(colour) => Line::from(Span::styled(line, Style::new().fg(colour))),
+        None => Line::from(line),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -311,35 +420,60 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
 
     let note = match (&app.busy, &app.note) {
         (Some(busy), _) => Line::from(vec![
-            Span::styled(" working ", Style::new().bg(Color::Yellow).fg(Color::Black)),
+            Span::styled(format!(" {} ", spinner()), Style::new().fg(WARN).bold()),
+            Span::styled(" working ", Style::new().bg(WARN).fg(Color::Black).bold()),
             Span::raw(format!(" {busy}...")),
         ]),
         (None, Some(note)) if !note.is_stale() => {
-            let colour = if note.failed { Color::Red } else { Color::Green };
-            Line::from(Span::styled(format!(" {}", note.text), Style::new().fg(colour)))
+            let (icon, colour) = if note.failed { ("✗", BAD) } else { ("✓", OK) };
+            Line::from(Span::styled(format!(" {icon} {}", note.text), Style::new().fg(colour)))
         }
-        _ => Line::from(Span::styled(" ready".to_string(), Style::new().fg(MUTED))),
+        _ => Line::from(Span::styled(" ● ready", Style::new().fg(MUTED))),
     };
     frame.render_widget(Paragraph::new(note), note_area);
 
-    let keys = match app.tab {
-        Tab::Services => {
-            "s start  x stop  t restart  (SHIFT: whole stack)  u CLI PHP  ? help  q quit"
-        }
-        Tab::Sites => "n new  p PHP version  d delete  ? help  q quit",
-        Tab::Logs => "f follow  PgUp/PgDn scroll  Home/End  ? help  q quit",
+    let keys: &[(&str, &str)] = match app.tab {
+        Tab::Services => &[
+            ("s", "start"),
+            ("x", "stop"),
+            ("t", "restart"),
+            ("S X T", "whole stack"),
+            ("i", "install"),
+            ("u", "CLI PHP"),
+            ("?", "help"),
+            ("q", "quit"),
+        ],
+        Tab::Sites => &[
+            ("n", "new"),
+            ("p", "PHP version"),
+            ("d", "delete"),
+            ("?", "help"),
+            ("q", "quit"),
+        ],
+        Tab::Logs => &[
+            ("f", "follow"),
+            ("PgUp PgDn", "scroll"),
+            ("Home End", "top / bottom"),
+            ("?", "help"),
+            ("q", "quit"),
+        ],
     };
-    frame.render_widget(
-        Paragraph::new(Line::from(format!(" {keys}").fg(MUTED))),
-        keys_area,
-    );
+    let mut spans = vec![Span::raw(" ")];
+    for (i, (name, what)) in keys.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw("   "));
+        }
+        spans.push(key(name));
+        spans.push(Span::styled(format!(" {what}"), Style::new().fg(MUTED)));
+    }
+    frame.render_widget(Paragraph::new(Line::from(spans)), keys_area);
 }
 
 fn render_modal(frame: &mut Frame, app: &App, modal: &Modal) {
     match modal {
-        Modal::Help => popup(frame, "Keys", help_text(), 64, 20),
+        Modal::Help => popup(frame, "Keys", help_text(), 72, 22),
         Modal::Output { title, lines, failed } => {
-            let colour = if *failed { Color::Red } else { Color::Reset };
+            let colour = if *failed { BAD } else { Color::Reset };
             let text: Vec<Line> = lines
                 .iter()
                 .map(|line| Line::from(Span::styled(line.clone(), Style::new().fg(colour))))
@@ -350,8 +484,22 @@ fn render_modal(frame: &mut Frame, app: &App, modal: &Modal) {
         Modal::Confirm { question, .. } => {
             let mut text = Text::from(question.as_str());
             text.push_line(Line::from(""));
-            text.push_line(Line::from("y confirm     any other key cancels".fg(MUTED)));
-            popup(frame, "Confirm", text, 64, 9);
+            text.push_line(Line::from(vec![
+                key("y"),
+                Span::styled(" confirm     any other key cancels", Style::new().fg(MUTED)),
+            ]));
+            let area = centred(frame.area(), 64, 9);
+            frame.render_widget(Clear, area);
+            frame.render_widget(
+                Paragraph::new(text).wrap(Wrap { trim: false }).block(
+                    Block::bordered()
+                        .border_type(BorderType::Thick)
+                        .border_style(Style::new().fg(WARN))
+                        .title(Line::from(" ⚠ Confirm ".fg(WARN).bold()).centered())
+                        .padding(Padding::horizontal(1)),
+                ),
+                area,
+            );
         }
         Modal::NewSite(form) => {
             let versions = app.php_versions();
@@ -370,52 +518,79 @@ fn render_modal(frame: &mut Frame, app: &App, modal: &Modal) {
                     Style::new().fg(Color::Reset)
                 }
             };
-
+            let label = |idx, text: &'static str| {
+                let marker = if form.active_field == idx { "› " } else { "  " };
+                Span::styled(format!("{marker}{text:<17}"), f_style(idx))
+            };
             let cursor = |idx| {
                 if form.active_field == idx {
-                    Span::styled("_", Style::new().add_modifier(Modifier::SLOW_BLINK))
+                    Span::styled("▏", Style::new().fg(ACCENT).add_modifier(Modifier::SLOW_BLINK))
                 } else {
                     Span::raw("")
                 }
             };
+            let button = |idx, text: &'static str| {
+                if form.active_field == idx {
+                    Span::styled(text, Style::new().bg(ACCENT).fg(Color::Black).bold())
+                } else {
+                    Span::styled(text, Style::new().fg(ACCENT))
+                }
+            };
+            let check = |on: bool| if on { "[✓] " } else { "[ ] " };
 
             let text = Text::from(vec![
+                Line::from(vec![label(0, "Hostname"), Span::styled(&form.host, f_style(0)), cursor(0)]),
                 Line::from(vec![
-                    Span::styled("Hostname:        ", f_style(0)),
-                    Span::styled(&form.host, f_style(0)),
-                    cursor(0),
-                ]),
-                Line::from(vec![
-                    Span::styled("Project Path:    ", f_style(1)),
-                    Span::styled(if form.path.is_empty() { "(Default: projects/<host>)" } else { &form.path }, f_style(1)),
+                    label(1, "Project Path"),
+                    if form.path.is_empty() {
+                        Span::styled("projects/<host>  (default)", Style::new().fg(MUTED))
+                    } else {
+                        Span::styled(&form.path, f_style(1))
+                    },
                     cursor(1),
                 ]),
+                Line::from(vec![Span::raw(" ".repeat(19)), button(2, " Browse Folder... ")]),
                 Line::from(vec![
-                    Span::raw("                 "),
-                    Span::styled(" [ Browse Folder... ] ", if form.active_field == 2 { Style::new().bg(ACCENT).fg(Color::Black).add_modifier(Modifier::BOLD) } else { Style::new().fg(ACCENT) }),
-                ]),
-                Line::from(vec![
-                    Span::styled("PHP Version:     < ", f_style(3)),
+                    label(3, "PHP Version"),
+                    Span::styled("‹ ", Style::new().fg(MUTED)),
                     Span::styled(&php_label, f_style(3)),
-                    Span::styled(" >", f_style(3)),
+                    Span::styled(" ›", Style::new().fg(MUTED)),
                 ]),
                 Line::from(vec![
-                    Span::styled("Hosts File:      ", f_style(4)),
-                    Span::styled(if form.update_hosts { "[x] Auto-add to Windows hosts" } else { "[ ] Skip hosts update" }, f_style(4)),
+                    label(4, "Hosts File"),
+                    Span::styled(
+                        format!(
+                            "{}{}",
+                            check(form.update_hosts),
+                            if form.update_hosts { "Auto-add to Windows hosts" } else { "Skip hosts update" }
+                        ),
+                        f_style(4),
+                    ),
                 ]),
                 Line::from(vec![
-                    Span::styled("TLS Certificate: ", f_style(5)),
-                    Span::styled(if form.issue_tls { "[x] Auto-issue wildcard SSL (mkcert)" } else { "[ ] Skip TLS certificate" }, f_style(5)),
+                    label(5, "TLS Certificate"),
+                    Span::styled(
+                        format!(
+                            "{}{}",
+                            check(form.issue_tls),
+                            if form.issue_tls { "Auto-issue wildcard SSL (mkcert)" } else { "Skip TLS certificate" }
+                        ),
+                        f_style(5),
+                    ),
                 ]),
                 Line::from(""),
-                Line::from(vec![
-                    Span::raw("                "),
-                    Span::styled(" [ Create Site ] ", if form.active_field == 6 { Style::new().bg(ACCENT).fg(Color::Black).add_modifier(Modifier::BOLD) } else { Style::new().fg(ACCENT) }),
-                ]),
+                Line::from(vec![Span::raw(" ".repeat(19)), button(6, "  Create Site  ")]),
                 Line::from(""),
-                Line::from("Tab/j/k: navigate fields • Enter/b: browse • Esc: cancel".fg(MUTED)),
+                Line::from(vec![
+                    key("Tab j k"),
+                    Span::styled(" fields  ·  ", Style::new().fg(MUTED)),
+                    key("Enter b"),
+                    Span::styled(" browse  ·  ", Style::new().fg(MUTED)),
+                    key("Esc"),
+                    Span::styled(" cancel", Style::new().fg(MUTED)),
+                ]),
             ]);
-            popup(frame, "Create New Site (vhost)", text, 68, 15);
+            popup(frame, "Create New Site (vhost)", text, 72, 12);
         }
         Modal::PhpPicker { purpose, index } => {
             let versions = app.php_versions();
@@ -426,59 +601,71 @@ fn render_modal(frame: &mut Frame, app: &App, modal: &Modal) {
             };
             let items: Vec<ListItem> = versions
                 .iter()
-                .map(|(id, name)| ListItem::new(format!("{name}   ({id})")))
+                .map(|(id, name)| {
+                    ListItem::new(Line::from(vec![
+                        Span::raw(name.clone()),
+                        Span::styled(format!("   {id}"), Style::new().fg(MUTED)),
+                    ]))
+                })
                 .collect();
-            let height = (items.len() + 2).max(3) as u16;
-            let area = centred(frame.area(), 46, height);
-            frame.render_widget(Clear, area);
-            let mut state = ListState::default().with_selected(Some(*index));
-            frame.render_stateful_widget(
-                List::new(items)
-                    .block(bordered(&title))
-                    .highlight_style(Style::new().add_modifier(Modifier::REVERSED)),
-                area,
-                &mut state,
-            );
+            picker(frame, &title, items, *index);
         }
         Modal::InstallPicker { index } => {
             let items: Vec<ListItem> = crate::tui::app::INSTALL_OPTIONS
                 .iter()
                 .map(|(_, label, _)| ListItem::new(*label))
                 .collect();
-            let height = (items.len() + 2).max(3) as u16;
-            let area = centred(frame.area(), 46, height);
-            frame.render_widget(Clear, area);
-            let mut state = ListState::default().with_selected(Some(*index));
-            frame.render_stateful_widget(
-                List::new(items)
-                    .block(bordered("Install Service / Runtime"))
-                    .highlight_style(Style::new().add_modifier(Modifier::REVERSED)),
-                area,
-                &mut state,
-            );
+            picker(frame, "Install Service / Runtime", items, *index);
         }
     }
 }
 
+fn picker(frame: &mut Frame, title: &str, items: Vec<ListItem>, index: usize) {
+    let height = (items.len() + 2).max(3) as u16;
+    let area = centred(frame.area(), 48, height);
+    frame.render_widget(Clear, area);
+    let mut state = ListState::default().with_selected(Some(index));
+    frame.render_stateful_widget(
+        List::new(items)
+            .block(modal_block(title))
+            .highlight_style(highlight())
+            .highlight_symbol("› ")
+            .highlight_spacing(HighlightSpacing::Always),
+        area,
+        &mut state,
+    );
+}
+
 fn help_text() -> Text<'static> {
+    let section = |name: &'static str| Line::from(name.fg(ACCENT).bold());
+    let row = |keys: &'static str, what: &'static str| {
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled(format!("{keys:<14}"), Style::new().fg(ACCENT)),
+            Span::raw(what),
+        ])
+    };
     Text::from(vec![
-        Line::from("Anywhere".fg(ACCENT)),
-        Line::from("  1 2 3 / Tab   switch pane        r   rescan now"),
-        Line::from("  up down j k   move                q   quit"),
+        section("Anywhere"),
+        row("1 2 3 / Tab", "switch pane"),
+        row("up down j k", "move"),
+        row("r  /  q", "rescan now  /  quit"),
         Line::from(""),
-        Line::from("Services".fg(ACCENT)),
-        Line::from("  s / x / t     start / stop / restart the selected service"),
-        Line::from("  S / X / T     ...the whole stack, in dependency order"),
-        Line::from("  i             install service or runtime (Node, Bun, PHP, etc)"),
-        Line::from("  u             repoint php\\current (the CLI version)"),
+        section("Services"),
+        row("s / x / t", "start / stop / restart the selected service"),
+        row("S / X / T", "...the whole stack, in dependency order"),
+        row("i", "install service or runtime (Node, Bun, PHP, etc)"),
+        row("u", "repoint php\\current (the CLI version)"),
         Line::from(""),
-        Line::from("Sites".fg(ACCENT)),
-        Line::from("  n             new vhost           d   delete the conf"),
-        Line::from("  p             change PHP version"),
+        section("Sites"),
+        row("n", "new vhost"),
+        row("p", "change PHP version"),
+        row("d", "delete the conf"),
         Line::from(""),
-        Line::from("Logs".fg(ACCENT)),
-        Line::from("  f             follow on/off       Home/End  top / bottom"),
-        Line::from("  PgUp PgDn     scroll"),
+        section("Logs"),
+        row("f", "follow on/off"),
+        row("PgUp PgDn", "scroll"),
+        row("Home / End", "top / bottom"),
     ])
 }
 
@@ -486,7 +673,9 @@ fn popup(frame: &mut Frame, title: &str, text: Text<'_>, width: u16, height: u16
     let area = centred(frame.area(), width, height);
     frame.render_widget(Clear, area);
     frame.render_widget(
-        Paragraph::new(text).wrap(Wrap { trim: false }).block(bordered(title)),
+        Paragraph::new(text)
+            .wrap(Wrap { trim: false })
+            .block(modal_block(title).padding(Padding::horizontal(1))),
         area,
     );
 }
@@ -514,9 +703,48 @@ fn centred(area: Rect, width: u16, height: u16) -> Rect {
     centre
 }
 
+/// A key name, as the footer, help, and forms show it.
+fn key(name: &str) -> Span<'static> {
+    Span::styled(name.to_string(), Style::new().fg(ACCENT).bold())
+}
+
 fn bordered(title: &str) -> Block<'_> {
     Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(Style::new().fg(MUTED))
-        .title(title.to_string())
+        .title(Line::from(format!(" {title} ").bold()))
+}
+
+/// The pane that has the keyboard: the same box with an accent frame.
+fn focused(title: &str) -> Block<'_> {
+    Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(ACCENT))
+        .title(Line::from(format!(" {title} ").fg(ACCENT).bold()))
+}
+
+/// A popup's frame: heavier than a pane, so it reads as sitting on top.
+fn modal_block(title: &str) -> Block<'_> {
+    Block::bordered()
+        .border_type(BorderType::Thick)
+        .border_style(Style::new().fg(ACCENT))
+        .title(Line::from(format!(" {title} ").fg(ACCENT).bold()).centered())
+}
+
+fn table_header<const N: usize>(names: [&'static str; N]) -> Row<'static> {
+    Row::new(names).style(Style::new().fg(MUTED).add_modifier(Modifier::BOLD)).bottom_margin(1)
+}
+
+fn highlight() -> Style {
+    Style::new().bg(SELECTED).add_modifier(Modifier::BOLD)
+}
+
+/// One frame of the busy spinner, picked by the wall clock so the view stays a
+/// function of the app and nothing else needs to count frames.
+fn spinner() -> &'static str {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis())
+        .unwrap_or(0);
+    SPINNER[(millis / 100) as usize % SPINNER.len()]
 }
