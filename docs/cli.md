@@ -106,6 +106,7 @@ visible rather than mysterious.
 | `devcrate restart [service]` | **works** — stop, then start |
 | `devcrate php use <version>` | **works** — repoints `php\current` |
 | `devcrate php ext list\|enable\|disable [ext...] [--php <version>]` | **works** — a version's extensions, switched in devcrate's block of its `php.ini`, the worker restarted (see below) |
+| `devcrate php ext install <ext> [--php <version>] [--version <x.y.z>] [--force]` | **works** — downloads a PECL extension (Xdebug) built for that exact PHP, length-checked over TLS, and switches it on (see below) |
 | `devcrate python list` | **works** — installed Python versions, and the active CLI one |
 | `devcrate python use <version>` | **works** — repoints `python\current` |
 | `devcrate nginx list` | **works** — nginx versions in the prefix, and the active one |
@@ -406,6 +407,51 @@ file is put back and the warning is shown. Then the version's FastCGI worker is
 restarted, if it was running, so the change is live; a stopped worker reads the
 file when it next starts. Nothing is written, and nothing restarted, when every
 extension named is already as asked.
+
+#### `devcrate php ext install`
+
+```
+devcrate php ext install xdebug --php 8.5
+devcrate php ext install xdebug --php 7.4 --version 3.1.3
+```
+
+```
+Downloading xdebug from the PECL host...
+PHP 8.5 xdebug 3.5.3 installed: php\php-8.5\ext\php_xdebug.dll
+  php_xdebug-3.5.3-8.5-ts-vs17-x64.zip (downloaded), built for 8.5-ts-vs17-x64
+  length-checked over TLS only -- the PECL host publishes no checksum
+  PHP loaded it, and it is switched on in devcrate's block of php.ini
+  php-8.5 restarted
+```
+
+For an extension a PHP build does not bundle — Xdebug, above all. The build to
+match is read from the version's own `php -i` (`PHP Extension Build =>
+API20250925,TS,VS17`, `Architecture => x64`) and spelled the way the PECL host
+names its zips, `8.5-ts-vs17-x64`. The host is the PHP Windows team's
+`downloads.php.net/~windows/pecl/releases/` — xdebug.org's Windows DLLs are the
+same builds. Its releases are walked newest first, pre-releases skipped, until
+one has a zip for that exact build: PHP 8.5 and 8.2 get Xdebug 3.5.3, 7.4 gets
+3.1.3, 5.6 gets 2.5.5. `--version` names a release instead.
+
+The host publishes no checksum, so — like nginx — the download is checked
+against its declared length over TLS and the command says so. The zip is cached
+in `_downloads\`. Only `php_<ext>.dll` is taken from it, into the version's
+extension directory, and then it is switched on exactly as `enable` does,
+`php -m` check included. That check is what refuses a mismatched DLL: PHP will
+not load an extension built for another API, thread model, or compiler, and
+the DLL is removed again. An extension that needs DLLs of its own beside
+`php.exe` fails the same check and is refused rather than half-installed.
+
+A DLL already in `ext\` — bundled, or installed before — is refused unless
+`--force` is given; then the old one is moved aside, put back if the new one
+does not load, and deleted once it does. `disable` switches an installed
+extension off and leaves the DLL where it is.
+
+Nothing beyond the `zend_extension=` line is written, so Xdebug runs with its
+own defaults (`xdebug.mode=develop`). For step debugging set `xdebug.mode=debug`
+and `xdebug.start_with_request=trigger` in `php.ini` yourself — anywhere in the
+file works, since devcrate's block sets no `xdebug.*` value to override it.
+Xdebug slows every request it is loaded into; `disable` it when not in use.
 
 ### `devcrate python`
 

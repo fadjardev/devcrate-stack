@@ -28,6 +28,7 @@ mod mailpit;
 mod mariadb;
 mod nginx;
 mod node;
+pub mod pecl;
 mod php;
 mod postgres;
 mod python;

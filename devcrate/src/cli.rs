@@ -190,6 +190,23 @@ pub enum PhpExtCommand {
     Enable(PhpExtArgs),
     /// Switch off extensions devcrate switched on, and restart that worker.
     Disable(PhpExtArgs),
+    /// Download a PECL extension (xdebug) built for this exact PHP, and switch it on.
+    Install(PhpExtInstallArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct PhpExtInstallArgs {
+    /// The extension: xdebug, or another PECL extension built for Windows.
+    pub extension: String,
+    /// PHP version (8.5, 85, php-8.5); defaults to the one php\current names.
+    #[arg(long)]
+    pub php: Option<String>,
+    /// A release of the extension (3.5.3); defaults to the newest with a matching build.
+    #[arg(long)]
+    pub version: Option<String>,
+    /// Replace a DLL already in ext\, the bundled one included.
+    #[arg(long)]
+    pub force: bool,
 }
 
 #[derive(Debug, Args)]

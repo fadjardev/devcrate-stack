@@ -33,6 +33,12 @@
 //! same as PHP's, with GitHub rather than the vendor's own host as the place it
 //! comes from; an API response without one falls back to the length check.
 //!
+//! **PECL** extensions (Xdebug) are the fifth: they come from the PHP Windows
+//! team's build host, which publishes directory listings and no checksums --
+//! so, like nginx, a download is length-checked over TLS and no more. What
+//! makes a PECL DLL safe to install is matching the PHP build exactly, and PHP
+//! itself refuses one that does not; see [`crate::php_ext`].
+//!
 //! Nothing here prints. The catalogues and the fetch return structured results
 //! and report progress through a callback, same as [`super::from_archive`],
 //! so the dashboard can drive them without touching stdout.
@@ -1023,9 +1029,111 @@ pub fn adminer_catalogue() -> Result<Vec<GithubRelease>> {
     parse_github_releases(&github_releases("vrana/adminer")?, |v| format!("adminer-{v}.php"))
 }
 
+/// PECL's Windows builds, one directory per extension and release:
+/// `xdebug/3.5.3/php_xdebug-3.5.3-8.5-ts-vs17-x64.zip`. The PHP Windows team
+/// builds and hosts them; xdebug.org's own downloads are the same DLLs.
+const PECL_URL: &str = "https://downloads.php.net/~windows/pecl/releases/";
+
+/// One PECL build that matches a PHP build exactly.
+#[derive(Debug, Clone)]
+pub struct PeclBuild {
+    pub version: String,
+    pub file_name: String,
+    pub url: String,
+}
+
+impl PeclBuild {
+    /// No hash: the PECL host publishes none, so -- like nginx -- the fetch is
+    /// checked against the declared length over TLS, and says so.
+    pub fn download(&self) -> Download {
+        Download { url: self.url.clone(), file_name: self.file_name.clone(), sha256: None }
+    }
+}
+
+fn pecl_listing(url: &str) -> Result<String> {
+    let mut response = agent().get(url).call().with_context(|| format!("fetching {url}"))?;
+    response.body_mut().read_to_string().with_context(|| format!("reading {url}"))
+}
+
+/// The stable releases in a PECL directory listing, newest first. Alphas,
+/// betas, and release candidates are left out.
+pub fn parse_pecl_versions(html: &str) -> Vec<String> {
+    let mut versions: Vec<Vec<u32>> = html
+        .split("href=\"")
+        .skip(1)
+        .filter_map(|rest| {
+            let dir = rest.split('"').next()?.strip_suffix('/')?;
+            dir.split('.').map(|part| part.parse::<u32>().ok()).collect::<Option<Vec<u32>>>()
+        })
+        .filter(|parts| parts.len() >= 2)
+        .collect();
+    versions.sort_by(|a, b| b.cmp(a));
+    versions.dedup();
+    versions
+        .into_iter()
+        .map(|parts| parts.iter().map(u32::to_string).collect::<Vec<_>>().join("."))
+        .collect()
+}
+
+/// The zip in one release's listing built for `build` (`8.5-ts-vs17-x64`).
+pub fn parse_pecl_build(html: &str, extension: &str, version: &str, build: &str) -> Option<String> {
+    let wanted = format!("php_{extension}-{version}-{build}.zip").to_ascii_lowercase();
+    html.split("href=\"")
+        .skip(1)
+        .filter_map(|rest| rest.split('"').next())
+        .find(|name| name.to_ascii_lowercase() == wanted)
+        .map(str::to_string)
+}
+
+/// The newest stable release of `extension` with a build for `build`, or the
+/// release named. Walks the releases newest first, one listing each, so an
+/// old PHP costs a few requests more than a current one.
+pub fn pecl_build(extension: &str, version: Option<&str>, build: &str) -> Result<Option<PeclBuild>> {
+    let base = format!("{PECL_URL}{}/", extension.to_ascii_lowercase());
+    let versions = match version {
+        Some(version) => vec![version.to_string()],
+        None => {
+            let versions = parse_pecl_versions(&pecl_listing(&base)?);
+            if versions.is_empty() {
+                bail!("{base} lists no releases of {extension}");
+            }
+            versions
+        }
+    };
+    for version in versions {
+        let dir = format!("{base}{version}/");
+        let Ok(listing) = pecl_listing(&dir) else { continue };
+        if let Some(file_name) = parse_pecl_build(&listing, extension, &version, build) {
+            let url = format!("{dir}{file_name}");
+            return Ok(Some(PeclBuild { version, file_name, url }));
+        }
+    }
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pecl_listings_give_stable_releases_newest_first() {
+        let html = r#"<a href="?C=N;O=D">x</a><a href="/~windows/pecl/releases/">up</a>
+            <a href="2.5.5/">2.5.5/</a><a href="3.4.0beta1/">b</a><a href="3.10.0/">c</a>
+            <a href="3.5.3/">d</a><a href="3.3.0alpha3/">e</a>"#;
+        assert_eq!(parse_pecl_versions(html), ["3.10.0", "3.5.3", "2.5.5"]);
+    }
+
+    #[test]
+    fn a_pecl_build_must_match_exactly() {
+        let html = r#"<a href="php_xdebug-3.5.3-8.5-nts-vs17-x64.zip">n</a>
+            <a href="php_xdebug-3.5.3-8.5-ts-vs17-x86.zip">x</a>
+            <a href="php_xdebug-3.5.3-8.5-ts-vs17-x64.zip">t</a>"#;
+        assert_eq!(
+            parse_pecl_build(html, "xdebug", "3.5.3", "8.5-ts-vs17-x64").as_deref(),
+            Some("php_xdebug-3.5.3-8.5-ts-vs17-x64.zip")
+        );
+        assert_eq!(parse_pecl_build(html, "xdebug", "3.5.3", "8.4-ts-vs17-x64"), None);
+    }
 
     /// Shaped like the real feed: build keys embed the compiler, which varies
     /// by branch; each branch also carries builds the stack cannot use.

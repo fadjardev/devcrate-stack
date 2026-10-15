@@ -101,6 +101,13 @@ fn run(cli: Cli) -> Result<u8> {
         Command::Php(PhpCommand::Ext(PhpExtCommand::Disable(args))) => {
             php_ext::print_change(&stack, args.php.as_deref(), &args.extensions, false)
         }
+        Command::Php(PhpCommand::Ext(PhpExtCommand::Install(args))) => php_ext::print_install(
+            &stack,
+            args.php.as_deref(),
+            &args.extension,
+            args.version.as_deref(),
+            args.force,
+        ),
 
         Command::Python(PythonCommand::List) => python::list(&stack),
         Command::Python(PythonCommand::Use(args)) => python::switch(&stack, &args.version),

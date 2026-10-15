@@ -322,6 +322,152 @@ pub fn disable(stack: &Stack, wanted: Option<&str>, exts: &[String]) -> Result<C
     Ok(done)
 }
 
+/// What `php ext install` came to.
+pub struct Installed {
+    pub php_id: String,
+    pub php_name: String,
+    pub extension: String,
+    pub version: String,
+    pub file_name: String,
+    /// The build it was matched to: `8.5-ts-vs17-x64`.
+    pub build: String,
+    pub dll: String,
+    pub cached: bool,
+    pub replaced: bool,
+    pub restart: Restart,
+}
+
+/// The build a PECL DLL has to match, as the PECL host spells it in a file
+/// name -- `8.5-ts-vs17-x64` -- read from a version's `php -i`.
+pub fn parse_build(php_i: &str) -> Option<String> {
+    let field = |key: &str| {
+        php_i.lines().find_map(|line| {
+            let (k, v) = line.split_once("=>")?;
+            (k.trim() == key).then(|| v.trim().to_string())
+        })
+    };
+    let version = field("PHP Version")?;
+    let mut parts = version.split('.');
+    let minor = format!("{}.{}", parts.next()?, parts.next()?);
+    // `API20250925,TS,VS17`
+    let build = field("PHP Extension Build")?;
+    let mut build = build.split(',').skip(1);
+    let thread = build.next()?.to_ascii_lowercase();
+    let toolchain = build.next()?.to_ascii_lowercase();
+    let arch = match field("Architecture")?.as_str() {
+        "x64" => "x64",
+        "x86" => "x86",
+        _ => return None,
+    };
+    Some(format!("{minor}-{thread}-{toolchain}-{arch}"))
+}
+
+fn build_of(dir: &Path) -> Result<String> {
+    let php = dir.join("php.exe");
+    let output = Command::new(&php)
+        .arg("-i")
+        .current_dir(dir)
+        .output()
+        .with_context(|| format!("running {} -i", php.display()))?;
+    parse_build(&String::from_utf8_lossy(&output.stdout))
+        .ok_or_else(|| anyhow!("{} -i did not say which build it is", php.display()))
+}
+
+/// Download a PECL extension built for this exact PHP, put its DLL in `ext\`,
+/// and switch it on. A DLL PHP will not load -- the wrong build, a missing
+/// dependency -- is taken out again and the old one, if any, put back.
+pub fn install(
+    stack: &Stack,
+    wanted: Option<&str>,
+    extension: &str,
+    version: Option<&str>,
+    force: bool,
+    progress: &mut dyn FnMut(u64, Option<u64>),
+) -> Result<Installed> {
+    let target = target(stack, wanted)?;
+    let name = name_of(extension);
+    let text = std::fs::read_to_string(&target.ini)
+        .with_context(|| format!("reading {}", target.ini.display()))?;
+    let dll = ext_dir(&target.dir, &text).join(format!("php_{name}.dll"));
+    let existed = dll.is_file();
+    if existed && !force {
+        bail!(
+            "{} already has {}. `devcrate php ext enable {name}` switches it on; --force replaces it.",
+            target.service.name,
+            stack.rel(&dll)
+        );
+    }
+
+    let build = build_of(&target.dir)?;
+    let new = dll.with_extension("dll.devcrate-new");
+    let fetched = crate::install::pecl::fetch_dll(stack, &name, version, &build, &new, progress);
+    let fetched = match fetched {
+        Ok(fetched) => fetched,
+        Err(err) => {
+            let _ = std::fs::remove_file(&new);
+            return Err(err);
+        }
+    };
+
+    // The old DLL is renamed rather than deleted: Windows allows that while a
+    // worker still has it loaded, and it is what goes back if this fails.
+    let old = dll.with_extension("dll.devcrate-old");
+    if existed {
+        let _ = std::fs::remove_file(&old);
+        std::fs::rename(&dll, &old).with_context(|| format!("moving {} aside", dll.display()))?;
+    }
+    if let Err(err) = std::fs::rename(&new, &dll) {
+        let _ = std::fs::remove_file(&new);
+        if existed {
+            let _ = std::fs::rename(&old, &dll);
+        }
+        return Err(err).with_context(|| format!("putting {} in place", dll.display()));
+    }
+    let undo = || {
+        let _ = std::fs::remove_file(&dll);
+        if existed {
+            let _ = std::fs::rename(&old, &dll);
+        }
+    };
+
+    // Switching it on runs `php -m` against it, which is the build check: PHP
+    // names the mismatch and refuses to load it.
+    let restart = match enable(stack, Some(&target.service.id), std::slice::from_ref(&name)) {
+        Err(err) => {
+            undo();
+            bail!("{err:#}\nThe downloaded DLL was removed again.");
+        }
+        // Already switched on, so `enable` checked nothing: a reinstall.
+        Ok(done) if done.changed.is_empty() => {
+            if let Some(problem) = startup_problem(&target.dir) {
+                undo();
+                bail!(
+                    "{} would not load it, so the old DLL was put back:\n{problem}",
+                    target.service.name
+                );
+            }
+            restart_if_running(stack, target.service)
+        }
+        Ok(done) => done.restart,
+    };
+    if existed {
+        let _ = std::fs::remove_file(&old);
+    }
+
+    Ok(Installed {
+        php_id: target.service.id.clone(),
+        php_name: target.service.name.clone(),
+        extension: name,
+        version: fetched.version,
+        file_name: fetched.file_name,
+        build,
+        dll: stack.rel(&dll),
+        cached: fetched.cached,
+        replaced: existed,
+        restart,
+    })
+}
+
 fn write(ini: &Path, edit: impl Fn(&str) -> String) -> Result<()> {
     match ini_block::rewrite(ini, edit) {
         IniEdit::Failed(why) => Err(anyhow!(why)),
@@ -437,6 +583,39 @@ pub fn print_change(stack: &Stack, wanted: Option<&str>, exts: &[String], on: bo
     Ok(exit::OK)
 }
 
+pub fn print_install(
+    stack: &Stack,
+    wanted: Option<&str>,
+    extension: &str,
+    version: Option<&str>,
+    force: bool,
+) -> Result<u8> {
+    let mut said = false;
+    let mut progress = |_: u64, _: Option<u64>| {
+        if !said {
+            said = true;
+            println!("Downloading {extension} from the PECL host...");
+        }
+    };
+    let done = install(stack, wanted, extension, version, force, &mut progress)?;
+    let verb = if done.replaced { "replaced" } else { "installed" };
+    println!("{} {} {} {verb}: {}", done.php_name, done.extension, done.version, done.dll);
+    let source = if done.cached { "cached in _downloads" } else { "downloaded" };
+    println!("  {} ({source}), built for {}", done.file_name, done.build);
+    println!("  length-checked over TLS only -- the PECL host publishes no checksum");
+    println!("  PHP loaded it, and it is switched on in devcrate's block of php.ini");
+    match &done.restart {
+        Restart::NotNeeded => {}
+        Restart::NotRunning => println!("  {} is not running; it loads it when it starts", done.php_id),
+        Restart::Done => println!("  {} restarted", done.php_id),
+        Restart::Failed(why) => {
+            println!("  {} did not restart cleanly: {why}", done.php_id);
+            return Ok(exit::ERROR);
+        }
+    }
+    Ok(exit::OK)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -479,6 +658,16 @@ mod tests {
         assert!(module_is("Xdebug", "xdebug"));
         assert!(module_is("pdo_pgsql", "pdo_pgsql"));
         assert!(!module_is("pdo_pgsql", "pgsql"));
+    }
+
+    /// The PECL host's spelling of a build, from what `php -i` says.
+    #[test]
+    fn the_build_is_read_from_php_i() {
+        let php_i = "PHP Version => 8.5.8\nArchitecture => x64\nPHP Extension Build => API20250925,TS,VS17\n";
+        assert_eq!(parse_build(php_i).as_deref(), Some("8.5-ts-vs17-x64"));
+        let old = "PHP Version => 5.6.40\nArchitecture => x64\nPHP Extension Build => API20131226,TS,VC11\n";
+        assert_eq!(parse_build(old).as_deref(), Some("5.6-ts-vc11-x64"));
+        assert_eq!(parse_build("PHP Version => 8.5.8\n"), None);
     }
 
     #[test]
