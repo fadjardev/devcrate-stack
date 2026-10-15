@@ -27,7 +27,7 @@
 //! would need the PHP bootstrap to use, whereas the sidecar hashes the phar the
 //! stack actually installs.
 //!
-//! **Adminer** is the fourth: GitHub releases, read from the
+//! **Adminer** and **Mailpit** are the fourth: GitHub releases, read from the
 //! releases API, whose assets carry a `digest` -- the sha256 GitHub recorded
 //! for the file the vendor uploaded. That is a real hash at full strength, the
 //! same as PHP's, with GitHub rather than the vendor's own host as the place it
@@ -1485,6 +1485,18 @@ pub fn fetch_bun_catalogue() -> Result<BunCatalogue> {
         .read_to_string()
         .with_context(|| format!("reading Bun releases from {url}"))?;
     parse_bun_catalogue(&text)
+}
+
+/// Mailpit's releases: the Windows x64 zip. The asset's name carries no
+/// version, so it is cached under one that does -- two releases must not share
+/// a file in `_downloads\`.
+pub fn mailpit_catalogue() -> Result<Vec<GithubRelease>> {
+    let releases =
+        parse_github_releases(&github_releases("axllent/mailpit")?, |_| "mailpit-windows-amd64.zip".to_string())?;
+    Ok(releases
+        .into_iter()
+        .map(|r| GithubRelease { file_name: format!("mailpit-{}-windows-amd64.zip", r.version), ..r })
+        .collect())
 }
 
 #[cfg(test)]

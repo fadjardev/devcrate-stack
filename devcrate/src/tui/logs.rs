@@ -48,6 +48,13 @@ pub fn discover(stack: &Stack) -> Vec<LogFile> {
         collect(&mut files, "redis", &dir.join("data"), &["log"]);
     }
 
+    // Mailpit writes where it is told to: `--log-file data\mailpit.log`.
+    if let Some(mailpit) = stack.by_kind(ServiceKind::Mailpit)
+        && let Some(dir) = mailpit.install_marker.parent()
+    {
+        collect(&mut files, "mailpit", &dir.join("data"), &["log"]);
+    }
+
     files.sort_by(|a, b| {
         // Error logs first within a group; the group prefix keeps services
         // together because it sorts as part of the label.

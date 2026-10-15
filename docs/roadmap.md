@@ -19,7 +19,7 @@ not started. `in progress` - being built. `done` - shipped, see
 | 5 | Node.js and Bun as managed runtimes | done — Node.js & Bun installer, version switcher, npm isolation, and smart .nvmrc / package.json detection. **Not built:** dev servers under supervision and the HMR proxy, both carried into item 9 |
 | 6 | One-command setup on a fresh machine, with shortcuts into the dashboard | proposed |
 | 7 | A database browser and per-project databases | done — `devcrate install adminer` (served as a site) and `devcrate db list\|create\|drop\|import\|export` for MariaDB and PostgreSQL. **Not built:** creating the `db.test` site as part of the install |
-| 8 | A local mail catcher (Mailpit) | proposed |
+| 8 | A local mail catcher (Mailpit) | done — `devcrate install mailpit`: a loopback-only service (SMTP 1025, inbox 8025), sha256-verified, with each `php.ini` pointed at it in a marked block that uninstall removes |
 | 9 | Auto-vhost from a folder, and quick-create for Laravel / WordPress | proposed |
 | 10 | PHP extensions and Xdebug, toggled per version | proposed |
 

@@ -77,8 +77,8 @@ leaves anyway, which may abandon a shutdown halfway through.
 
 `i` lists every runtime `devcrate install` can fetch: the newest five PHP
 branches, nginx stable and mainline, Composer stable, MariaDB, PostgreSQL 13.23,
-Redis, Erlang/OTP, RabbitMQ, Node.js LTS and current, Bun, Python 3.8, and
-Adminer.
+Redis, Erlang/OTP, RabbitMQ, Node.js LTS and current, Bun, Python 3.8,
+Adminer, and Mailpit.
 The labels name the exact release, read from the vendors' catalogues on a
 thread of its own the first time the picker opens (the title shows a spinner
 until they arrive). Offline, or when a catalogue cannot be read, that runtime

@@ -126,6 +126,7 @@ visible rather than mysterious.
 | `devcrate install erlang <version>` | **works** — downloads, unpacks the RabbitMQ dependency |
 | `devcrate install redis <version>` | **works** — downloads from GitHub (length/TLS), unpacks, generates `devcrate.conf` and `data\` |
 | `devcrate install adminer [version]` | **works** — downloads from GitHub, sha256-verified against the release's digest, writes `adminer\` (see below) |
+| `devcrate install mailpit [version]` | **works** — downloads from GitHub, sha256-verified, a service on SMTP 1025 / UI 8025, points each `php.ini`'s `mail()` at it (see below) |
 | `devcrate install node <version>` / `devcrate install bun <version>` | **works** — downloads and installs into `node\` / `bun\` |
 | `devcrate install <runtime> --from <file>` | **works** — the same install from an archive or phar on disk |
 | `devcrate uninstall <runtime> [version]` | **works** — see [`devcrate uninstall`](#devcrate-uninstall) |
@@ -587,6 +588,9 @@ devcrate install python --from C:\downloads\python-3.8.10-embed-amd64.zip
 devcrate install adminer                          REM list the releases on GitHub
 devcrate install adminer latest                   REM download, verify, install (or update)
 devcrate site add db.test --path C:\devcrate\adminer   REM ...then serve it (the install prints this path)
+
+devcrate install mailpit latest                   REM download, verify, install
+devcrate start mailpit                            REM inbox at http://127.0.0.1:8025
 ```
 
 **Adminer** is the stack's database browser: one PHP file, for MariaDB and
@@ -607,6 +611,25 @@ enables. Out of the box the stack's PHP versions have MariaDB's (`mysqli` /
 `pdo_mysql`) but not PostgreSQL's: Adminer reaches PostgreSQL only once
 `extension=pgsql` is enabled in the `php.ini` of the version serving
 `db.test`. The install says so rather than editing `php.ini` itself.
+
+**Mailpit** is the stack's mail catcher: a service shaped like Redis — one
+`mailpit\` directory, its message store in `data\`, started and stopped with
+the rest of the stack in the database half of the order. It listens on
+loopback only, SMTP on `127.0.0.1:1025` and the inbox on
+`http://127.0.0.1:8025`, and accepts any SMTP login, so an app that sends a
+username and password (a Laravel `.env`) is caught rather than refused. The
+download is sha256-verified against the GitHub release's digest. It has no
+shutdown command, so `stop` terminates it; its store is SQLite, written
+transactionally.
+
+The install also points plain `mail()` at it. On Windows PHP speaks SMTP
+itself, to `SMTP` / `smtp_port`, so each installed version's `php.ini` gets a
+block at its end, between `; --- devcrate mailpit begin ---` and `; --- devcrate
+mailpit end ---`, setting `SMTP = 127.0.0.1`, `smtp_port = 1025`, and a
+`sendmail_from`. Being last, it wins over the `[mail function]` defaults above
+it; only the block is ever written, a reinstall replaces it, and `uninstall
+mailpit` takes it out again, leaving the file exactly as it was. Running PHP
+workers pick it up on `devcrate restart`.
 
 The version is a positional argument, not a flag: `devcrate install php 8.4
 --from <zip>` names the version *and* the archive. (`--version` is not accepted
@@ -1056,7 +1079,8 @@ The mirror of `install`, one runtime at a time. `runtime` is the same name
 `install` accepts. `version` is required for the versioned, side-by-side
 runtimes (`php`, `nginx`, `node`, `bun`, `python`) and lists what is installed
 when omitted; it is ignored for the ones that have only one install
-(`composer`, `mariadb`, `postgres`, `rabbitmq`, `erlang`, `redis`).
+(`composer`, `mariadb`, `postgres`, `rabbitmq`, `erlang`, `redis`, `adminer`,
+`mailpit`).
 
 A service that is still running is always refused — Windows will not cleanly
 delete a directory a process is executing out of, and `devcrate stop
@@ -1069,10 +1093,10 @@ delete a directory a process is executing out of, and `devcrate stop
   `erlang` while `rabbitmq\` is still installed (Erlang is its dependency, not
   a peer).
 
-`mariadb`, `postgres`, `rabbitmq`, and `redis` keep a `data\` directory beside
-their binaries — the same directory an `install --force` reinstall lifts
-across rather than overwrites (with MariaDB's `my.ini` and Redis's
-`devcrate.conf`) (see [`devcrate install`](#devcrate-install)
+`mariadb`, `postgres`, `rabbitmq`, `redis`, and `mailpit` keep a `data\`
+directory beside their binaries — the same directory an `install --force`
+reinstall lifts across rather than overwrites (with MariaDB's `my.ini` and
+Redis's `devcrate.conf`) (see [`devcrate install`](#devcrate-install)
 above). `uninstall` treats it the same way: everything else is removed, and
 `data\` is left in place unless `--data` is also given. `--data` alone is
 refused; it has to be paired with `--force`, since deleting a database's data

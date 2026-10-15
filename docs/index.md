@@ -36,6 +36,7 @@ install walkthrough.
 | RabbitMQ | 4.3.2 (Erlang 27) | `:5672`, UI `:15672` | `guest` / `guest` |
 | PostgreSQL | 13.23 | `127.0.0.1:5432` | `postgres` / `postgres` |
 | Redis | 8.10.2 | `127.0.0.1:6379` | none (loopback-only bind) |
+| Mailpit | `devcrate install mailpit` | SMTP `127.0.0.1:1025`, inbox `http://127.0.0.1:8025` | any login accepted |
 
 Everything runs out of `C:\devcrate` with no system-wide installs. Only the scripts
 and service configs are versioned; binaries, runtime data, TLS keys, and

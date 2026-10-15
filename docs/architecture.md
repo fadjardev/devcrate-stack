@@ -49,6 +49,7 @@ C:\devcrate\                   <- the stack root (any folder works)
 |- redis\                      Portable Redis (binaries + data\, not versioned)
 |- composer\                   composer.phar + shims + home/cache, in-root (not versioned)
 |- adminer\                    adminer.php + devcrate's index.php wrapper (not versioned)
+|- mailpit\                    Mailpit mail catcher (binary + data\, not versioned)
 |- tools\rabbitmq-smoketest\   Standalone AMQP publish/consume test
 |- projects\                   Application code, one folder per site (NOT versioned)
 ```
@@ -87,6 +88,7 @@ selected by `phpuse`.
 | RabbitMQ AMQP | `127.0.0.1:5672` | broker |
 | RabbitMQ mgmt UI | `127.0.0.1:15672` | `guest` / `guest` |
 | Redis | `127.0.0.1:6379` | no password (loopback-only bind) |
+| Mailpit SMTP / inbox | `127.0.0.1:1025` / `127.0.0.1:8025` | any login accepted (loopback-only bind) |
 | Nginx HTTP | `0.0.0.0:80` | redirects to HTTPS |
 | Nginx HTTPS | `0.0.0.0:443` | TLS via mkcert |
 

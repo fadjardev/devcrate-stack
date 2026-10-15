@@ -27,6 +27,7 @@ erl_crash.dump
 /redis/
 /composer/
 /adminer/
+/mailpit/
 /tools/
 /node/
 /bun/

@@ -24,6 +24,7 @@ mod bun;
 mod composer;
 mod download;
 mod erlang;
+mod mailpit;
 mod mariadb;
 mod nginx;
 mod node;
@@ -71,6 +72,7 @@ pub enum Runtime {
     Python,
     Redis,
     Adminer,
+    Mailpit,
 }
 
 impl Runtime {
@@ -89,10 +91,11 @@ impl Runtime {
             "python" => Ok(Runtime::Python),
             "redis" => Ok(Runtime::Redis),
             "adminer" => Ok(Runtime::Adminer),
+            "mailpit" => Ok(Runtime::Mailpit),
             other => bail!(
                 "{other:?} is not a runtime devcrate manages.\n\
                  Known: php, nginx, composer, mariadb, rabbitmq, erlang, node, \
-                 bun, postgres, python, redis, adminer"
+                 bun, postgres, python, redis, adminer, mailpit"
             ),
         }
     }
@@ -112,6 +115,7 @@ impl Runtime {
             Runtime::Python => "python",
             Runtime::Redis => "redis",
             Runtime::Adminer => "adminer",
+            Runtime::Mailpit => "mailpit",
         }
     }
 
@@ -130,6 +134,7 @@ impl Runtime {
             Runtime::Python => "Python",
             Runtime::Redis => "Redis",
             Runtime::Adminer => "Adminer",
+            Runtime::Mailpit => "Mailpit",
         }
     }
 }
@@ -192,6 +197,7 @@ pub enum Details {
     Python(PythonInstalled),
     Redis(RedisInstalled),
     Adminer(AdminerInstalled),
+    Mailpit(MailpitInstalled),
 }
 
 #[derive(Debug)]
@@ -310,6 +316,17 @@ pub struct AdminerInstalled {
 }
 
 #[derive(Debug)]
+pub struct MailpitInstalled {
+    pub dir: String,
+    pub data_dir_created: bool,
+    pub smtp_port: u16,
+    pub ui_port: u16,
+    /// Each installed PHP version's php.ini, and what pointing it at Mailpit
+    /// came to.
+    pub php_ini: Vec<(String, mailpit::IniEdit)>,
+}
+
+#[derive(Debug)]
 pub struct ErlangInstalled {
     pub dir: String,
 }
@@ -335,6 +352,7 @@ pub fn from_archive(
         Runtime::Python => python_from_archive(stack, archive_path, opts, progress),
         Runtime::Redis => redis_from_archive(stack, archive_path, opts, progress),
         Runtime::Adminer => adminer_from_file(stack, archive_path, opts, progress),
+        Runtime::Mailpit => mailpit_from_archive(stack, archive_path, opts, progress),
     }
 }
 
@@ -565,6 +583,104 @@ fn redis_from_archive(
             port,
         }),
     })
+}
+
+/// Install Mailpit into `mailpit\`, keeping `data\` across a reinstall, and
+/// point every installed PHP version's `mail()` at it -- see [`mailpit`].
+fn mailpit_from_archive(
+    stack: &Stack,
+    archive_path: &Path,
+    opts: &Options,
+    progress: &mut dyn FnMut(Progress),
+) -> Result<Installed> {
+    if !archive_path.is_file() {
+        bail!("{} is not a file", archive_path.display());
+    }
+    let file_name = archive_path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    let source_sha256 = download::sha256_of(archive_path)
+        .with_context(|| format!("hashing {}", archive_path.display()))?;
+    let version = opts
+        .version
+        .clone()
+        .or_else(|| mailpit::version_from_file_name(&file_name))
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let dest = stack.root.join("mailpit");
+    let service = stack.by_kind(config::ServiceKind::Mailpit);
+    let smtp_port = service.and_then(|s| s.ports.first().copied()).unwrap_or(mailpit::SMTP_PORT);
+    let ui_port = service.and_then(|s| s.ports.get(1).copied()).unwrap_or(mailpit::UI_PORT);
+
+    if dest.exists() && !opts.force {
+        bail!("{} already exists; pass --force to replace it", stack.rel(&dest));
+    }
+
+    let staging = stack.root.join(staging_name("mailpit"));
+    if staging.exists() {
+        let _ = std::fs::remove_dir_all(&staging);
+    }
+    std::fs::create_dir_all(&staging)?;
+
+    progress(Progress::Extracting { done: 0, total: 1 });
+    let extracted = archive::extract(archive_path, &staging, &mut |done, total| {
+        progress(Progress::Extracting { done, total });
+    })?;
+
+    progress(Progress::Validating);
+    mailpit::check(&staging, archive_path)?;
+
+    progress(Progress::Configuring);
+    let data_dir_created = mailpit::ensure_data(&staging)?;
+
+    progress(Progress::Installing);
+    let (replaced, kept) = swap_keeping(stack, &stack.root, &staging, &dest, "mailpit", &["data"])?;
+
+    let receipt = Receipt {
+        runtime: Runtime::Mailpit.as_str().to_string(),
+        version: version.clone(),
+        release: version.clone(),
+        thread_safe: None,
+        source_archive: file_name,
+        source_bytes: std::fs::metadata(archive_path).map(|m| m.len()).unwrap_or(0),
+        source_sha256,
+        files: extracted.files,
+    };
+    write_receipt(&dest, &receipt)?;
+
+    let php_ini = stack
+        .php_services()
+        .filter(|php| php.is_installed())
+        .filter_map(|php| {
+            let ini = php.install_marker.parent()?.join("php.ini");
+            Some((php.id.clone(), mailpit::point_php_at(&ini, smtp_port)))
+        })
+        .collect();
+
+    Ok(Installed {
+        runtime: Runtime::Mailpit,
+        version: version.clone(),
+        release: version,
+        dir: stack.rel(&dest),
+        files: extracted.files,
+        replaced,
+        details: Details::Mailpit(MailpitInstalled {
+            dir: stack.rel(&dest),
+            data_dir_created: data_dir_created && !kept.iter().any(|k| k == "data"),
+            smtp_port,
+            ui_port,
+            php_ini,
+        }),
+    })
+}
+
+/// How the service is started -- here so `control` need not reach into the
+/// installer's private module.
+pub fn mailpit_launch_args(smtp_port: u16, ui_port: u16) -> Vec<String> {
+    mailpit::launch_args(smtp_port, ui_port)
+}
+
+/// Take the devcrate block back out of a `php.ini` -- `uninstall mailpit`.
+pub fn mailpit_unpoint_php(php_ini: &Path) -> bool {
+    matches!(mailpit::unpoint_php(php_ini), mailpit::IniEdit::Written)
 }
 
 fn erlang_from_archive(
@@ -1807,6 +1923,7 @@ pub fn fallback_offerings() -> Vec<Offering> {
         Offering::new("bun", "Bun (newest)", "latest"),
         Offering::new("python", "Python 3.8", "3.8"),
         Offering::new("adminer", "Adminer (newest) -- database browser", "latest"),
+        Offering::new("mailpit", "Mailpit (newest) -- mail catcher", "latest"),
     ]
 }
 
@@ -1892,6 +2009,11 @@ pub fn offerings() -> Vec<Offering> {
         }
         None => keep("adminer", &mut out),
     }
+
+    match download::mailpit_catalogue().ok().and_then(|c| c.first().map(|r| r.version.clone())) {
+        Some(version) => out.push(Offering::new("mailpit", format!("Mailpit {version}  (mail catcher)"), version)),
+        None => keep("mailpit", &mut out),
+    }
     out
 }
 
@@ -1945,6 +2067,7 @@ fn install_by_download(
         Runtime::Python => choose_python(stack, version, emit)?,
         Runtime::Redis => choose_redis(stack, version, emit)?,
         Runtime::Adminer => choose_adminer(stack, version, emit)?,
+        Runtime::Mailpit => choose_mailpit(stack, version, emit)?,
     };
     // Nothing chosen means the catalogue was printed instead.
     let Some(Chosen { download: source, dest, replace_freely }) = chosen else {
@@ -2299,6 +2422,28 @@ fn choose_adminer(stack: &Stack, version: Option<&str>, emit: &mut dyn Emit) -> 
     }))
 }
 
+fn choose_mailpit(stack: &Stack, version: Option<&str>, emit: &mut dyn Emit) -> Result<Option<Chosen>> {
+    emit_line!(emit, "  fetching the Mailpit release list from GitHub");
+    let catalogue = download::mailpit_catalogue()?;
+
+    let Some(wanted) = version else {
+        emit_line!(emit, "\n  Mailpit releases (axllent/mailpit on GitHub):");
+        for rel in catalogue.iter().take(5) {
+            emit_line!(emit, "    mailpit {}", rel.version);
+        }
+        emit_line!(emit, "\n  Install the newest: `devcrate install mailpit latest`");
+        return Ok(None);
+    };
+
+    let release = pick_by_version(&catalogue, wanted, |r| &r.version)
+        .ok_or_else(|| anyhow!("no Mailpit release matching {wanted:?}"))?;
+    Ok(Some(Chosen {
+        download: release.download(),
+        dest: stack.root.join("mailpit"),
+        replace_freely: false,
+    }))
+}
+
 fn choose_erlang(stack: &Stack, version: Option<&str>, emit: &mut dyn Emit) -> Result<Option<Chosen>> {
     emit_line!(emit, "  fetching the Erlang release list");
     let catalogue = download::erlang_catalogue()?;
@@ -2441,7 +2586,7 @@ fn report_transfer(
         Runtime::Node => "nodejs.org releases index",
         Runtime::Bun => "GitHub releases",
         Runtime::Redis => "GitHub releases",
-        Runtime::Adminer => "the sha256 GitHub records for the release",
+        Runtime::Adminer | Runtime::Mailpit => "the sha256 GitHub records for the release",
         // nginx, PostgreSQL (EDB), and python.org publish no sha256, so these
         // arms are never the verified one -- the "no checksum" branch below
         // reports them instead.
@@ -2470,14 +2615,19 @@ fn report_transfer(
                 Runtime::Erlang => "Erlang/OTP",
                 Runtime::Bun => "Bun",
                 Runtime::Redis => "redis-windows",
-                Runtime::Adminer => "GitHub",
+                Runtime::Adminer | Runtime::Mailpit => "GitHub",
                 _ => "nginx",
             };
             let host = match runtime {
                 Runtime::Postgres => "the download host",
                 Runtime::Python => "python.org",
                 Runtime::MariaDb => "archive.mariadb.org",
-                Runtime::RabbitMq | Runtime::Erlang | Runtime::Bun | Runtime::Redis | Runtime::Adminer => {
+                Runtime::RabbitMq
+                | Runtime::Erlang
+                | Runtime::Bun
+                | Runtime::Redis
+                | Runtime::Adminer
+                | Runtime::Mailpit => {
                     "github.com"
                 }
                 _ => "nginx.org",
@@ -2638,6 +2788,7 @@ trait Emit {
                     Runtime::Python => "enabling site (for pip)",
                     Runtime::Redis => "generating devcrate.conf",
                     Runtime::Adminer => "writing the devcrate wrapper (index.php)",
+                    Runtime::Mailpit => "creating data\\",
                 };
                 self.line(&format!("  {text}"));
             }
@@ -2734,6 +2885,7 @@ fn print_installed(done: &Installed, emit: &mut dyn Emit) {
         Details::Python(py) => print_python_installed(done, py, emit),
         Details::Redis(redis) => print_redis_installed(done, redis, emit),
         Details::Adminer(adminer) => print_adminer_installed(done, adminer, emit),
+        Details::Mailpit(mailpit) => print_mailpit_installed(done, mailpit, emit),
     }
 }
 
@@ -3196,6 +3348,35 @@ fn print_postgres_installed(done: &Installed, postgres: &PostgresInstalled, emit
     emit_line!(emit, "  start it   devcrate start postgres        (listens on {})", postgres.port);
     emit_line!(emit, "  connect    psql -U {} -h 127.0.0.1 -p {}", postgres.superuser, postgres.port);
     emit_line!(emit, "  stop it    devcrate stop postgres");
+}
+
+fn print_mailpit_installed(done: &Installed, installed: &MailpitInstalled, emit: &mut dyn Emit) {
+    if installed.data_dir_created {
+        emit_line!(emit, "  created {}\\data", installed.dir);
+    } else if done.replaced {
+        emit_line!(emit, "  kept {}\\data -- the messages already caught", installed.dir);
+    }
+    emit_line!(emit);
+    emit_line!(emit, "Mailpit {} installed in {}", done.version, installed.dir);
+    emit_line!(emit, "  SMTP   127.0.0.1:{}   (any login accepted)", installed.smtp_port);
+    emit_line!(emit, "  inbox  http://127.0.0.1:{}", installed.ui_port);
+
+    if !installed.php_ini.is_empty() {
+        emit_line!(emit);
+        emit_line!(emit, "  mail() pointed at it, in a devcrate block at the end of each php.ini:");
+        for (php, edit) in &installed.php_ini {
+            match edit {
+                mailpit::IniEdit::Written => emit_line!(emit, "    {php:<9} updated"),
+                mailpit::IniEdit::AlreadyThere => emit_line!(emit, "    {php:<9} already pointed at it"),
+                mailpit::IniEdit::Failed(why) => emit_line!(emit, "    {php:<9} NOT updated: {why}"),
+            }
+        }
+        emit_line!(emit, "  running PHP workers pick it up on restart: devcrate restart");
+    }
+
+    emit_line!(emit);
+    emit_line!(emit, "  start it   devcrate start mailpit");
+    emit_line!(emit, "  apps       MAIL_HOST=127.0.0.1  MAIL_PORT={}", installed.smtp_port);
 }
 
 fn print_adminer_installed(done: &Installed, installed: &AdminerInstalled, emit: &mut dyn Emit) {

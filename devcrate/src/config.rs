@@ -31,6 +31,8 @@ pub struct Config {
     pub rabbitmq: RabbitMqConfig,
     #[serde(default)]
     pub redis: RedisConfig,
+    #[serde(default)]
+    pub mailpit: MailpitConfig,
     /// One table per installed PHP version. Empty means "discover them".
     #[serde(default)]
     pub php: Vec<PhpConfig>,
@@ -92,6 +94,16 @@ pub struct RedisConfig {
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct MailpitConfig {
+    /// Directory holding `mailpit.exe` and `data\`, relative to the stack root.
+    pub dir: Option<PathBuf>,
+    pub smtp_port: Option<u16>,
+    /// The inbox web UI.
+    pub ui_port: Option<u16>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct PhpConfig {
     /// Display version, e.g. `"8.5"`. Derived from `dir` when absent.
     pub version: Option<String>,
@@ -127,6 +139,7 @@ pub enum ServiceKind {
     Postgres,
     RabbitMq,
     Redis,
+    Mailpit,
     Node,
     Bun,
 }
@@ -140,6 +153,7 @@ impl ServiceKind {
             ServiceKind::Postgres => "postgres",
             ServiceKind::RabbitMq => "rabbitmq",
             ServiceKind::Redis => "redis",
+            ServiceKind::Mailpit => "mailpit",
             ServiceKind::Node => "node",
             ServiceKind::Bun => "bun",
         }
@@ -308,6 +322,19 @@ impl Stack {
             ports: vec![config.redis.port.unwrap_or(6379)],
         });
 
+        let mailpit_dir =
+            base.join(config.mailpit.dir.clone().unwrap_or_else(|| PathBuf::from("mailpit")));
+        services.push(Service {
+            id: "mailpit".into(),
+            name: "Mailpit".into(),
+            kind: ServiceKind::Mailpit,
+            // Flat like Redis: the binary sits directly in its directory.
+            install_marker: mailpit_dir.join("mailpit.exe"),
+            process_prefix: mailpit_dir.join("mailpit.exe"),
+            exclude_names: Vec::new(),
+            ports: vec![config.mailpit.smtp_port.unwrap_or(1025), config.mailpit.ui_port.unwrap_or(8025)],
+        });
+
         let node_dir = base.join("node");
         services.push(Service {
             id: "node".into(),
@@ -449,6 +476,12 @@ impl Stack {
             // directory, with no bin\ the way MariaDB's and PostgreSQL's do.
             config.redis.dir = ancestor(&redis.install_marker, 1).map(|d| self.rel_path(d));
             config.redis.port = redis.ports.first().copied();
+        }
+
+        if let Some(mailpit) = self.by_kind(ServiceKind::Mailpit) {
+            config.mailpit.dir = ancestor(&mailpit.install_marker, 1).map(|d| self.rel_path(d));
+            config.mailpit.smtp_port = mailpit.ports.first().copied();
+            config.mailpit.ui_port = mailpit.ports.get(1).copied();
         }
 
         config.php = self

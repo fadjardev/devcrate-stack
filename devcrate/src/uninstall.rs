@@ -99,6 +99,17 @@ pub fn uninstall_quiet(
         Runtime::Redis => uninstall_database_dir(stack, runtime, ServiceKind::Redis, data, force)?,
         Runtime::Erlang => uninstall_erlang(stack, force)?,
         Runtime::Adminer => uninstall_adminer(stack)?,
+        Runtime::Mailpit => {
+            let done = uninstall_database_dir(stack, runtime, ServiceKind::Mailpit, data, force)?;
+            // The php.ini blocks go with it: mail() would otherwise keep
+            // pointing at a port nothing listens on.
+            for php in stack.php_services().filter(|s| s.is_installed()) {
+                if let Some(dir) = php.install_marker.parent() {
+                    crate::install::mailpit_unpoint_php(&dir.join("php.ini"));
+                }
+            }
+            done
+        }
     })
 }
 
@@ -133,6 +144,7 @@ pub fn removable(stack: &Stack) -> Vec<Removable> {
         (ServiceKind::Postgres, Runtime::Postgres),
         (ServiceKind::Redis, Runtime::Redis),
         (ServiceKind::RabbitMq, Runtime::RabbitMq),
+        (ServiceKind::Mailpit, Runtime::Mailpit),
     ] {
         let installed = stack
             .by_kind(kind)
@@ -491,7 +503,8 @@ fn uninstall_adminer(stack: &Stack) -> Result<Uninstalled> {
 /// [`Stack::to_config`](crate::config::Stack::to_config) does. Redis is flat
 /// (`<dir>\redis-server.exe`, no bin\), so it needs only one.
 fn service_dir(service: &Service) -> Result<PathBuf> {
-    let levels = if service.kind == ServiceKind::Redis { 1 } else { 2 };
+    let flat = matches!(service.kind, ServiceKind::Redis | ServiceKind::Mailpit);
+    let levels = if flat { 1 } else { 2 };
     service.install_marker.ancestors().nth(levels).map(Path::to_path_buf).ok_or_else(|| {
         anyhow!("{} has no ancestor {levels} levels up", service.install_marker.display())
     })

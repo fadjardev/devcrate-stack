@@ -51,6 +51,7 @@ const SHUTDOWN: &[ServiceKind] = &[
     ServiceKind::Bun,
     ServiceKind::RabbitMq,
     ServiceKind::Redis,
+    ServiceKind::Mailpit,
     ServiceKind::Postgres,
     ServiceKind::MariaDb,
 ];
@@ -61,6 +62,7 @@ const STARTUP: &[ServiceKind] = &[
     ServiceKind::MariaDb,
     ServiceKind::Postgres,
     ServiceKind::Redis,
+    ServiceKind::Mailpit,
     ServiceKind::Php,
     ServiceKind::Node,
     ServiceKind::Bun,
@@ -92,6 +94,9 @@ fn grace(kind: ServiceKind) -> Duration {
         // save points configured (it does -- see install::redis::configure),
         // so this covers a save of a dev-sized dataset rather than a bulk one.
         ServiceKind::Redis => Duration::from_secs(15),
+        // No shutdown command; terminated outright. Its SQLite store is
+        // written transactionally, so that costs at most the message in flight.
+        ServiceKind::Mailpit => Duration::ZERO,
     }
 }
 
@@ -322,7 +327,7 @@ fn ask_nicely(stack: &Stack, service: &Service) -> Result<()> {
             .arg(&stack.nginx_prefix)
             .args(["-s", "quit"])),
         // No shutdown command exists for a php-cgi FastCGI listener or CLI runtimes.
-        ServiceKind::Php | ServiceKind::Node | ServiceKind::Bun => Ok(()),
+        ServiceKind::Php | ServiceKind::Node | ServiceKind::Bun | ServiceKind::Mailpit => Ok(()),
         ServiceKind::RabbitMq => {
             let sbin = parent(&service.install_marker)?;
             let ctl = sbin.join("rabbitmqctl.bat");
@@ -454,6 +459,7 @@ fn boot(kind: ServiceKind) -> Duration {
         // disk, so this is generous for a dev-sized dataset rather than
         // tight.
         ServiceKind::Redis => Duration::from_secs(15),
+        ServiceKind::Mailpit => Duration::from_secs(15),
         ServiceKind::Node | ServiceKind::Bun => Duration::ZERO,
     }
 }
@@ -702,6 +708,16 @@ fn launch(stack: &Stack, service: &Service) -> Result<()> {
             background(&mut command)
         }
 
+        ServiceKind::Mailpit => {
+            // Relative data paths, from its own directory, like Redis.
+            let dir = parent(&service.install_marker)?;
+            let smtp = service.ports.first().copied().unwrap_or(1025);
+            let ui = service.ports.get(1).copied().unwrap_or(8025);
+            let mut command = Command::new(&service.install_marker);
+            command.args(crate::install::mailpit_launch_args(smtp, ui)).current_dir(&dir);
+            background(&mut command)
+        }
+
         ServiceKind::Node | ServiceKind::Bun => Ok(()),
     }
 }
@@ -867,6 +883,7 @@ mod tests {
             ServiceKind::Postgres,
             ServiceKind::RabbitMq,
             ServiceKind::Redis,
+            ServiceKind::Mailpit,
         ];
         for kind in all {
             assert!(STARTUP.contains(&kind), "{kind} is missing from STARTUP");
