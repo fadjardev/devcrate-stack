@@ -87,7 +87,7 @@ a vendor's changed catalogue would hurt most:
 cargo test -- --ignored offerings_from_the_live_catalogues --nocapture
 ```
 
-The dashboard cannot be driven from a script ([CLAUDE.md](../CLAUDE.md));
+The dashboard cannot be driven from a script ([it needs a real terminal](tui.md#the-terminal));
 open `target/release/devcrate.exe` in Windows Terminal and press `i`, `U`,
 and `?` before publishing, or say in the release notes that it was not done.
 
