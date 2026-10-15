@@ -180,6 +180,12 @@ fn uninstall_php(stack: &Stack, wanted: &str, force: bool) -> Result<Uninstalled
     }
 
     let was_current = stack.current_php().as_deref() == Some(dir.as_path());
+    if was_current && !force {
+        bail!(
+            "php\\current points at {id}; removing it leaves `php` unresolved. \
+             Switch first (`devcrate php use <version>`), or pass --force."
+        );
+    }
 
     std::fs::remove_dir_all(&dir).with_context(|| format!("removing {}", stack.rel(&dir)))?;
 
@@ -520,5 +526,41 @@ mod tests {
         assert!(dir.join("data").join("PG_VERSION").is_file());
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The same guard every other versioned runtime has: the version the CLI
+    /// resolves to is not removed without `--force`, and with it the junction
+    /// is cleared rather than left dangling.
+    #[test]
+    fn the_current_php_needs_force() {
+        let root = std::env::temp_dir().join(format!(
+            "devcrate-uninstall-current-php-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let version_dir = root.join("php").join("php-8.5");
+        std::fs::create_dir_all(&version_dir).unwrap();
+        std::fs::write(version_dir.join("php-cgi.exe"), b"stub").unwrap();
+        junction::create(&root.join("php").join("current"), &version_dir).unwrap();
+
+        let open = || {
+            Stack::open(crate::root::StackRoot {
+                path: root.clone(),
+                source: crate::root::RootSource::Flag,
+            })
+            .unwrap()
+        };
+
+        let refused =
+            uninstall_php(&open(), "8.5", false).err().expect("refused without --force").to_string();
+        assert!(refused.contains("php\\current"), "{refused}");
+        assert!(version_dir.is_dir(), "nothing is removed when refused");
+
+        let done = uninstall_php(&open(), "8.5", true).unwrap();
+        assert!(done.current_cleared);
+        assert!(!version_dir.exists());
+        assert!(junction::target(&root.join("php").join("current")).is_none());
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
