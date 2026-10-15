@@ -138,8 +138,21 @@ pub fn create(
 ) -> Result<Created> {
     let host = check_host(host)?;
 
+    // Checked before anything is created: a path that does not resolve would
+    // otherwise become a junction to nowhere under projects\, which then
+    // blocks the next attempt with "already exists".
     let (project_dir, in_tree) = if let Some(path) = project_path {
-        let abs = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let abs = path.canonicalize().map_err(|_| {
+            let cwd = std::env::current_dir().map(|d| d.display().to_string()).unwrap_or_default();
+            anyhow!(
+                "{} does not exist. A relative path is taken from the current \
+                 directory ({cwd}), not the stack root.",
+                path.display()
+            )
+        })?;
+        if !abs.is_dir() {
+            return Err(anyhow!("{} is not a directory", path.display()));
+        }
         (abs, false)
     } else {
         (stack.root.join("projects").join(host), true)
@@ -613,6 +626,31 @@ mod tests {
         assert_eq!(site.fastcgi_port, Some(9085));
 
         std::fs::remove_file(&conf).unwrap();
+    }
+
+    /// A `--path` that does not exist is refused before anything is made --
+    /// it used to leave a junction to nowhere under projects\ that blocked
+    /// every retry with "already exists".
+    #[test]
+    fn a_project_path_that_does_not_exist_creates_nothing() {
+        let root = std::env::temp_dir().join(format!("devcrate-site-missing-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("projects")).unwrap();
+        let stack = Stack::open(crate::root::StackRoot {
+            path: root.clone(),
+            source: crate::root::RootSource::Flag,
+        })
+        .unwrap();
+
+        let missing = root.join("no-such-folder");
+        let err = create(&stack, "db.test", Some(&missing), None, true, true, false)
+            .err()
+            .expect("refused")
+            .to_string();
+        assert!(err.contains("does not exist"), "{err}");
+        assert!(!root.join("projects").join("db.test").exists(), "no junction left behind");
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

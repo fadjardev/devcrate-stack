@@ -299,6 +299,9 @@ pub struct RedisInstalled {
 pub struct AdminerInstalled {
     /// Root-relative `adminer\` directory: `adminer.php` and its `index.php`.
     pub dir: String,
+    /// The same directory in full, for the `site add --path` hint -- a
+    /// relative `--path` is taken from wherever the command runs.
+    pub full_dir: String,
     /// The version replaced, when one was there -- an update, like Composer.
     pub replaced_version: Option<String>,
     /// Each installed PHP version, and which database drivers its php.ini
@@ -1480,7 +1483,12 @@ fn adminer_from_file(
         dir: stack.rel(&dir),
         files: 2,
         replaced: existed,
-        details: Details::Adminer(AdminerInstalled { dir: stack.rel(&dir), replaced_version, drivers }),
+        details: Details::Adminer(AdminerInstalled {
+            dir: stack.rel(&dir),
+            full_dir: dir.display().to_string(),
+            replaced_version,
+            drivers,
+        }),
     })
 }
 
@@ -3162,7 +3170,7 @@ fn print_adminer_installed(done: &Installed, installed: &AdminerInstalled, emit:
     }
 
     emit_line!(emit);
-    emit_line!(emit, "  serve it   devcrate site add {} --path {}", adminer::SITE, installed.dir);
+    emit_line!(emit, "  serve it   devcrate site add {} --path {}", adminer::SITE, installed.full_dir);
 }
 
 fn print_composer_installed(done: &Installed, composer: &ComposerInstalled, emit: &mut dyn Emit) {

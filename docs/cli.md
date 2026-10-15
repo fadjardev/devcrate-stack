@@ -475,8 +475,13 @@ rather than by its name, so an unmigrated stack still starts, and `start.bat`,
 ```
 devcrate site add myapp.test --php 8.5
 devcrate site add myapp.test              REM defaults to the current CLI version
+devcrate site add myapp.test --path D:\work\myapp   REM serve a folder that lives elsewhere
 devcrate site remove myapp.test
 ```
+
+`--path` serves an existing folder through a junction at `projects\<host>`. A
+relative path is taken from the current directory, not the stack root, and a
+path that does not exist is refused before anything is created.
 
 ```
   created  projects\myapp.test\public
@@ -578,7 +583,7 @@ devcrate install python --from C:\downloads\python-3.8.10-embed-amd64.zip
 
 devcrate install adminer                          REM list the releases on GitHub
 devcrate install adminer latest                   REM download, verify, install (or update)
-devcrate site add db.test --path adminer          REM ...then serve it
+devcrate site add db.test --path C:\devcrate\adminer   REM ...then serve it (the install prints this path)
 ```
 
 **Adminer** is the stack's database browser: one PHP file, for MariaDB and
