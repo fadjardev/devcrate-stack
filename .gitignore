@@ -89,6 +89,7 @@ erl_crash.dump
 
 # --- Claude Code local settings (machine-specific) ---
 .claude/settings.local.json
+/CLAUDE.md
 
 # --- OS / editor junk ---
 Thumbs.db
