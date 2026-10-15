@@ -394,7 +394,7 @@ impl App {
                 let host = self.selected_site()?.host.clone();
                 self.modal = Some(Modal::Confirm {
                     question: format!(
-                        "Delete the vhost conf for {host}?\n\nprojects\\{host} and the certificate are left alone."
+                        "Delete the vhost conf for {host} and its hosts-file entry?\n\nprojects\\{host} and the certificate are left alone."
                     ),
                     job: Job::SiteRemove(host),
                 });

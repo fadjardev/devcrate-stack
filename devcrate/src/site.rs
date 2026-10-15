@@ -417,9 +417,16 @@ pub struct Deleted {
     pub host: String,
     pub conf: String,
     pub reload: Reload,
+    /// The host was taken out of the devcrate hosts block.
+    pub hosts_removed: bool,
+    /// Why the hosts block could not be updated, when it held the host but the
+    /// write failed or elevation was declined.
+    pub hosts_note: Option<String>,
 }
 
-/// Delete a vhost's conf and reload. The project folder is never touched.
+/// Delete a vhost's conf, take the host out of the devcrate hosts block, and
+/// reload. The project folder and the certificate are never touched -- the
+/// certificate may be a wildcard another site still uses.
 pub fn delete(stack: &Stack, host: &str) -> Result<Deleted> {
     let host = check_host(host)?;
     let conf = stack.sites_dir().join(format!("{host}.conf"));
@@ -428,10 +435,21 @@ pub fn delete(stack: &Stack, host: &str) -> Result<Deleted> {
     }
 
     std::fs::remove_file(&conf).with_context(|| format!("removing {}", conf.display()))?;
+
+    // Here rather than in `remove`, so the dashboard's delete does it too.
+    let (hosts_removed, hosts_note) = match crate::hosts::remove_entry(host) {
+        Ok(crate::hosts::HostsResult::Updated) => (true, None),
+        Ok(crate::hosts::HostsResult::Unchanged) => (false, None),
+        Ok(crate::hosts::HostsResult::FallbackManual(why)) => (false, Some(why)),
+        Err(err) => (false, Some(format!("{err:#}"))),
+    };
+
     Ok(Deleted {
         host: host.to_string(),
         conf: stack.rel(&conf),
         reload: Reload::of(stack),
+        hosts_removed,
+        hosts_note,
     })
 }
 
@@ -440,8 +458,11 @@ pub fn remove(stack: &Stack, host: &str) -> Result<u8> {
     println!("  removed  {}", gone.conf);
     println!("  {}", gone.reload.note());
 
-    if let Ok(crate::hosts::HostsResult::Updated) = crate::hosts::remove_entry(&gone.host) {
+    if gone.hosts_removed {
         println!("  hosts    removed {} from C:\\Windows\\System32\\drivers\\etc\\hosts", gone.host);
+    } else if let Some(note) = &gone.hosts_note {
+        println!("  hosts    failed to update: {note}");
+        println!("           Remove `127.0.0.1   {}` from the hosts file manually as Administrator.", gone.host);
     }
 
     println!();

@@ -8,13 +8,15 @@
 //! # --- devcrate end ---
 //! ```
 //!
-//! A backup `hosts.bak` is created before the first edit. If direct write
-//! fails due to permission denial (UAC protection), an elevation prompt
-//! (via PowerShell `Start-Process -Verb RunAs`) is requested.
+//! A backup `hosts.bak` is created before the first edit. A write goes to a
+//! temp file beside the hosts file and is renamed over it, so an interrupted
+//! write never leaves it truncated. If that is denied (UAC protection), an
+//! elevation prompt (via PowerShell `Start-Process -Verb RunAs`) copies the
+//! new content into place instead.
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result};
 
@@ -149,7 +151,14 @@ pub fn write_hosts_content(new_content: &str) -> Result<HostsResult> {
     let target = hosts_path();
     let _ = backup_hosts();
 
-    match fs::write(&target, new_content) {
+    // Atomic where it can be: a reader -- or an interruption -- sees the old
+    // file or the new one, never half of it. The rename can still be refused
+    // with permission to write (the DNS client holding the file open), and a
+    // plain write is better then than an elevation prompt nobody needed.
+    let written = replace_atomically(&target, new_content)
+        .or_else(|_| fs::write(&target, new_content));
+
+    match written {
         Ok(_) => Ok(HostsResult::Updated),
         Err(_) => {
             // Permission denied -> write to temp file and request elevation
@@ -163,8 +172,13 @@ pub fn write_hosts_content(new_content: &str) -> Result<HostsResult> {
                 target.display()
             );
 
+            // Silenced: this also runs from the dashboard, where anything
+            // PowerShell printed would land on the screen it just drew.
             let status = Command::new("powershell")
                 .args(["-NoProfile", "-NonInteractive", "-Command", &powershell_cmd])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
                 .status();
 
             let _ = fs::remove_file(&temp_file);
@@ -180,6 +194,20 @@ pub fn write_hosts_content(new_content: &str) -> Result<HostsResult> {
             }
         }
     }
+}
+
+/// Write `content` to a temp file beside `target`, then rename it over
+/// `target` -- the same directory, so the rename is a replace on one volume
+/// rather than a copy. The temp file is removed if the rename fails.
+fn replace_atomically(target: &Path, content: &str) -> std::io::Result<()> {
+    let temp = target.with_file_name(format!(
+        "{}.devcrate-tmp",
+        target.file_name().unwrap_or_default().to_string_lossy()
+    ));
+    fs::write(&temp, content)?;
+    fs::rename(&temp, target).inspect_err(|_| {
+        let _ = fs::remove_file(&temp);
+    })
 }
 
 /// Add an IP mapping for `host` in the devcrate block.
@@ -243,5 +271,24 @@ mod tests {
         assert!(changed2);
         assert!(!removed.contains(BEGIN_MARKER));
         assert_eq!(removed.trim(), "127.0.0.1 localhost");
+    }
+
+    /// The replace lands the whole new content and leaves no temp file behind.
+    #[test]
+    fn replacing_atomically_swaps_the_whole_file() {
+        let dir = std::env::temp_dir()
+            .join(format!("devcrate-hosts-replace-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("hosts");
+        fs::write(&target, "127.0.0.1 localhost\r\n").unwrap();
+
+        let new = "127.0.0.1 localhost\r\n# --- devcrate begin ---\r\n127.0.0.1   myapp.test\r\n# --- devcrate end ---\r\n";
+        replace_atomically(&target, new).unwrap();
+
+        assert_eq!(fs::read_to_string(&target).unwrap(), new);
+        assert!(!dir.join("hosts.devcrate-tmp").exists());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }

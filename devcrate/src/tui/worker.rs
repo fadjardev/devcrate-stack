@@ -348,16 +348,19 @@ fn run(stack: &Stack, job: Job) -> JobResult {
         }
 
         Job::SiteRemove(host) => match site::delete(stack, &host) {
-            Ok(gone) => JobResult {
-                label,
-                lines: vec![
-                    format!("removed {}", gone.conf),
-                    gone.reload.note(),
-                    format!("projects\\{} was left alone", gone.host),
-                ],
-                failed: false,
-                sites_changed: true,
-            },
+            Ok(gone) => {
+                let mut lines = vec![format!("removed {}", gone.conf), gone.reload.note()];
+                if gone.hosts_removed {
+                    lines.push(format!("removed {} from the hosts file", gone.host));
+                } else if let Some(note) = &gone.hosts_note {
+                    lines.push(format!(
+                        "hosts file not updated ({note}) -- remove `127.0.0.1 {}` by hand",
+                        gone.host
+                    ));
+                }
+                lines.push(format!("projects\\{} was left alone", gone.host));
+                JobResult { label, lines, failed: false, sites_changed: true }
+            }
             Err(err) => failure(label, err),
         },
 
