@@ -143,11 +143,13 @@ Each of these cost real effort to find.
 
 ## Environment
 
-- **`gh` is not installed**, and non-interactive git cannot authenticate to the
-  remote — `git ls-remote` fails with "Repository not found" even though the
-  repo exists and pushes work. Don't chase it. The repo is private, so anonymous
-  web fetches of it 404 too; that is why the issues are mirrored into
-  `docs/issue/`.
+- **The repo is public** (`fadjardev/devcrate-stack`) and **`gh` is installed**,
+  logged in as the owner. A shell started before the install may not have it on
+  `PATH` yet; call `"C:\Program Files\GitHub CLI\gh.exe"` directly then. Read
+  issues with `gh issue view`, but editing, closing, or creating issues,
+  labels, releases, or tags on GitHub is outward-facing — ask first. The issues
+  are still mirrored into `docs/issue/`; when the two disagree, the mirror is
+  the one kept ticked to match the code, and the difference is worth reporting.
 - **The dashboard cannot be driven from tool calls.** It needs a real terminal
   and refuses to start without one. Verify it by rendering into ratatui's
   `TestBackend` and reading the buffer back as text — see the tests in
