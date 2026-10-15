@@ -17,11 +17,14 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 
+use crate::ini_block;
+pub use crate::ini_block::IniEdit;
+
 pub const SMTP_PORT: u16 = 1025;
 pub const UI_PORT: u16 = 8025;
 
-const BEGIN: &str = "; --- devcrate mailpit begin ---";
-const END: &str = "; --- devcrate mailpit end ---";
+/// The name in its `php.ini` markers, `; --- devcrate mailpit begin ---`.
+const BLOCK: &str = "mailpit";
 
 /// `mailpit-windows-amd64.zip` carries no version; the download is cached
 /// under the release's tag instead, `mailpit-1.31.5-windows-amd64.zip`.
@@ -76,90 +79,30 @@ pub fn launch_args(smtp_port: u16, ui_port: u16) -> Vec<String> {
 /// where there is one, appended where there is not. Everything outside the
 /// block is returned as it was.
 pub fn with_block(php_ini: &str, smtp_port: u16) -> String {
-    let nl = if php_ini.contains("\r\n") { "\r\n" } else { "\n" };
-    let block = [
-        BEGIN,
-        "; Written by `devcrate install mailpit`, removed by its uninstall. mail()",
-        "; goes to Mailpit; its inbox is http://127.0.0.1:8025",
-        "[mail function]",
-        "SMTP = 127.0.0.1",
-        &format!("smtp_port = {smtp_port}"),
-        "sendmail_from = devcrate@localhost",
-        END,
-    ]
-    .join(nl);
-
-    // Exactly one blank line and the block are added, so exactly that comes
-    // out again on removal -- the file's own trailing blank lines included.
-    let mut base = without_block(php_ini);
-    if !base.is_empty() && !base.ends_with('\n') {
-        base.push_str(nl);
-    }
-    format!("{base}{nl}{block}{nl}")
+    let body = [
+        "; Written by `devcrate install mailpit`, removed by its uninstall. mail()".to_string(),
+        "; goes to Mailpit; its inbox is http://127.0.0.1:8025".to_string(),
+        "[mail function]".to_string(),
+        "SMTP = 127.0.0.1".to_string(),
+        format!("smtp_port = {smtp_port}"),
+        "sendmail_from = devcrate@localhost".to_string(),
+    ];
+    ini_block::with_block(php_ini, BLOCK, &body)
 }
 
-/// `php_ini` with the devcrate block taken out, and nothing else changed --
-/// the inverse of [`with_block`], blank separator line included.
+/// `php_ini` with the devcrate block taken out, and nothing else changed.
 pub fn without_block(php_ini: &str) -> String {
-    let (Some(start), Some(end)) = (php_ini.find(BEGIN), php_ini.find(END)) else {
-        return php_ini.to_string();
-    };
-    if end < start {
-        return php_ini.to_string();
-    }
-    // The line break that ends the marker goes with it...
-    let mut after = end + END.len();
-    if php_ini[after..].starts_with("\r\n") {
-        after += 2;
-    } else if php_ini[after..].starts_with('\n') {
-        after += 1;
-    }
-    // ...and so does the blank line `with_block` put before it.
-    let before = &php_ini[..start];
-    let before = before
-        .strip_suffix("\r\n")
-        .filter(|b| b.is_empty() || b.ends_with('\n'))
-        .or_else(|| before.strip_suffix('\n').filter(|b| b.is_empty() || b.ends_with('\n')))
-        .unwrap_or(before);
-    format!("{before}{}", &php_ini[after..])
-}
-
-/// What pointing one PHP version at Mailpit came to.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum IniEdit {
-    Written,
-    AlreadyThere,
-    Failed(String),
+    ini_block::without_block(php_ini, BLOCK)
 }
 
 /// Write the block into one `php.ini`, through a temp file and a rename.
 pub fn point_php_at(php_ini: &Path, smtp_port: u16) -> IniEdit {
-    rewrite(php_ini, |text| with_block(text, smtp_port))
+    ini_block::rewrite(php_ini, |text| with_block(text, smtp_port))
 }
 
 /// Take the block out of one `php.ini` again.
 pub fn unpoint_php(php_ini: &Path) -> IniEdit {
-    rewrite(php_ini, without_block)
-}
-
-fn rewrite(php_ini: &Path, edit: impl Fn(&str) -> String) -> IniEdit {
-    let text = match std::fs::read_to_string(php_ini) {
-        Ok(text) => text,
-        Err(err) => return IniEdit::Failed(format!("reading {}: {err}", php_ini.display())),
-    };
-    let new = edit(&text);
-    if new == text {
-        return IniEdit::AlreadyThere;
-    }
-    let temp = php_ini.with_extension("ini.devcrate-tmp");
-    let written = std::fs::write(&temp, &new).and_then(|()| std::fs::rename(&temp, php_ini));
-    match written {
-        Ok(()) => IniEdit::Written,
-        Err(err) => {
-            let _ = std::fs::remove_file(&temp);
-            IniEdit::Failed(format!("writing {}: {err}", php_ini.display()))
-        }
-    }
+    ini_block::rewrite(php_ini, without_block)
 }
 
 #[cfg(test)]
@@ -184,7 +127,7 @@ mod tests {
         assert!(!once.contains("\r\r") && once.matches('\n').count() == once.matches("\r\n").count());
 
         let twice = with_block(&once, 1026);
-        assert_eq!(twice.matches(BEGIN).count(), 1, "replaced, not appended again");
+        assert_eq!(twice.matches("; --- devcrate mailpit begin ---").count(), 1, "replaced, not appended again");
         assert!(twice.contains("smtp_port = 1026") && !twice.contains("smtp_port = 1025"));
 
         assert_eq!(with_block(&once, 1025), once, "rewriting the same block changes nothing");

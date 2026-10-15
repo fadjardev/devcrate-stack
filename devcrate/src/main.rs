@@ -12,6 +12,7 @@ mod config;
 mod control;
 mod db;
 mod hosts;
+mod ini_block;
 mod install;
 mod junction;
 mod launch;
@@ -19,6 +20,7 @@ mod mkcert;
 mod nginx;
 mod node;
 mod php;
+mod php_ext;
 mod probe;
 mod python;
 mod root;
@@ -34,7 +36,7 @@ use anyhow::Result;
 use clap::Parser;
 
 use crate::cli::{
-    BunCommand, Cli, Command, ConfigCommand, DbCommand, NginxCommand, NodeCommand, PhpCommand,
+    BunCommand, Cli, Command, ConfigCommand, DbCommand, NginxCommand, NodeCommand, PhpCommand, PhpExtCommand,
     PythonCommand, SiteCommand,
 };
 use crate::config::Stack;
@@ -90,6 +92,15 @@ fn run(cli: Cli) -> Result<u8> {
             Ok(exit::OK)
         }
         Command::Php(PhpCommand::Use(args)) => php::switch(&stack, &args.version),
+        Command::Php(PhpCommand::Ext(PhpExtCommand::List(args))) => {
+            php_ext::print_list(&stack, args.php.as_deref())
+        }
+        Command::Php(PhpCommand::Ext(PhpExtCommand::Enable(args))) => {
+            php_ext::print_change(&stack, args.php.as_deref(), &args.extensions, true)
+        }
+        Command::Php(PhpCommand::Ext(PhpExtCommand::Disable(args))) => {
+            php_ext::print_change(&stack, args.php.as_deref(), &args.extensions, false)
+        }
 
         Command::Python(PythonCommand::List) => python::list(&stack),
         Command::Python(PythonCommand::Use(args)) => python::switch(&stack, &args.version),

@@ -105,6 +105,7 @@ visible rather than mysterious.
 | `devcrate stop [service]` | **works** — graceful shutdown in the safe order |
 | `devcrate restart [service]` | **works** — stop, then start |
 | `devcrate php use <version>` | **works** — repoints `php\current` |
+| `devcrate php ext list\|enable\|disable [ext...] [--php <version>]` | **works** — a version's extensions, switched in devcrate's block of its `php.ini`, the worker restarted (see below) |
 | `devcrate python list` | **works** — installed Python versions, and the active CLI one |
 | `devcrate python use <version>` | **works** — repoints `python\current` |
 | `devcrate nginx list` | **works** — nginx versions in the prefix, and the active one |
@@ -366,6 +367,45 @@ anything.
 
 The version is matched on its digits, so `8.5`, `85`, `php-8.5`, and the older
 `php85` folder naming are all equivalent. `phpuse.bat` now does the same.
+
+### `devcrate php ext`
+
+```
+devcrate php ext list --php 8.5                    REM on / off, and where
+devcrate php ext enable pgsql pdo_pgsql --php 8.5  REM one write, one restart
+devcrate php ext disable pgsql pdo_pgsql --php 8.5
+```
+
+```
+PHP 8.5 pgsql enabled in php\php-8.5\php.ini
+PHP 8.5 pdo_pgsql enabled in php\php-8.5\php.ini
+  php-8.5 restarted
+```
+
+Without `--php` it acts on the version `php\current` names. An extension is
+named any way PHP accepts it — `pgsql`, `php_pgsql.dll`, `"pgsql"` — and must
+have its `php_<name>.dll` in the version's extension directory (`extension_dir`,
+`ext` by default); the error lists what is there. `list` shows every bundled
+DLL and every extension the file switches on, with the line number for those
+switched on by the file itself. Extensions compiled into PHP (OPcache in 8.5)
+have no DLL and are not listed; enabling one says it is already on.
+
+Every change goes in a block at the end of `php.ini`, between `; --- devcrate
+extensions begin ---` and `; --- devcrate extensions end ---`, under its own
+`[PHP]` header — the same rule the Mailpit block follows. The block holds
+`extension=php_<name>.dll` lines (`zend_extension=` for OPcache), the full file
+name every PHP from 5.6 on accepts. `disable` takes a line out of the block, and
+the block itself once it is empty, leaving the file exactly as it was before
+the first `enable`. An extension the file switches on itself is not devcrate's
+to edit: `disable` refuses and names the line to comment out.
+
+Each `enable` is checked before it counts: the version's `php -m` is run
+against the new file, and if PHP reports a startup warning — a DLL that needs a
+missing library, such as `oci8_12c` without the Oracle client — the previous
+file is put back and the warning is shown. Then the version's FastCGI worker is
+restarted, if it was running, so the change is live; a stopped worker reads the
+file when it next starts. Nothing is written, and nothing restarted, when every
+extension named is already as asked.
 
 ### `devcrate python`
 

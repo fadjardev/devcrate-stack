@@ -177,6 +177,36 @@ pub enum PhpCommand {
     List,
     /// Switch the CLI PHP version by repointing the php\current junction.
     Use(PhpUseArgs),
+    /// A version's extensions: list, enable, disable.
+    #[command(subcommand)]
+    Ext(PhpExtCommand),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PhpExtCommand {
+    /// List the version's extensions and where each is switched on.
+    List(PhpExtListArgs),
+    /// Switch extensions on, in devcrate's block of php.ini, and restart that worker.
+    Enable(PhpExtArgs),
+    /// Switch off extensions devcrate switched on, and restart that worker.
+    Disable(PhpExtArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct PhpExtListArgs {
+    /// PHP version (8.5, 85, php-8.5); defaults to the one php\current names.
+    #[arg(long)]
+    pub php: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct PhpExtArgs {
+    /// Extension names: pgsql, php_pgsql.dll, and "pgsql" all mean the same.
+    #[arg(required = true)]
+    pub extensions: Vec<String>,
+    /// PHP version (8.5, 85, php-8.5); defaults to the one php\current names.
+    #[arg(long)]
+    pub php: Option<String>,
 }
 
 #[derive(Debug, Args)]
