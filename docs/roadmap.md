@@ -20,7 +20,7 @@ not started. `in progress` - being built. `done` - shipped, see
 | 6 | One-command setup on a fresh machine, with shortcuts into the dashboard | proposed |
 | 7 | A database browser and per-project databases | done — `devcrate install adminer` (served as a site) and `devcrate db list\|create\|drop\|import\|export` for MariaDB and PostgreSQL. **Not built:** creating the `db.test` site as part of the install |
 | 8 | A local mail catcher (Mailpit) | done — `devcrate install mailpit`: a loopback-only service (SMTP 1025, inbox 8025), sha256-verified, with each `php.ini` pointed at it in a marked block that uninstall removes |
-| 9 | Auto-vhost from a folder, and quick-create for Laravel / WordPress | proposed |
+| 9 | Auto-vhost from a folder, and quick-create for Laravel / WordPress | in progress — quick actions in the dashboard's Sites pane (`o` browser, `e` Explorer, `c` terminal) are built. **Not built:** auto-vhost, quick-create, dev servers under supervision, the HMR proxy |
 | 10 | PHP extensions and Xdebug, toggled per version | proposed |
 
 Items 6–10 come from a review on 2026-10-15 of what Devcrate needs to stand as an

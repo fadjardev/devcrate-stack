@@ -45,7 +45,7 @@ cannot do.
 | Key | Pane | What it does |
 | --- | --- | --- |
 | `1` | Services | Live state, ports, uptime, PIDs; start / stop / restart |
-| `2` | Sites | The vhosts; create, change PHP version, delete |
+| `2` | Sites | The vhosts; create, change PHP version, open, delete |
 | `3` | Logs | Tail any of the stack's log files |
 
 `Tab` and `Shift-Tab` cycle. `↑` `↓` (or `j` `k`) move within a pane. `r` forces
@@ -104,6 +104,9 @@ named in the result.
 | --- | --- |
 | `n` | New vhost: a form for the hostname, project path (typed or picked with **Browse**), PHP version (or auto-detect), and whether to add the hosts entry and issue a certificate |
 | `p` | Change the selected vhost's PHP version |
+| `o` | Open the site in the default browser |
+| `e` | Open the project folder in Explorer |
+| `c` | Open a terminal in the project folder — Windows Terminal where installed, a cmd window otherwise |
 | `d` | Delete the vhost's conf (asks first) |
 
 `n` is `devcrate site add`: the same web-root and PHP detection, the same hosts
@@ -115,6 +118,15 @@ the certificate are left alone, and the confirmation says so.
 
 `d` also takes the host out of the devcrate hosts block, as `devcrate site
 remove` does — both call the same `site::delete`.
+
+`o` sends the browser to `https://<host>/`, or `http://` when the conf has no
+`listen` on 443 or with `ssl`. `e` and `c` open the *project* folder, not the
+web root: the conf's `root` is resolved against the nginx prefix and followed
+through the `projects` junctions to the real directory, minus a trailing
+`public` — so a site made with `--path D:\work\shop` opens `D:\work\shop`. The
+terminal inherits the dashboard's environment, `PATH` included. None of the
+three is queued behind a running action; they work mid-install, and the note
+line says what was opened or why it could not be.
 
 ### Logs
 

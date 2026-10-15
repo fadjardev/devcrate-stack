@@ -14,6 +14,7 @@ mod db;
 mod hosts;
 mod install;
 mod junction;
+mod launch;
 mod mkcert;
 mod nginx;
 mod node;

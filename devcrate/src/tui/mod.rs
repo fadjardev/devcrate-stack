@@ -29,7 +29,7 @@ use ratatui::crossterm::terminal::{
 
 use crate::config::Stack;
 use crate::exit;
-use crate::tui::app::App;
+use crate::tui::app::{App, Launch};
 use crate::tui::worker::Event;
 
 /// How long to wait for an event before redrawing anyway. Nothing depends on
@@ -108,6 +108,13 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, stack: Arc<Stac
             app.offerings_wanted = false;
             worker::spawn_offerings(tx.clone());
         }
+        if let Some((what, site)) = app.launch_wanted.take() {
+            let (text, failed) = match launch(&app.stack, what, &site) {
+                Ok(text) => (text, false),
+                Err(err) => (format!("{err:#}"), true),
+            };
+            app.on_launched(text, failed);
+        }
         if app.log_target_dirty {
             app.log_target_dirty = false;
             let _ = tailer.send(app.selected_log());
@@ -118,6 +125,33 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, stack: Arc<Stac
     }
 
     Ok(exit::OK)
+}
+
+/// Hand a vhost to the browser, Explorer, or a new terminal. Spawned, never
+/// waited on, and with none of our handles -- so it is done here on the UI
+/// thread rather than queued behind a running job.
+fn launch(stack: &Stack, what: Launch, site: &crate::site::Site) -> Result<String> {
+    match what {
+        Launch::Browser => {
+            let url = site.url();
+            crate::launch::browser(&url)?;
+            Ok(format!("opened {url} in the browser"))
+        }
+        Launch::Folder => {
+            let dir = crate::site::folder(stack, site)?;
+            crate::launch::folder(&dir)?;
+            Ok(format!("opened {} in Explorer", dir.display()))
+        }
+        Launch::Terminal => {
+            let dir = crate::site::folder(stack, site)?;
+            let opened = crate::launch::terminal(&dir)?;
+            let name = match opened {
+                crate::launch::Terminal::WindowsTerminal => "Windows Terminal",
+                crate::launch::Terminal::Cmd => "a cmd window",
+            };
+            Ok(format!("opened {name} in {}", dir.display()))
+        }
+    }
 }
 
 /// Owns the alternate screen and raw mode for as long as it lives.
@@ -424,6 +458,7 @@ mod tests {
             host: "myapp.test".into(),
             root: Some("projects/myapp.test/public".into()),
             fastcgi_port: Some(9085),
+            tls: true,
         }];
 
         assert!(app.on_key(KeyEvent::from(KeyCode::Char('d'))).is_none(), "no job yet");
@@ -433,5 +468,47 @@ mod tests {
 
         let job = app.on_key(KeyEvent::from(KeyCode::Char('y'))).expect("y confirms");
         assert!(matches!(job, worker::Job::SiteRemove(host) if host == "myapp.test"));
+    }
+
+    /// `o`, `e`, and `c` name what to open and leave the spawning to the loop,
+    /// with no job -- so they work while an install is running.
+    #[test]
+    fn site_quick_actions_ask_the_loop_to_open_things() {
+        let mut app = App::new(stack());
+        app.tab = app::Tab::Sites;
+        app.sites = vec![crate::site::Site {
+            host: "myapp.test".into(),
+            root: Some("projects/myapp.test/public".into()),
+            fastcgi_port: Some(9085),
+            tls: true,
+        }];
+        app.busy = Some("Downloading & installing php 8.4".into());
+
+        let footer = draw(&app);
+        assert!(footer.contains("browser") && footer.contains("terminal"), "{footer}");
+
+        for (key, what) in [('o', Launch::Browser), ('e', Launch::Folder), ('c', Launch::Terminal)] {
+            assert!(app.on_key(KeyEvent::from(KeyCode::Char(key))).is_none(), "not a job");
+            let (asked, site) = app.launch_wanted.take().expect("asked for");
+            assert_eq!(asked, what);
+            assert_eq!(site.url(), "https://myapp.test/");
+        }
+
+        app.sites.clear();
+        assert!(app.on_key(KeyEvent::from(KeyCode::Char('o'))).is_none());
+        assert!(app.launch_wanted.is_none(), "nothing selected, nothing opened");
+    }
+
+    /// Every row of the help fits, the last pane's included.
+    #[test]
+    fn the_help_shows_every_key() {
+        let mut app = App::new(stack());
+        app.on_key(KeyEvent::from(KeyCode::Char('?')));
+        let mut terminal = Terminal::new(TestBackend::new(100, 34)).unwrap();
+        terminal.draw(|frame| view::render(frame, &app)).unwrap();
+        let screen = format!("{:?}", terminal.backend().buffer());
+        for row in ["switch pane", "open in the browser", "Home / End"] {
+            assert!(screen.contains(row), "{row} missing: {screen}");
+        }
     }
 }

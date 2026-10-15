@@ -293,7 +293,7 @@ fn render_sites(frame: &mut Frame, app: &App, area: Rect) {
             let root = site.root.clone().unwrap_or_else(|| "no root directive".into());
             Row::new(vec![
                 Cell::from(Line::from(vec![
-                    Span::styled("https://", Style::new().fg(MUTED)),
+                    Span::styled(if site.tls { "https://" } else { "http://" }, Style::new().fg(MUTED)),
                     Span::styled(site.host.clone(), Style::new().bold()),
                 ])),
                 Cell::from(Line::from(php)),
@@ -450,7 +450,10 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
         ],
         Tab::Sites => &[
             ("n", "new"),
-            ("p", "PHP version"),
+            ("p", "PHP"),
+            ("o", "browser"),
+            ("e", "folder"),
+            ("c", "terminal"),
             ("d", "delete"),
             ("?", "help"),
             ("q", "quit"),
@@ -476,7 +479,13 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
 
 fn render_modal(frame: &mut Frame, app: &App, modal: &Modal) {
     match modal {
-        Modal::Help => popup(frame, "Keys", help_text(), 72, 22),
+        Modal::Help => {
+            // As tall as its text plus the border, so a new key cannot push
+            // the last row out of the box.
+            let text = help_text();
+            let height = text.height() as u16 + 2;
+            popup(frame, "Keys", text, 72, height)
+        }
         Modal::Output { title, lines, failed } => {
             let colour = if *failed { BAD } else { Color::Reset };
             let text: Vec<Line> = lines
@@ -686,6 +695,7 @@ fn help_text() -> Text<'static> {
         section("Sites"),
         row("n", "new vhost"),
         row("p", "change PHP version"),
+        row("o / e / c", "open in the browser / Explorer / a terminal"),
         row("d", "delete the conf"),
         Line::from(""),
         section("Logs"),

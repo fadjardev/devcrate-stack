@@ -21,6 +21,9 @@ pub struct Site {
     pub root: Option<String>,
     /// Port from `fastcgi_pass 127.0.0.1:<port>`.
     pub fastcgi_port: Option<u16>,
+    /// A `listen` on 443 or with `ssl` -- every generated conf has one; a
+    /// hand-written one may not.
+    pub tls: bool,
 }
 
 impl Site {
@@ -33,6 +36,7 @@ impl Site {
 
         let mut root = None;
         let mut fastcgi_port = None;
+        let mut tls = false;
 
         for line in text.lines() {
             let line = line.trim();
@@ -54,10 +58,39 @@ impl Site {
                     .next()
                     .and_then(|p| p.trim().parse().ok());
             }
+            if let Some(rest) = line.strip_prefix("listen ") {
+                tls |= rest
+                    .trim_end_matches(';')
+                    .split_whitespace()
+                    .any(|word| word == "ssl" || word.rsplit(':').next() == Some("443"));
+            }
         }
 
-        Site { host, root, fastcgi_port }
+        Site { host, root, fastcgi_port, tls }
     }
+
+    /// Where a browser should be sent for this vhost.
+    pub fn url(&self) -> String {
+        let scheme = if self.tls { "https" } else { "http" };
+        format!("{scheme}://{}/", self.host)
+    }
+}
+
+/// The project folder behind a vhost: its `root` resolved against the nginx
+/// prefix and through the `projects` junctions to the real directory, less a
+/// trailing `public` -- the folder you work in, not the one nginx serves.
+pub fn folder(stack: &Stack, site: &Site) -> Result<std::path::PathBuf> {
+    let root = site
+        .root
+        .as_deref()
+        .ok_or_else(|| anyhow!("{}.conf has no root directive", site.host))?;
+    let root = Path::new(root.trim_matches('"'));
+    let served = if root.is_absolute() { root.to_path_buf() } else { stack.nginx_prefix.join(root) };
+    let project = match (served.file_name(), served.parent()) {
+        (Some(name), Some(parent)) if name.eq_ignore_ascii_case("public") => parent.to_path_buf(),
+        _ => served,
+    };
+    crate::root::clean(&project).map_err(|_| anyhow!("{} does not exist", project.display()))
 }
 
 /// How the reload that follows a conf change went. Not an error on its own: the
@@ -649,6 +682,59 @@ mod tests {
             .to_string();
         assert!(err.contains("does not exist"), "{err}");
         assert!(!root.join("projects").join("db.test").exists(), "no junction left behind");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The generated conf serves TLS; a hand-written plain-HTTP one does not,
+    /// and the browser is sent to whichever it is.
+    #[test]
+    fn the_url_follows_the_listen_directives() {
+        let dir = std::env::temp_dir().join(format!("devcrate-site-url-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let generated = dir.join("myapp.test.conf");
+        std::fs::write(&generated, conf_text("myapp.test", "PHP 8.5", "php-8.5", 9085)).unwrap();
+        assert_eq!(Site::read(&generated).url(), "https://myapp.test/");
+
+        let plain = dir.join("docs.test.conf");
+        std::fs::write(&plain, "server {\n    listen 80;\n    # listen 443 ssl;\n    root projects/docs.test;\n}\n").unwrap();
+        assert_eq!(Site::read(&plain).url(), "http://docs.test/");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `root` is followed through both junctions -- `nginx\projects` and the
+    /// one `--path` makes -- to the real folder, without its `public`.
+    #[test]
+    fn the_folder_is_the_real_project_directory() {
+        let root = std::env::temp_dir().join(format!("devcrate-site-folder-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("projects").join("myapp.test").join("public")).unwrap();
+        std::fs::create_dir_all(root.join("elsewhere").join("api")).unwrap();
+        std::fs::create_dir_all(root.join("nginx").join("conf")).unwrap();
+        std::fs::write(root.join("nginx").join("conf").join("nginx.conf"), "").unwrap();
+        crate::junction::create(&root.join("nginx").join("projects"), &root.join("projects")).unwrap();
+        crate::junction::create(&root.join("projects").join("api.test"), &root.join("elsewhere").join("api"))
+            .unwrap();
+        let stack = Stack::open(crate::root::StackRoot {
+            path: root.clone(),
+            source: crate::root::RootSource::Flag,
+        })
+        .unwrap();
+        let site = |host: &str, root: &str| Site {
+            host: host.into(),
+            root: Some(root.into()),
+            fastcgi_port: None,
+            tls: true,
+        };
+        let real = crate::root::clean(&root).unwrap();
+
+        let found = folder(&stack, &site("myapp.test", "projects/myapp.test/public")).unwrap();
+        assert_eq!(found, real.join("projects").join("myapp.test"));
+        let found = folder(&stack, &site("api.test", "projects/api.test")).unwrap();
+        assert_eq!(found, real.join("elsewhere").join("api"));
+        let err = folder(&stack, &site("gone.test", "projects/gone.test/public")).unwrap_err();
+        assert!(err.to_string().contains("does not exist"), "{err}");
 
         let _ = std::fs::remove_dir_all(&root);
     }

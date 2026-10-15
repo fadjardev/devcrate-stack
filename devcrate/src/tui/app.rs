@@ -37,6 +37,14 @@ impl Tab {
     }
 }
 
+/// What `o`, `e`, and `c` on the Sites tab hand to another program.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Launch {
+    Browser,
+    Folder,
+    Terminal,
+}
+
 /// What is on top of the dashboard, if anything.
 pub enum Modal {
     Help,
@@ -162,6 +170,10 @@ pub struct App {
     pub log_target_dirty: bool,
     /// Set by `r`, cleared by the caller once the scanner has been nudged.
     pub rescan_wanted: bool,
+    /// Set by `o` / `e` / `c`, taken by the caller, which does the spawning.
+    /// Not a job: opening a browser takes milliseconds and should work while
+    /// an install is still running.
+    pub launch_wanted: Option<(Launch, Site)>,
     /// What the install picker offers: the fallback list until the vendors'
     /// catalogues have been read, then those.
     pub install_options: Vec<Offering>,
@@ -198,6 +210,7 @@ impl App {
             deliberate: HashSet::new(),
             log_target_dirty: true,
             rescan_wanted: false,
+            launch_wanted: None,
             install_options: crate::install::fallback_offerings(),
             offerings_requested: false,
             offerings_loaded: false,
@@ -310,6 +323,11 @@ impl App {
                 failed: result.failed,
             });
         }
+    }
+
+    /// What the caller made of a [`Launch`], for the note line.
+    pub fn on_launched(&mut self, text: String, failed: bool) {
+        self.note = Some(Note { text, failed, at: Instant::now() });
     }
 
     pub fn on_log(&mut self, view: LogView) {
@@ -427,6 +445,9 @@ impl App {
                     Some(Modal::PhpPicker { purpose: PhpPurpose::Site(host), index: 0 });
                 None
             }
+            KeyCode::Char('o') => self.launch(Launch::Browser),
+            KeyCode::Char('e') => self.launch(Launch::Folder),
+            KeyCode::Char('c') => self.launch(Launch::Terminal),
             KeyCode::Char('d') => {
                 let host = self.selected_site()?.host.clone();
                 self.modal = Some(Modal::Confirm {
@@ -439,6 +460,12 @@ impl App {
             }
             _ => None,
         }
+    }
+
+    fn launch(&mut self, what: Launch) -> Option<Job> {
+        let site = self.selected_site()?.clone();
+        self.launch_wanted = Some((what, site));
+        None
     }
 
     fn logs_key(&mut self, key: KeyEvent) {
