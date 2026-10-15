@@ -129,6 +129,7 @@ visible rather than mysterious.
 | `devcrate install node <version>` / `devcrate install bun <version>` | **works** — downloads and installs into `node\` / `bun\` |
 | `devcrate install <runtime> --from <file>` | **works** — the same install from an archive or phar on disk |
 | `devcrate uninstall <runtime> [version]` | **works** — see [`devcrate uninstall`](#devcrate-uninstall) |
+| `devcrate db list\|create\|drop\|import\|export` | **works** — see [`devcrate db`](#devcrate-db) |
 
 `--root` is accepted on every command.
 
@@ -1075,6 +1076,42 @@ above). `uninstall` treats it the same way: everything else is removed, and
 `data\` is left in place unless `--data` is also given. `--data` alone is
 refused; it has to be paired with `--force`, since deleting a database's data
 directory is the one irreversible thing this command does.
+
+### `devcrate db`
+
+```
+devcrate db list                                  REM MariaDB (the default engine)
+devcrate db create myapp                          REM utf8mb4 / utf8mb4_unicode_ci
+devcrate db import myapp dump.sql                 REM creates myapp first if needed
+devcrate db export myapp                          REM to myapp.sql in this directory
+devcrate db export myapp C:\backups\myapp.sql --force
+devcrate db drop myapp --force
+
+devcrate db --engine postgres create myapp        REM the same, on PostgreSQL (UTF8)
+```
+
+The databases on the stack's own MariaDB and PostgreSQL. Each command runs the
+server's client from its `bin\` — `mariadb` and `mariadb-dump` (or the older
+`mysql` / `mysqldump`), `psql` and `pg_dump` — over TCP to `127.0.0.1` on the
+service's configured port, as the superuser the stack sets up: MariaDB `root`
+with no password, PostgreSQL `postgres` with the password its install prints
+(`PGPASSWORD`, when set, wins). A server that is not answering is reported with
+the `devcrate start` that fixes it, before anything runs.
+
+- `list` leaves out the servers' own databases (`mysql`, `information_schema`,
+  `performance_schema`, `sys`; `postgres`, `template0`, `template1`).
+- `create` on an existing database changes nothing and says so.
+- `import` runs the file with the client — `ON_ERROR_STOP` on PostgreSQL, so a
+  failing statement stops the import with its error.
+- `export` writes a plain SQL dump (`--single-transaction --routines --triggers
+  --events` on MariaDB) to a `.part` file and renames it into place, so a failed
+  dump never leaves a half file under the real name. An existing file is
+  refused without `--force`.
+- `drop` needs `--force`, and never drops the servers' own databases.
+
+A name is 1–63 letters, digits, `_`, or `-`. That is narrower than either
+server allows, on purpose: the name goes into the statement inside identifier
+quotes with no escaping, and none of those characters can close them.
 
 ## `devcrate.toml`
 

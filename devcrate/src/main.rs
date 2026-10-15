@@ -10,6 +10,7 @@ mod bun;
 mod cli;
 mod config;
 mod control;
+mod db;
 mod hosts;
 mod install;
 mod junction;
@@ -32,8 +33,8 @@ use anyhow::Result;
 use clap::Parser;
 
 use crate::cli::{
-    BunCommand, Cli, Command, ConfigCommand, NginxCommand, NodeCommand, PhpCommand, PythonCommand,
-    SiteCommand,
+    BunCommand, Cli, Command, ConfigCommand, DbCommand, NginxCommand, NodeCommand, PhpCommand,
+    PythonCommand, SiteCommand,
 };
 use crate::config::Stack;
 
@@ -147,6 +148,19 @@ fn run(cli: Cli) -> Result<u8> {
             args.data,
             args.force,
         ),
+        Command::Db(args) => {
+            let engine = db::Engine::parse(&args.engine)?;
+            let action = match &args.command {
+                DbCommand::List => db::Action::List,
+                DbCommand::Create { name } => db::Action::Create(name),
+                DbCommand::Drop { name, force } => db::Action::Drop { name, force: *force },
+                DbCommand::Import { name, file } => db::Action::Import { name, file },
+                DbCommand::Export { name, file, force } => {
+                    db::Action::Export { name, file: file.as_deref(), force: *force }
+                }
+            };
+            db::run(&stack, engine, action)
+        }
     }
 }
 

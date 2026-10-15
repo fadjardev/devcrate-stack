@@ -1721,6 +1721,12 @@ pub fn install_quiet(
     install_with(stack, runtime, version, None, force, &mut emit)
 }
 
+/// The password a freshly initialised PostgreSQL cluster's `postgres` user has
+/// -- what `devcrate db` connects with unless `PGPASSWORD` is set.
+pub fn postgres_default_password() -> &'static str {
+    postgres::DEFAULT_PASSWORD
+}
+
 /// One entry in the dashboard's install picker: a runtime and a version
 /// spelling [`install_quiet`] resolves -- always named, so choosing it installs
 /// something rather than listing a catalogue.

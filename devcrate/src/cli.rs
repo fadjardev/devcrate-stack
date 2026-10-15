@@ -83,6 +83,46 @@ pub enum Command {
 
     /// Remove a runtime from the stack root.
     Uninstall(UninstallArgs),
+
+    /// Databases on the stack's MariaDB or PostgreSQL.
+    Db(DbArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct DbArgs {
+    /// Which server: mariadb or postgres.
+    #[arg(long, global = true, default_value = "mariadb")]
+    pub engine: String,
+    #[command(subcommand)]
+    pub command: DbCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DbCommand {
+    /// List the databases (the server's own system databases are left out).
+    List,
+    /// Create a database: utf8mb4 on MariaDB, UTF8 on PostgreSQL.
+    Create {
+        /// Letters, digits, _ and - only.
+        name: String,
+    },
+    /// Drop a database and everything in it.
+    Drop {
+        name: String,
+        /// Required: dropping deletes the data.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Run an SQL file into a database, creating the database if needed.
+    Import { name: String, file: PathBuf },
+    /// Dump a database to an SQL file (default: <name>.sql here).
+    Export {
+        name: String,
+        file: Option<PathBuf>,
+        /// Overwrite the file if it exists.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
