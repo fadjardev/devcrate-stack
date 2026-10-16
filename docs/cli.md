@@ -1047,14 +1047,17 @@ one carries no marker at all.
 
 **`php.ini` is generated from the release's own `php.ini-development`**, so
 every comment and default the vendor shipped survives, and the result matches
-the `php\php-8.5\php.ini` already in the repo: `extension_dir = "ext"`,
-`error_log = php_errors.log`, and twelve extensions enabled — curl, exif,
-fileinfo, gd, intl, mbstring, openssl, pdo_mysql, pdo_sqlite, sodium, sqlite3,
-zip. The template comments the same key more than once with different values
+the `php\php-8.5\php.ini` already in the repo — `extension_dir = "ext"`,
+`error_log = php_errors.log`, and its twelve extensions (curl, exif, fileinfo,
+gd, intl, mbstring, openssl, pdo_mysql, pdo_sqlite, sodium, sqlite3, zip) —
+plus mysqli, which WordPress needs, so `devcrate new wordpress` works on a
+freshly installed PHP. Thirteen in all. The template comments the same key more than once with different values
 (`extension_dir` as both `"./"` and `"ext"`), so lines are matched on the key
 *and* the value; uncommenting on the key alone would enable whichever came last.
-Any of the twelve the template has no line for is reported rather than silently
-skipped.
+Any of the thirteen the template has no line for is reported rather than
+silently skipped. Only a newly generated `php.ini` gets mysqli; an existing one,
+the repository's included, is kept as it is — `devcrate php ext enable mysqli`
+switches it on there.
 
 **A missing Visual C++ runtime is a warning, not a failure.** `vcruntime140.dll`
 in the system directory is checked for, because its absence is the single most

@@ -11,16 +11,18 @@ use anyhow::{Context, Result};
 /// The extensions a Devcrate PHP is expected to have on.
 ///
 /// This is the set the stack's existing `php\php-8.5\php.ini` enables, and the
-/// list issue #2 fixes. It is written here rather than discovered because the
-/// point of generating the file is that a fresh install matches the ones that
-/// are already working.
-pub const EXTENSIONS: [&str; 12] = [
+/// list issue #2 fixes, plus `mysqli`: WordPress needs it, and `devcrate new
+/// wordpress` refuses a PHP without it. It is written here rather than
+/// discovered because the point of generating the file is that a fresh install
+/// matches the ones that are already working.
+pub const EXTENSIONS: [&str; 13] = [
     "curl",
     "exif",
     "fileinfo",
     "gd",
     "intl",
     "mbstring",
+    "mysqli",
     "openssl",
     "pdo_mysql",
     "pdo_sqlite",
@@ -86,8 +88,8 @@ pub fn detect_build(dir: &Path) -> Build {
 }
 
 /// A version folder holding nothing but the stack's `php.ini` -- what a clone
-/// of the repository or the release zip carries before the binaries are
-/// installed. Not an installation to protect: installing fills it in and
+/// of the repository carries before the binaries are installed (the release
+/// zip carries no `php\`). Not an installation to protect: installing fills it in and
 /// keeps that `php.ini`.
 pub fn is_config_only(dir: &Path) -> bool {
     let Ok(entries) = std::fs::read_dir(dir) else { return false };
@@ -146,6 +148,8 @@ fn configure(text: &str) -> (String, Vec<String>) {
     let mut out: Vec<String> = Vec::new();
     for line in text.lines() {
         match uncomment(line) {
+            // Once each: a second line for the same extension stays as it was.
+            Some((_, Some(extension))) if enabled.contains(&extension) => out.push(line.to_string()),
             Some((replacement, extension)) => {
                 if let Some(extension) = extension {
                     enabled.push(extension);
@@ -185,7 +189,9 @@ fn uncomment(line: &str) -> Option<(String, Option<String>)> {
         ("error_log", "php_errors.log") => {
             Some(("error_log = php_errors.log".to_string(), None))
         }
-        ("extension", extension) if EXTENSIONS.contains(&extension) => {
+        // `;extension=x` exactly: the template's prose also says
+        // `;   extension=mysqli` as an example, which is not the directive.
+        ("extension", extension) if EXTENSIONS.contains(&extension) && body.starts_with("extension") => {
             Some((format!("extension={extension}"), Some(extension.to_string())))
         }
         _ => None,
@@ -266,6 +272,7 @@ mod tests {
 ;extension=curl\n\
 ;extension=ffi\n\
 ;extension=fileinfo\n\
+;extension=ldap\n\
 ;extension=mysqli\n\
 ;extension=pdo_sqlite\n\
 ;extension=sqlite3\n";
@@ -274,11 +281,31 @@ mod tests {
         assert!(text.contains("\nextension=curl"));
         assert!(text.contains("\nextension=pdo_sqlite"));
         assert!(text.contains("\nextension=sqlite3"));
+        assert!(text.contains("\nextension=mysqli"), "WordPress needs it");
         // Not on the list, so left exactly as the vendor shipped it.
         assert!(text.contains(";extension=bz2"));
         assert!(text.contains(";extension=ffi"));
-        assert!(text.contains(";extension=mysqli"));
-        assert_eq!(enabled, ["curl", "fileinfo", "pdo_sqlite", "sqlite3"]);
+        assert!(text.contains(";extension=ldap"));
+        assert_eq!(enabled, ["curl", "fileinfo", "mysqli", "pdo_sqlite", "sqlite3"]);
+    }
+
+    /// The template explains the syntax with `;   extension=mysqli` in a prose
+    /// block, well above the real `;extension=mysqli`. Only the real one is
+    /// switched on, and only once.
+    #[test]
+    fn an_example_in_the_prose_is_not_a_directive() {
+        let template = "\
+; For example:\n\
+;\n\
+;   extension=mysqli\n\
+;\n\
+;extension=mysqli\n\
+;extension=mysqli\n";
+
+        let (text, enabled) = configure(template);
+        assert_eq!(enabled, ["mysqli"]);
+        assert!(text.contains(";   extension=mysqli"), "the example is left alone: {text}");
+        assert_eq!(text.matches("\nextension=mysqli").count(), 1, "{text}");
     }
 
     /// The template comments the same key more than once with different values.
