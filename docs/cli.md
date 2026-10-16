@@ -750,9 +750,18 @@ failure — a port already in use, a missing package — is reported with the
 log's last lines instead of as a success. A second `start` for a site whose
 dev server is running is refused.
 
-The dev server is not proxied: the page at `https://<host>` loads its assets
-from the address the dev server prints. Whether hot reload works that way
-over HTTPS is not yet verified — that is the HMR proxy half of roadmap item 9.
+**No proxy is needed for Laravel + Vite.** The dev server is not put behind
+nginx: Laravel's Vite plugin writes the dev server's address to `public\hot`
+(`http://[::1]:5173`), and the page at `https://<host>` loads its scripts and
+styles from there. Measured on 2026-10-16 with a project from `devcrate new
+laravel` (Laravel 13.37, laravel-vite-plugin 3.2, Vite 8) in Chrome: every
+asset loaded from `[::1]:5173` with no mixed-content or CORS error, a CSS edit
+was applied in place by hot module replacement without a reload, and a Blade
+edit reloaded the page. Browsers treat `localhost` and `[::1]` as secure
+origins, and the plugin allows the `.test` origin, which is why it works. Not
+measured: other browsers, and front ends other than Laravel's plugin — a Vite
+app that is itself the site, with no PHP in front, needs a vhost that proxies
+to it, which is a separate roadmap item.
 
 ### `devcrate new`
 

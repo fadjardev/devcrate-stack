@@ -20,7 +20,7 @@ not started. `in progress` - being built. `done` - shipped, see
 | 6 | One-command setup on a fresh machine, with shortcuts into the dashboard | done in v0.3.0 — `devcrate setup`: nginx, PHP, MariaDB, Composer, and mkcert where missing, the CA trusted, the stack started; re-running changes nothing. The dashboard opens on a first-run screen when nothing is installed, `s` running the same setup. A release zip (`scripts/package.sh`, see [releasing.md](releasing.md#5-package)) holds `devcrate.exe` and the stack's configuration, to be extracted and run. `setup` makes Start Menu / Desktop shortcuts and a Windows Terminal profile (`--no-shortcuts` skips them), `devcrate autostart on\|off\|status` runs `devcrate start` at logon through Task Scheduler, off by default, and `setup --undo` removes all three from a receipt in the root. v0.3.0 is the first release to carry the zip. **Not verified:** a run on a clean machine with its ports free, and autostart at a real logon (its task was run from Task Scheduler) |
 | 7 | A database browser and per-project databases | done — `devcrate install adminer` (served as a site) and `devcrate db list\|create\|drop\|import\|export` for MariaDB and PostgreSQL. **Not built:** creating the `db.test` site as part of the install |
 | 8 | A local mail catcher (Mailpit) | done — `devcrate install mailpit`: a loopback-only service (SMTP 1025, inbox 8025), sha256-verified, with each `php.ini` pointed at it in a marked block that uninstall removes |
-| 9 | Auto-vhost from a folder, and quick-create for Laravel / WordPress | in progress — auto-vhost (`devcrate site sync`, run by `start` and the dashboard's scanner, `[sites] auto` / `ignore` in `devcrate.toml`), quick actions in the dashboard's Sites pane (`o` browser, `e` Explorer, `c` terminal), quick-create (`devcrate new laravel\|wordpress <name>`, and `N` in the Sites pane), and dev servers under supervision (`devcrate dev start\|stop\|list`, `v` and a DEV column in the Sites pane, stopped with the stack) are built. **Not built:** the HMR proxy — first to be measured: whether Laravel + Vite hot reload works over HTTPS without one |
+| 9 | Auto-vhost from a folder, and quick-create for Laravel / WordPress | in progress — auto-vhost (`devcrate site sync`, run by `start` and the dashboard's scanner, `[sites] auto` / `ignore` in `devcrate.toml`), quick actions in the dashboard's Sites pane (`o` browser, `e` Explorer, `c` terminal), quick-create (`devcrate new laravel\|wordpress <name>`, and `N` in the Sites pane), and dev servers under supervision (`devcrate dev start\|stop\|list`, `v` and a DEV column in the Sites pane, stopped with the stack) are built. **The HMR proxy is not built, because it was measured to be unnecessary**: Laravel + Vite hot reload works over `https://<host>.test` with the dev server on `[::1]:5173` (Chrome, laravel-vite-plugin 3.2, Vite 8; see [cli.md](cli.md#devcrate-dev)). Proxying a dev server that is itself the site is the non-PHP vhost item in phase 5 |
 | 10 | PHP extensions and Xdebug, toggled per version | done — `devcrate php ext list\|enable\|disable` in a marked `php.ini` block, checked with `php -m` and the worker restarted; `php ext install` for Xdebug and other PECL extensions, matched to the exact PHP build; and `e` on a PHP row in the dashboard |
 
 Items 6–10 come from a review on 2026-10-15 of what Devcrate needs to stand as an
@@ -506,7 +506,9 @@ a site the stack serves.
   folder, open a terminal in it.
 - **Dev servers under supervision** and **the HMR proxy** — the two parts of
   item 5 that are not built — belong here as well, since they are what make a
-  quick-created Laravel + Vite project work end to end.
+  quick-created Laravel + Vite project work end to end. (Built: the
+  supervision. The proxy turned out not to be needed for Laravel + Vite — see
+  the status table.)
 
 **Constraints**
 
