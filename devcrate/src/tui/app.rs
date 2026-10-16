@@ -143,6 +143,17 @@ pub enum PhpPurpose {
     NewSite(String),
 }
 
+/// The first-run screen, shown instead of the tabs when the first scan finds
+/// nothing installed at all -- a fresh clone or release zip. One key runs
+/// `setup`; Esc goes to the (empty) dashboard instead.
+pub struct Welcome {
+    /// What `setup` has done so far, a line per finished step.
+    pub steps: Vec<String>,
+    /// Why the last run stopped partway, empty unless it did; `s` carries on
+    /// from there.
+    pub error: Vec<String>,
+}
+
 /// What was last seen of one service, so a change can be noticed.
 struct Watch {
     state: State,
@@ -188,6 +199,10 @@ pub struct App {
     pub progress: Option<String>,
     pub note: Option<Note>,
     pub quit: bool,
+    /// The first-run screen, while it is up.
+    pub welcome: Option<Welcome>,
+    /// Whether the first scan has been seen, which is what decides it.
+    welcome_decided: bool,
 
     watches: HashMap<String, Watch>,
     /// Services the user took down on purpose. Not crashes.
@@ -232,6 +247,8 @@ impl App {
             progress: None,
             note: None,
             quit: false,
+            welcome: None,
+            welcome_decided: false,
             watches: HashMap::new(),
             deliberate: HashSet::new(),
             log_target_dirty: true,
@@ -283,6 +300,15 @@ impl App {
     // -----------------------------------------------------------------------
 
     pub fn on_status(&mut self, report: StatusReport) {
+        // Decided once, by the first scan: a stack with something installed
+        // never sees the first-run screen, and one being set up does not
+        // leave it just because nginx has landed.
+        if !self.welcome_decided {
+            self.welcome_decided = true;
+            if !report.services.is_empty() && report.services.iter().all(|s| !s.installed) {
+                self.welcome = Some(Welcome { steps: Vec::new(), error: Vec::new() });
+            }
+        }
         for service in &report.services {
             let previously = self.watches.get(&service.id).map(|watch| watch.state);
             let watch = self
@@ -322,6 +348,23 @@ impl App {
         }
     }
 
+    pub fn on_setup_step(&mut self, line: String) {
+        if let Some(welcome) = &mut self.welcome {
+            welcome.steps.push(line);
+        }
+    }
+
+    /// The stack was read again after an install, an uninstall, or setup.
+    /// The vhost and log lists hang off it, so they are re-read too.
+    pub fn on_restacked(&mut self, stack: Arc<Stack>) {
+        self.stack = stack;
+        self.sites = read_sites(&self.stack);
+        self.site_row = self.site_row.min(self.sites.len().saturating_sub(1));
+        self.logs = logs::discover(&self.stack);
+        self.log_row = self.log_row.min(self.logs.len().saturating_sub(1));
+        self.log_target_dirty = true;
+    }
+
     pub fn on_progress(&mut self, text: String) {
         if self.busy.is_some() {
             self.progress = Some(text);
@@ -331,11 +374,32 @@ impl App {
     pub fn on_done(&mut self, result: JobResult) {
         self.busy = None;
         self.progress = None;
+        // Only setup can run from the first-run screen. A failure keeps the
+        // screen up with the reason under the steps; success leaves it for
+        // the dashboard, with the steps in the usual output box.
+        let from_welcome = self.welcome.is_some();
+        if let Some(welcome) = &mut self.welcome {
+            if result.failed {
+                // The steps arrived one by one before this; what follows them
+                // in the result is why the run stopped.
+                let done = welcome.steps.len().min(result.lines.len());
+                welcome.error = result.lines[done..].to_vec();
+                return;
+            }
+            self.welcome = None;
+        }
         if result.sites_changed {
             self.sites = read_sites(&self.stack);
             self.site_row = self.site_row.min(self.sites.len().saturating_sub(1));
         }
-        let summary = result.lines.first().cloned().unwrap_or_else(|| "done".into());
+        // Setup's last line is where it ended up ("start  3 started, 3 up");
+        // everything else leads with its result.
+        let summary = match from_welcome {
+            true => result.lines.last(),
+            false => result.lines.first(),
+        };
+        let summary = summary.map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "));
+        let summary = summary.unwrap_or_else(|| "done".into());
         self.note = Some(Note {
             text: format!("{}: {summary}", result.label),
             failed: result.failed,
@@ -381,6 +445,9 @@ impl App {
         if self.modal.is_some() {
             return self.modal_key(key);
         }
+        if self.welcome.is_some() {
+            return self.welcome_key(key);
+        }
 
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => self.ask_to_quit(),
@@ -395,6 +462,23 @@ impl App {
             KeyCode::Up | KeyCode::Char('k') => self.move_cursor(-1),
             KeyCode::Down | KeyCode::Char('j') => self.move_cursor(1),
             _ => return self.tab_key(key),
+        }
+        None
+    }
+
+    fn welcome_key(&mut self, key: KeyEvent) -> Option<Job> {
+        match key.code {
+            KeyCode::Char('q') => self.ask_to_quit(),
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => self.quit = true,
+            KeyCode::Char('s') | KeyCode::Enter if self.busy.is_none() => {
+                if let Some(welcome) = &mut self.welcome {
+                    welcome.steps.clear();
+                    welcome.error.clear();
+                }
+                return self.submit(Job::Setup);
+            }
+            KeyCode::Esc if self.busy.is_none() => self.welcome = None,
+            _ => {}
         }
         None
     }

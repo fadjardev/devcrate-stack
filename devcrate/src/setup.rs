@@ -146,7 +146,10 @@ pub fn run(
             .iter()
             .filter(|step| step.outcome.is_failure())
             .map(|step| {
-                format!("{} {}", step.name, control::describe_start(kind_of(&stack, &step.id), &step.outcome))
+                // One line: a refusal can run to two ("...never created." then
+                // the command that fixes it), and these are joined with "; ".
+                let why = control::describe_start(kind_of(&stack, &step.id), &step.outcome);
+                format!("{} {}", step.name, why.lines().map(str::trim).collect::<Vec<_>>().join(" "))
             })
             .collect();
         if !failed.is_empty() {
@@ -215,14 +218,19 @@ fn kind_of(stack: &Stack, id: &str) -> ServiceKind {
     stack.services.iter().find(|s| s.id == id).map(|s| s.kind).unwrap_or(ServiceKind::Nginx)
 }
 
+/// One step as a line, the same on the command line and in the dashboard.
+pub fn describe(step: &Step) -> String {
+    match &step.outcome {
+        Outcome::Present(what) => format!("{:<9} already there: {what}", step.name),
+        Outcome::Done(what) => format!("{:<9} {what}", step.name),
+    }
+}
+
 /// `devcrate setup`.
 pub fn print(stack: &Stack, start: bool) -> Result<u8> {
     let root = StackRoot { path: stack.root.clone(), source: stack.root_source };
     println!("Setting up the stack in {}", stack.root.display());
-    let mut on_step = |step: &Step| match &step.outcome {
-        Outcome::Present(what) => println!("  {:<9} already there: {what}", step.name),
-        Outcome::Done(what) => println!("  {:<9} {what}", step.name),
-    };
+    let mut on_step = |step: &Step| println!("  {}", describe(step));
     let mut last_shown = std::time::Instant::now();
     let mut on_progress = |text: &str| {
         if last_shown.elapsed() >= std::time::Duration::from_secs(2) {

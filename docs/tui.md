@@ -40,6 +40,30 @@ That is the whole of the "real process supervision" constraint in
 [roadmap](roadmap.md) item 1, and it is the one thing the subcommands genuinely
 cannot do.
 
+## On an empty stack
+
+When the first scan finds nothing installed at all — a fresh clone or an
+extracted release zip, where `php\php-X.Y\` holds only the stack's `php.ini` —
+the dashboard opens on a **first-run screen** in place of the panes:
+
+| Key | Action |
+| --- | --- |
+| `s` / `Enter` | Run [`devcrate setup`](cli.md#devcrate-setup): nginx, the newest PHP, MariaDB, Composer, and mkcert where missing, mkcert's CA trusted, the stack started |
+| `Esc` | Go to the dashboard as it is, to install one thing at a time with `i` |
+| `q` | Quit |
+
+It is the same `setup::run` the command calls. Each step is ticked off on the
+screen as it finishes, download progress shows beside the spinner, and a line
+warns that the local-CA step waits on a Windows confirmation, which can open
+behind the terminal window. When setup succeeds the screen gives way to the
+dashboard, with the steps in the usual output box. When a step fails the screen
+stays, showing the steps that finished and why it stopped; `s` carries on from
+there, as running `devcrate setup` again would.
+
+Only the first scan decides. A stack with anything installed — one service
+row, even PostgreSQL alone — never shows the screen, and neither does one whose
+services are all uninstalled later in the session.
+
 ## Panes
 
 | Key | Pane | What it does |
@@ -86,6 +110,10 @@ until they arrive). Offline, or when a catalogue cannot be read, that runtime
 falls back to a keyword entry — "PHP (newest branch)", "nginx (stable line)" —
 which resolves the same way `devcrate install php latest` does. While an
 install runs, the footer shows its download and extraction progress.
+
+After an install or an uninstall the stack is read from disk again, so a PHP
+version installed from here is listed as a row straight away, and the vhost and
+log lists follow it — reopening the dashboard is not needed.
 
 The dashboard never forces. Choosing a version that is already installed is
 refused with the `devcrate install ... --force` command to run instead, because
@@ -173,7 +201,10 @@ Three background threads, so the drawing thread never blocks:
 
 They send events; the UI thread folds them in and redraws. Actions nudge the
 scanner when they finish, so the table catches up immediately rather than at the
-next tick.
+next tick. The stack the scanner and the actor share is swappable: which
+services exist, and where nginx lives, are read from disk when the stack is
+opened, so after an install, an uninstall, or setup the actor opens it again
+and hands the new one to the scanner and the UI before that nudge.
 
 ## The terminal
 

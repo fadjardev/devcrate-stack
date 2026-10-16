@@ -14,8 +14,8 @@
 //! to stdout -- the terminal belongs to the UI thread alone.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
+use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::Duration;
 
@@ -24,6 +24,16 @@ use ratatui::crossterm::event::{self, Event as TermEvent, KeyEventKind};
 use crate::config::Stack;
 use crate::status::{self, StatusReport};
 use crate::{control, php, site};
+
+/// The stack the scanner and the actor work on. Shared and swappable rather
+/// than fixed at startup: which services exist and where nginx lives are read
+/// from disk by [`Stack::open`], so after an install the old value is out of
+/// date -- a newly installed PHP version would not even be listed.
+pub type SharedStack = Arc<RwLock<Arc<Stack>>>;
+
+fn current(shared: &SharedStack) -> Arc<Stack> {
+    Arc::clone(&shared.read().unwrap_or_else(|poisoned| poisoned.into_inner()))
+}
 
 /// How often the dashboard re-reads the stack when nothing else prompts it.
 pub const REFRESH: Duration = Duration::from_secs(2);
@@ -48,6 +58,11 @@ pub enum Event {
     Done(Box<JobResult>),
     /// Where a running install is up to, for the footer.
     Progress(String),
+    /// A step of `setup` finished, as the line the command would print.
+    SetupStep(String),
+    /// The stack as read from disk again after a job that could have changed
+    /// what is installed. Sent just before that job's `Done`.
+    Restacked(Arc<Stack>),
     /// The install picker's entries, read from the vendors' catalogues.
     Offerings(Vec<crate::install::Offering>),
 }
@@ -74,6 +89,8 @@ pub enum Job {
     PhpExt { php: String, ext: String, on: bool },
     /// Download a PECL extension for one PHP version and switch it on.
     PhpExtInstall { php: String, ext: String },
+    /// `devcrate setup`: install what is missing and start the stack.
+    Setup,
 }
 
 impl Job {
@@ -101,7 +118,14 @@ impl Job {
             Job::PhpExt { php, ext, on: true } => format!("Enabling {ext} on {php}"),
             Job::PhpExt { php, ext, on: false } => format!("Disabling {ext} on {php}"),
             Job::PhpExtInstall { php, ext } => format!("Downloading & installing {ext} for {php}"),
+            Job::Setup => "Setting up the stack".to_string(),
         }
+    }
+
+    /// Whether this job can change what is installed, so the stack has to be
+    /// read from disk again once it is done.
+    pub fn changes_stack(&self) -> bool {
+        matches!(self, Job::Install { .. } | Job::Uninstall { .. } | Job::Setup)
     }
 
     /// Service ids this job is deliberately taking down, so the dashboard does
@@ -163,11 +187,11 @@ pub fn spawn_input(tx: Sender<Event>) {
 /// Re-scan on a timer, and immediately whenever nudged. Returns the nudge
 /// channel: sending on it makes the next scan happen now rather than in two
 /// seconds, which is what an action does when it finishes.
-pub fn spawn_scanner(stack: Arc<Stack>, tx: Sender<Event>) -> Sender<()> {
+pub fn spawn_scanner(stack: SharedStack, tx: Sender<Event>) -> Sender<()> {
     let (nudge_tx, nudge_rx) = channel::<()>();
     thread::spawn(move || {
         loop {
-            let report = status::report(&stack);
+            let report = status::report(&current(&stack));
             if tx.send(Event::Status(Box::new(report))).is_err() {
                 return;
             }
@@ -181,12 +205,26 @@ pub fn spawn_scanner(stack: Arc<Stack>, tx: Sender<Event>) -> Sender<()> {
 }
 
 /// Run jobs, one after another, nudging the scanner after each so the display
-/// catches up straight away.
-pub fn spawn_actor(stack: Arc<Stack>, tx: Sender<Event>, nudge: Sender<()>) -> Sender<Job> {
+/// catches up straight away. A job that can change what is installed is
+/// followed by a fresh read of the stack, swapped in before the nudge so the
+/// next scan already covers what was installed.
+pub fn spawn_actor(stack: SharedStack, tx: Sender<Event>, nudge: Sender<()>) -> Sender<Job> {
     let (job_tx, job_rx) = channel::<Job>();
     thread::spawn(move || {
         for job in job_rx {
-            let result = run(&stack, job, &tx);
+            let before = current(&stack);
+            let reread = job.changes_stack();
+            let result = run(&before, job, &tx);
+            if reread {
+                let root = crate::root::StackRoot { path: before.root.clone(), source: before.root_source };
+                // A stack that no longer opens (its devcrate.toml broken in
+                // the meantime) keeps the old view rather than none.
+                if let Ok(fresh) = Stack::open(root) {
+                    let fresh = Arc::new(fresh);
+                    *stack.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = Arc::clone(&fresh);
+                    let _ = tx.send(Event::Restacked(fresh));
+                }
+            }
             if tx.send(Event::Done(Box::new(result))).is_err() {
                 return;
             }
@@ -535,6 +573,34 @@ fn run(stack: &Stack, job: Job, tx: &Sender<Event>) -> JobResult {
                     JobResult { label, lines, failed, sites_changed: false }
                 }
                 Err(err) => failure(label, err),
+            }
+        }
+
+        // The same `setup::run` the command calls. Each finished step is sent
+        // as it lands, for the first-run screen to tick off; download progress
+        // goes to the footer like an install's.
+        Job::Setup => {
+            let root = crate::root::StackRoot { path: stack.root.clone(), source: stack.root_source };
+            let mut lines = Vec::new();
+            let mut on_step = |step: &crate::setup::Step| {
+                let line = crate::setup::describe(step);
+                let _ = tx.send(Event::SetupStep(line.clone()));
+                lines.push(line);
+            };
+            let mut last = None::<std::time::Instant>;
+            let mut on_progress = |text: &str| {
+                if last.is_none_or(|at| at.elapsed() >= Duration::from_millis(100)) {
+                    last = Some(std::time::Instant::now());
+                    let _ = tx.send(Event::Progress(text.to_string()));
+                }
+            };
+            match crate::setup::run(&root, true, &mut on_step, &mut on_progress) {
+                Ok(_) => JobResult { label, lines, failed: false, sites_changed: false },
+                Err(err) => {
+                    lines.push(format!("stopped at {err:#}"));
+                    lines.push("What was installed before it stays installed.".into());
+                    JobResult { label, lines, failed: true, sites_changed: false }
+                }
             }
         }
     }

@@ -15,8 +15,8 @@ mod view;
 mod worker;
 
 use std::io::{self, IsTerminal, Stdout};
-use std::sync::Arc;
 use std::sync::mpsc::channel;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -57,9 +57,10 @@ pub fn run(stack: Stack) -> Result<u8> {
 
 fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, stack: Arc<Stack>) -> Result<u8> {
     let (tx, rx) = channel::<Event>();
+    let shared: worker::SharedStack = Arc::new(RwLock::new(Arc::clone(&stack)));
     worker::spawn_input(tx.clone());
-    let nudge = worker::spawn_scanner(Arc::clone(&stack), tx.clone());
-    let actor = worker::spawn_actor(Arc::clone(&stack), tx.clone(), nudge.clone());
+    let nudge = worker::spawn_scanner(Arc::clone(&shared), tx.clone());
+    let actor = worker::spawn_actor(shared, tx.clone(), nudge.clone());
     let tailer = worker::spawn_tailer(tx.clone());
 
     let mut app = App::new(stack);
@@ -94,6 +95,8 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, stack: Arc<Stac
                 Event::Done(result) => app.on_done(*result),
                 Event::Offerings(offerings) => app.on_offerings(offerings),
                 Event::Progress(text) => app.on_progress(text),
+                Event::SetupStep(line) => app.on_setup_step(line),
+                Event::Restacked(stack) => app.on_restacked(stack),
             }
         }
 
@@ -555,6 +558,143 @@ mod tests {
         let job = app.on_key(KeyEvent::from(KeyCode::Char(' '))).expect("pgsql switches on");
         assert!(matches!(job, worker::Job::PhpExt { php, ext, on: true } if php == "php-8.5" && ext == "pgsql"));
 
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn nothing_installed() -> StatusReport {
+        let mut report = report(State::Absent, State::Absent);
+        for service in &mut report.services {
+            service.installed = false;
+        }
+        report.cli_php = None;
+        report
+    }
+
+    /// A first scan that finds nothing installed puts up the first-run
+    /// screen; `s` runs setup, whose steps tick off as they land. A failure
+    /// keeps the screen with the reason; success leaves it for the dashboard.
+    #[test]
+    fn an_empty_stack_opens_on_the_first_run_screen() {
+        let mut app = App::new(stack());
+        app.on_status(nothing_installed());
+        let screen = draw(&app);
+        for want in ["Welcome to devcrate", "Nothing is installed in this stack yet:", "    C:\\devcrate","set up a working stack", "Windows asks once", "s set up"] {
+            assert!(screen.contains(want), "{want} missing:\n{screen}");
+        }
+        assert!(!screen.contains("SERVICE"), "the table is replaced:\n{screen}");
+
+        // Keys of the dashboard proper do nothing here.
+        assert!(app.on_key(KeyEvent::from(KeyCode::Char('S'))).is_none());
+        let job = app.on_key(KeyEvent::from(KeyCode::Char('s'))).expect("s runs setup");
+        assert!(matches!(job, worker::Job::Setup));
+
+        app.on_setup_step("nginx     nginx 1.30.6 installed into nginx\\nginx-1.30.6".into());
+        app.on_progress("downloading PHP  42%".into());
+        let screen = draw(&app);
+        assert!(screen.contains("✓ nginx     nginx 1.30.6 installed"), "{screen}");
+        assert!(screen.contains("downloading PHP  42%"), "{screen}");
+        assert!(screen.contains("look behind this window"), "{screen}");
+        assert!(!screen.contains("Esc skip"), "nothing but q works while it runs:\n{screen}");
+        assert!(!screen.contains("set up a working stack"), "the offer gives way to progress:\n{screen}");
+
+        app.on_done(worker::JobResult {
+            label: "Setting up the stack".into(),
+            lines: vec![
+                "nginx     nginx 1.30.6 installed into nginx\\nginx-1.30.6".into(),
+                "stopped at PHP: no route to host".into(),
+                "What was installed before it stays installed.".into(),
+            ],
+            failed: true,
+            sites_changed: false,
+        });
+        let screen = draw(&app);
+        assert!(screen.contains("✗ stopped at PHP: no route to host"), "{screen}");
+        assert!(screen.contains("s carry on"), "{screen}");
+        assert!(screen.contains("Setting up this stack:"), "{screen}");
+        assert!(app.modal.is_none());
+
+        app.on_key(KeyEvent::from(KeyCode::Char('s'))).expect("s carries on");
+        assert!(app.welcome.as_ref().is_some_and(|w| w.steps.is_empty() && w.error.is_empty()));
+        app.on_done(worker::JobResult {
+            label: "Setting up the stack".into(),
+            lines: vec!["nginx     already there: nginx at nginx\\current\\nginx.exe".into(), "start     3 started, 3 up".into()],
+            failed: false,
+            sites_changed: false,
+        });
+        assert!(app.welcome.is_none(), "success leaves for the dashboard");
+        assert!(app.note.as_ref().is_some_and(|n| n.text.ends_with("start 3 started, 3 up")), "the note says where it ended up");
+        assert!(matches!(app.modal, Some(app::Modal::Output { failed: false, .. })));
+    }
+
+    /// More steps than fit, with long paths: the newest step, the reason it
+    /// stopped, and the key to carry on all stay on screen.
+    #[test]
+    fn the_first_run_screen_keeps_its_ending_in_view() {
+        let mut app = App::new(stack());
+        app.on_status(nothing_installed());
+        app.on_key(KeyEvent::from(KeyCode::Char('s')));
+        let long = "C:\\Users\\someone\\AppData\\Local\\Temp\\a-rather-long-folder-name\\devcrate\\nginx\\nginx.exe";
+        for i in 0..14 {
+            app.on_setup_step(format!("step{i:02}    already there: {long}"));
+        }
+        let mut lines: Vec<String> = app.welcome.as_ref().unwrap().steps.clone();
+        lines.push("stopped at start: MariaDB FAILED: exited immediately; nginx FAILED: exited immediately".into());
+        lines.push("What was installed before it stays installed.".into());
+        app.on_done(worker::JobResult { label: "Setting up the stack".into(), lines, failed: true, sites_changed: false });
+        let screen = draw(&app);
+        for want in ["step13", "✗ stopped at start", "s carry on"] {
+            assert!(screen.contains(want), "{want} missing:\n{screen}");
+        }
+    }
+
+    /// Only the first scan decides: a stack with something installed never
+    /// shows the screen, even after everything is uninstalled; Esc skips it.
+    #[test]
+    fn the_first_run_screen_is_decided_once() {
+        let mut app = App::new(stack());
+        app.on_status(report(State::Up, State::Up));
+        app.on_status(nothing_installed());
+        assert!(app.welcome.is_none());
+        assert!(draw(&app).contains("SERVICE"));
+
+        let mut app = App::new(stack());
+        app.on_status(nothing_installed());
+        assert!(app.welcome.is_some());
+        assert!(app.on_key(KeyEvent::from(KeyCode::Esc)).is_none());
+        assert!(app.welcome.is_none());
+        assert!(!app.quit, "Esc skips, it does not quit");
+        assert!(draw(&app).contains("SERVICE"));
+    }
+
+    /// A job that can change what is installed is followed by a fresh read of
+    /// the stack, so a version installed from the dashboard is listed without
+    /// reopening it -- even when the job itself failed partway.
+    #[test]
+    fn the_actor_rereads_the_stack_after_an_install() {
+        let root = std::env::temp_dir().join(format!("devcrate-tui-restack-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("php")).unwrap();
+        let open = || Stack::open(crate::root::StackRoot { path: root.clone(), source: RootSource::Flag }).unwrap();
+        let shared: worker::SharedStack = Arc::new(RwLock::new(Arc::new(open())));
+        assert!(!shared.read().unwrap().services.iter().any(|s| s.id == "php-8.4"));
+
+        std::fs::create_dir_all(root.join("php").join("php-8.4")).unwrap();
+        let (tx, rx) = channel();
+        let (nudge, _nudged) = channel();
+        let actor = worker::spawn_actor(Arc::clone(&shared), tx, nudge);
+        actor.send(worker::Job::Install { runtime: "no-such-runtime".into(), version: None }).unwrap();
+
+        let restacked = match rx.recv_timeout(Duration::from_secs(10)).unwrap() {
+            Event::Restacked(stack) => stack,
+            _ => panic!("the fresh stack comes before Done"),
+        };
+        assert!(restacked.services.iter().any(|s| s.id == "php-8.4"));
+        assert!(shared.read().unwrap().services.iter().any(|s| s.id == "php-8.4"), "the scanner sees it too");
+        assert!(matches!(rx.recv_timeout(Duration::from_secs(10)).unwrap(), Event::Done(done) if done.failed));
+
+        let mut app = App::new(Arc::new(open()));
+        app.on_restacked(restacked);
+        assert!(app.php_versions().iter().any(|(id, _)| id == "php-8.4"));
         let _ = std::fs::remove_dir_all(&root);
     }
 

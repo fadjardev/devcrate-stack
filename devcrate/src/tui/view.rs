@@ -10,7 +10,7 @@ use ratatui::widgets::{
 };
 
 use crate::status::{ServiceStatus, State};
-use crate::tui::app::{App, ExtRow, Modal, PhpPurpose, Tab};
+use crate::tui::app::{App, ExtRow, Modal, PhpPurpose, Tab, Welcome};
 use crate::tui::logs;
 
 const ACCENT: Color = Color::Cyan;
@@ -30,10 +30,11 @@ pub fn render(frame: &mut Frame, app: &App) {
             .areas(frame.area());
 
     render_header(frame, app, header);
-    match app.tab {
-        Tab::Services => render_services(frame, app, body),
-        Tab::Sites => render_sites(frame, app, body),
-        Tab::Logs => render_logs(frame, app, body),
+    match (&app.welcome, app.tab) {
+        (Some(welcome), _) => render_welcome(frame, app, welcome, body),
+        (None, Tab::Services) => render_services(frame, app, body),
+        (None, Tab::Sites) => render_sites(frame, app, body),
+        (None, Tab::Logs) => render_logs(frame, app, body),
     }
     render_footer(frame, app, footer);
 
@@ -127,6 +128,109 @@ fn summary_spans(app: &App) -> Vec<Span<'static>> {
 // ---------------------------------------------------------------------------
 // Services
 // ---------------------------------------------------------------------------
+
+/// The first-run screen: what `s` will do, then -- once it is running -- each
+/// step as it finishes, and why it stopped if it did.
+fn render_welcome(frame: &mut Frame, app: &App, welcome: &Welcome, area: Rect) {
+    let muted = Style::new().fg(MUTED);
+    let started = app.busy.is_some() || !welcome.steps.is_empty() || !welcome.error.is_empty();
+    // The root on a line of its own: a stack under a user's temp folder is
+    // long enough to wrap mid-sentence otherwise.
+    let mut lines = vec![
+        Line::from(""),
+        Line::from(match started {
+            false => "  Nothing is installed in this stack yet:",
+            true => "  Setting up this stack:",
+        }),
+        Line::from(Span::styled(format!("    {}", app.stack.root.display()), Style::new().fg(ACCENT))),
+        Line::from(""),
+    ];
+    if !started {
+        lines.extend([
+            Line::from(vec![Span::raw("  "), key("s"), Span::raw("    set up a working stack:")]),
+            Line::from(Span::styled(
+                "         nginx, the newest PHP, MariaDB, Composer and mkcert, each downloaded where missing;",
+                muted,
+            )),
+            Line::from(Span::styled("         mkcert's local CA trusted, then the stack started.", muted)),
+            Line::from(Span::styled(
+                "         Windows asks once to confirm trusting the CA certificate.",
+                Style::new().fg(WARN),
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::raw("  "),
+                key("Esc"),
+                Span::raw("  the dashboard as it is -- "),
+                key("i"),
+                Span::raw(" there installs one thing at a time"),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled("  The same steps run from a terminal as `devcrate setup`.", muted)),
+        ]);
+    }
+
+    for step in &welcome.steps {
+        lines.push(Line::from(vec![
+            Span::styled("  ✓ ", Style::new().fg(OK).bold()),
+            Span::raw(step.clone()),
+        ]));
+    }
+    // What is happening now, or why it stopped, is pinned to the bottom so a
+    // long list of steps can never push it -- or the key to carry on -- off
+    // the screen.
+    let mut tail = Vec::new();
+    if app.busy.is_some() {
+        tail.push(Line::from(vec![
+            Span::styled(format!("  {} ", spinner()), Style::new().fg(WARN).bold()),
+            Span::styled(app.progress.clone().unwrap_or_else(|| "working...".into()), muted),
+        ]));
+        // mkcert -install waits on a Windows dialog that can open behind this
+        // window, and nothing here can tell that apart from a slow step.
+        tail.push(Line::from(""));
+        tail.push(Line::from(Span::styled(
+            "  At the local CA step Windows asks you to confirm -- look behind this window if nothing moves.",
+            Style::new().fg(WARN),
+        )));
+    }
+    if let Some((reason, rest)) = welcome.error.split_first() {
+        tail.push(Line::from(Span::styled(format!("  ✗ {reason}"), Style::new().fg(BAD))));
+        for line in rest {
+            tail.push(Line::from(Span::styled(format!("    {line}"), muted)));
+        }
+        tail.push(Line::from(""));
+        tail.push(Line::from(vec![
+            Span::raw("  "),
+            key("s"),
+            Span::raw(" carry on    "),
+            key("Esc"),
+            Span::raw(" the dashboard"),
+        ]));
+    }
+
+    let block = focused("Welcome to devcrate");
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    // Rows a wrapped line takes, plus one to spare: word wrapping can need
+    // more than the plain division says.
+    let width = inner.width.max(1) as usize;
+    let tail_rows: usize =
+        tail.iter().map(|line| line.width().max(1).div_ceil(width) + usize::from(line.width() > width)).sum();
+    let [top, bottom] =
+        Layout::vertical([Constraint::Min(0), Constraint::Length(tail_rows.min(inner.height as usize / 2 + 2) as u16)])
+            .areas(inner);
+    // Steps are not wrapped, so the newest can be kept in view exactly: a
+    // long path is cut at the edge rather than spilling onto the next row.
+    let paragraph = match started {
+        false => Paragraph::new(lines).wrap(Wrap { trim: false }),
+        true => {
+            let scroll = lines.len().saturating_sub(top.height as usize) as u16;
+            Paragraph::new(lines).scroll((scroll, 0))
+        }
+    };
+    frame.render_widget(paragraph, top);
+    frame.render_widget(Paragraph::new(tail).wrap(Wrap { trim: false }), bottom);
+}
 
 fn render_services(frame: &mut Frame, app: &App, area: Rect) {
     let Some(report) = &app.report else {
@@ -437,6 +541,8 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(Paragraph::new(note), note_area);
 
     let keys: &[(&str, &str)] = match app.tab {
+        _ if app.welcome.is_some() && app.busy.is_some() => &[("q", "quit")],
+        _ if app.welcome.is_some() => &[("s", "set up"), ("Esc", "skip to the dashboard"), ("q", "quit")],
         Tab::Services => &[
             ("s", "start"),
             ("x", "stop"),
