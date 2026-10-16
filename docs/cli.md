@@ -116,6 +116,7 @@ visible rather than mysterious.
 | `devcrate site set-php <host> <version>` | **works** — repoints an existing vhost |
 | `devcrate site remove <host>` | **works** — removes the conf, keeps the project |
 | `devcrate site sync [--dry-run]` | **works** — auto-vhost: serves each folder under `projects\` that no vhost serves yet as `<folder>.test` |
+| `devcrate dev start\|stop <site>` / `dev list` | **works** — a site's `npm run dev` / `bun run dev`, supervised: tracked by PID, logged, stopped with the stack (see below) |
 | `devcrate new laravel\|wordpress <name>` | **works** — code, vhost, database, and `.env` / `wp-config.php` in one step (see below) |
 | `devcrate setup [--no-start] [--no-shortcuts]` | **works** — installs nginx, PHP, MariaDB, Composer, and mkcert where missing, trusts mkcert's CA, starts the stack, makes shortcuts to the dashboard (see below) |
 | `devcrate setup --undo` | **works** — removes the shortcuts, the Windows Terminal profile, and the autostart task, nothing else |
@@ -342,6 +343,10 @@ Two differences from `stop.bat`:
 `epmd.exe` is cleared once the broker is confirmed down — it is excluded from
 the running/stopped decision precisely because it outlives RabbitMQ, so
 something has to clean it up. That is the "helper process(es) cleared" note.
+
+`devcrate stop` with no service named stops every dev server first (`dev
+<host>` lines, see [`devcrate dev`](#devcrate-dev)); stopping one service leaves
+them alone.
 
 Exit code 0 when every targeted service ended up stopped, 1 if any is still
 running afterwards.
@@ -694,6 +699,60 @@ Two things it deliberately will not do:
 The configuration is tested with `nginx -t` before the reload, as with
 `site add`. Changing the version does **not** start that version's FastCGI
 worker — the output says which one you need.
+
+### `devcrate dev`
+
+```
+devcrate dev start shop     REM npm run dev in shop.test's project folder
+devcrate dev list           REM what devcrate started, running or exited
+devcrate dev stop shop
+```
+
+```
+  ...      npm install
+  ...      npm run dev
+  installed node_modules (no node_modules was there)
+  running  npm run dev for shop.test (pid 5696)
+  serving  http://localhost:5173/
+  log      logs\dev-shop.test.log
+```
+
+A site's front-end dev server — Vite, typically — run by devcrate rather than
+left open in another terminal. The site is named as in `site add` (`shop` or
+`shop.test`); the command runs in its project folder (the conf's `root`,
+followed through the junctions, minus `public`), which must have a
+`package.json` with a `dev` script.
+
+- **Which runner.** `bun run dev` when the project has a `bun.lock` or
+  `bun.lockb`, `npm run dev` otherwise — always the stack's own
+  `bun\current` or `node\current`, which must be installed and active. With
+  no `node_modules` yet, `npm install` (or `bun install`) runs first.
+- **Its environment.** `node\current`, `node\npm-global`, `bun\current`,
+  `php\current`, and `composer\` go ahead of the rest of `PATH`, and npm's
+  cache and global prefix are pointed into `node\`.
+- **Its output** goes to `logs\dev-<host>.log` in the stack root, rewritten on
+  each start, and listed in the dashboard's Logs pane. The address it prints
+  (`Local: http://localhost:5173/`) is read back from there.
+- **Tracking.** A dev server runs `node.exe` like any other Node program, so it
+  cannot be recognised by its path the way the services are. `start` records
+  its PID and that process's start time in `run\dev\<host>.json`; the PID
+  only counts while a process that started at that time still holds it. One
+  that has gone without being stopped is reported as **exited** by `dev list`,
+  `devcrate status`, and the dashboard.
+- **Stopping** kills that process and everything it started (`npm` runs a
+  shell, which runs `node`, which runs Vite and esbuild), by PID, deepest first
+  — never by image name. A child counts only if it started after its parent, so
+  a reused PID never reaches an unrelated process. `devcrate stop` with no
+  service named does this for every dev server.
+
+`start` watches the new process for a couple of seconds, so the usual instant
+failure — a port already in use, a missing package — is reported with the
+log's last lines instead of as a success. A second `start` for a site whose
+dev server is running is refused.
+
+The dev server is not proxied: the page at `https://<host>` loads its assets
+from the address the dev server prints. Whether hot reload works that way
+over HTTPS is not yet verified — that is the HMR proxy half of roadmap item 9.
 
 ### `devcrate new`
 

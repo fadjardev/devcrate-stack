@@ -86,6 +86,40 @@ impl ProcessTable {
         self.system.process(Pid::from_u32(pid)).is_some_and(|process| process.kill())
     }
 
+    /// The process with this PID, if it is still the one that started at
+    /// `started` -- a PID Windows has handed to something else does not count.
+    pub fn same(&self, pid: u32, started: u64) -> Option<&ProcessEntry> {
+        self.entries.iter().find(|entry| entry.pid == pid && entry.started == started)
+    }
+
+    /// When the process holding `pid` now started -- recorded at spawn, so the
+    /// PID can be recognised as the same process later.
+    pub fn started_of(&self, pid: u32) -> Option<u64> {
+        self.entries.iter().find(|entry| entry.pid == pid).map(|entry| entry.started)
+    }
+
+    /// Every process descended from `pid`, deepest first, so killing them in
+    /// this order never leaves an orphan behind. A child is only counted when it
+    /// started no earlier than its parent: a parent PID can outlive its process
+    /// and be reused, and a stale link must not reach a stranger.
+    pub fn descendants(&self, pid: u32) -> Vec<u32> {
+        let mut found: Vec<(u32, usize)> = Vec::new();
+        let mut frontier = vec![(pid, 0usize)];
+        while let Some((parent, depth)) = frontier.pop() {
+            let Some(parent_started) = self.entries.iter().find(|e| e.pid == parent).map(|e| e.started) else {
+                continue;
+            };
+            for child in self.entries.iter().filter(|e| e.parent == Some(parent) && e.started >= parent_started) {
+                if child.pid != pid && !found.iter().any(|(p, _)| *p == child.pid) {
+                    found.push((child.pid, depth + 1));
+                    frontier.push((child.pid, depth + 1));
+                }
+            }
+        }
+        found.sort_by_key(|(_, depth)| std::cmp::Reverse(*depth));
+        found.into_iter().map(|(p, _)| p).collect()
+    }
+
     /// PIDs whose executable is `prefix`, or lives under it, supervisors first.
     ///
     /// Matching on the path is deliberate: it means a system-wide nginx or

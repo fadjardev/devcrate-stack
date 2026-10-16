@@ -99,6 +99,8 @@ pub enum Job {
     Setup,
     /// `devcrate site sync`: serve the folders no vhost serves yet.
     SiteSync,
+    /// `devcrate dev start` / `stop` for a site, whichever it is not.
+    DevToggle(String),
     /// `devcrate autostart on` / `off`, whichever it is not.
     AutostartToggle,
     /// `devcrate new`: a Laravel or WordPress project, start to finish.
@@ -134,6 +136,7 @@ impl Job {
             Job::SiteSync => "Serving new folders under projects".to_string(),
             Job::New { kind, name, .. } => format!("Creating the {} project {name}", kind.label()),
             Job::AutostartToggle => "Switching autostart".to_string(),
+            Job::DevToggle(host) => format!("Switching the dev server for {host}"),
         }
     }
 
@@ -603,6 +606,38 @@ fn run(stack: &Stack, job: Job, tx: &Sender<Event>) -> JobResult {
                     }
                     JobResult { label, lines, failed, sites_changed: false }
                 }
+                Err(err) => failure(label, err),
+            }
+        }
+
+        Job::DevToggle(host) => {
+            let running = crate::devserver::list(stack, &crate::probe::ProcessTable::scan())
+                .iter()
+                .any(|dev| dev.host == host && dev.running);
+            let result = match running {
+                true => crate::devserver::stop(stack, &host).map(|stopped| match stopped {
+                    crate::control::Stopped::Failed(why) => (vec![format!("FAILED to stop it: {why}")], true),
+                    _ => (vec![format!("dev server for {host} stopped")], false),
+                }),
+                false => crate::devserver::start(stack, &host, &mut |step| {
+                    let _ = tx.send(Event::Progress(format!("{host}: {step}")));
+                })
+                .map(|started| {
+                    let mut lines = Vec::new();
+                    if started.installed {
+                        lines.push("installed node_modules first".to_string());
+                    }
+                    lines.push(format!("{} running (pid {})", started.command, started.pid));
+                    lines.push(match started.url {
+                        Some(url) => format!("serving {url}"),
+                        None => "no address printed yet".to_string(),
+                    });
+                    lines.push(format!("log {}", started.log));
+                    (lines, false)
+                }),
+            };
+            match result {
+                Ok((lines, failed)) => JobResult { label, lines, failed, sites_changed: false },
                 Err(err) => failure(label, err),
             }
         }

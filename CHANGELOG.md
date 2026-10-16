@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`devcrate dev start|stop <site>` and `dev list`** — dev servers under supervision (roadmap item 9): a site's `npm run dev`, or `bun run dev` for a project with a Bun lockfile, run in its project folder through the stack's own Node or Bun, with `npm install` first when there is no `node_modules`. Tracked by PID and that process's start time in `run\dev\`, so a reused PID is never mistaken for it; output in `logs\dev-<host>.log`; a dev server that dies is reported as exited by `dev list`, `status` (and `status --json`), and the dashboard. Stopping kills its whole process tree by PID, never by image name, and `devcrate stop` with no service named stops every dev server first. In the dashboard, the Sites pane has a DEV column and `v` starts or stops the selected site's.
+
 ### Fixed
 
 - **npm's cache and global packages stay inside the stack.** The Node installer wrote its `prefix` and `cache` to a `.npmrc` beside `node.exe`, which npm never reads, so the cache went to `%LOCALAPPDATA%\npm-cache` and global packages beside `node.exe`. It now writes `etc\npmrc`, the global config npm reads on Windows, pointing them at `node\npm-cache` and `node\npm-global`; `devcrate node use` writes it for a version installed before the fix.

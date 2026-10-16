@@ -16,6 +16,8 @@
 /dist/
 # What setup / autostart wrote outside this root: machine-specific paths.
 /devcrate-setup.json
+# Which dev servers devcrate started: PIDs, meaningless on another machine.
+/run/
 mkcert.exe
 
 # --- Logs, crash dumps, temp ---

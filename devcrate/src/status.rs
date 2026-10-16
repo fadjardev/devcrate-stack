@@ -103,6 +103,9 @@ pub struct StatusReport {
     pub cli_python: Option<String>,
     pub services: Vec<ServiceStatus>,
     pub sites: Vec<String>,
+    /// Dev servers devcrate started (`devcrate dev start`), running or exited.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub dev: Vec<crate::devserver::DevStatus>,
 }
 
 pub fn report(stack: &Stack) -> StatusReport {
@@ -128,6 +131,7 @@ pub fn report(stack: &Stack) -> StatusReport {
             .iter()
             .filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
             .collect(),
+        dev: crate::devserver::list(stack, &processes),
     }
 }
 
@@ -257,6 +261,13 @@ pub fn print_text(report: &StatusReport) {
                 println!("{line}");
             }
         }
+    }
+    for dev in &report.dev {
+        let state = match dev.running {
+            true => format!("running {}", dev.url.as_deref().unwrap_or("")),
+            false => format!("exited -- see {}", dev.log),
+        };
+        println!("  dev server {}: {} ({}), {}", dev.host, dev.command, dev.pid, state.trim_end());
     }
 }
 

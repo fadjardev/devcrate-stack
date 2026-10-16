@@ -91,6 +91,10 @@ pub enum Command {
     /// Databases on the stack's MariaDB or PostgreSQL.
     Db(DbArgs),
 
+    /// A site's `npm run dev` (or `bun run dev`), run and stopped by devcrate.
+    #[command(subcommand)]
+    Dev(DevCommand),
+
     /// Start the stack when you log on to Windows. Off unless switched on.
     #[command(subcommand)]
     Autostart(AutostartCommand),
@@ -215,6 +219,19 @@ pub struct SetupArgs {
     /// shortcuts, the Windows Terminal profile, the autostart task.
     #[arg(long, conflicts_with_all = ["no_start", "no_shortcuts"])]
     pub undo: bool,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DevCommand {
+    /// Run the site's `dev` script in its project folder, `npm install` first if there is no node_modules.
+    Start {
+        /// The site: shop or shop.test.
+        site: String,
+    },
+    /// Stop it, and every process it started.
+    Stop { site: String },
+    /// The dev servers devcrate started, running or exited.
+    List,
 }
 
 #[derive(Debug, Subcommand)]

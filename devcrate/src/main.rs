@@ -13,6 +13,7 @@ mod config;
 mod control;
 mod create;
 mod db;
+mod devserver;
 mod hosts;
 mod integration;
 mod ini_block;
@@ -191,6 +192,9 @@ fn run(cli: Cli) -> Result<u8> {
             args.data,
             args.force,
         ),
+        Command::Dev(cli::DevCommand::Start { site }) => devserver::print_start(&stack, &site),
+        Command::Dev(cli::DevCommand::Stop { site }) => devserver::print_stop(&stack, &site),
+        Command::Dev(cli::DevCommand::List) => devserver::print_list(&stack),
         Command::Db(args) => {
             let engine = db::Engine::parse(&args.engine)?;
             let action = match &args.command {

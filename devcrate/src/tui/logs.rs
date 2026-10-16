@@ -55,7 +55,8 @@ pub fn discover(stack: &Stack) -> Vec<LogFile> {
         collect(&mut files, "mailpit", &dir.join("data"), &["log"]);
     }
 
-    // devcrate's own: what `devcrate new` ran from the dashboard.
+    // devcrate's own: what `devcrate new` ran from the dashboard, autostart,
+    // and each dev server's output.
     collect(&mut files, "devcrate", &stack.root.join("logs"), &["log"]);
 
     files.sort_by(|a, b| {

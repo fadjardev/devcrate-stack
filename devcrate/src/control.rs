@@ -139,7 +139,13 @@ pub struct Step<T> {
 /// were acted on.
 pub fn run_stop(stack: &Stack, only: Option<&str>) -> Result<Vec<Step<Stopped>>> {
     let targets = select(stack, only, SHUTDOWN)?;
-    Ok(targets.iter().map(|service| stop_one(stack, service)).collect())
+    // The whole stack takes its dev servers with it, first: they talk to it.
+    let mut steps = match only {
+        None => crate::devserver::stop_all(stack),
+        Some(_) => Vec::new(),
+    };
+    steps.extend(targets.iter().map(|service| stop_one(stack, service)));
+    Ok(steps)
 }
 
 /// One service's share of a stop: act, then reap the helpers it leaves behind.
@@ -161,6 +167,14 @@ pub fn stop(stack: &Stack, only: Option<&str>) -> Result<u8> {
 
     let width = targets.iter().map(|s| s.name.chars().count()).max().unwrap_or(0);
     let mut failed = 0;
+    if only.is_none() {
+        for step in crate::devserver::stop_all(stack) {
+            if step.outcome.is_failure() {
+                failed += 1;
+            }
+            println!("  {:<width$}  {}", step.name, describe(&step.outcome, step.helpers));
+        }
+    }
     for service in &targets {
         let spinner = Spinner::start(&format!("{:<width$}  stopping...", service.name));
         let step = stop_one(stack, service);

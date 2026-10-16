@@ -654,6 +654,10 @@ impl App {
                     Some(Modal::PhpPicker { purpose: PhpPurpose::Site(host), index: 0 });
                 None
             }
+            KeyCode::Char('v') => {
+                let host = self.selected_site()?.host.clone();
+                self.submit(Job::DevToggle(host))
+            }
             KeyCode::Char('o') => self.launch(Launch::Browser),
             KeyCode::Char('e') => self.launch(Launch::Folder),
             KeyCode::Char('c') => self.launch(Launch::Terminal),

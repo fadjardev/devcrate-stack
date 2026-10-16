@@ -148,6 +148,7 @@ dashboard never forces: replacing a DLL already there stays `php ext install
 | `n` | New vhost: a form for the hostname, project path (typed or picked with **Browse**), PHP version (or auto-detect), and whether to add the hosts entry and issue a certificate |
 | `N` | New Laravel or WordPress project: a form for the kind, the name, the PHP version, and the database |
 | `p` | Change the selected vhost's PHP version |
+| `v` | Start or stop the selected site's dev server (`devcrate dev`) |
 | `o` | Open the site in the default browser |
 | `e` | Open the project folder in Explorer |
 | `c` | Open a terminal in the project folder — Windows Terminal where installed, a cmd window otherwise |
@@ -168,6 +169,11 @@ cannot go to the screen, so it goes to `logs\new-<name>.log` in the stack root,
 which the Logs pane lists under `devcrate`; the footer names each step as it
 starts, and the result names what was not finished, with the command that
 finishes it.
+
+The **DEV** column shows the site's dev server from each scan: `● :5173` while
+it runs (the port it printed), `✗ exited` when it has gone without being
+stopped, `-` when there is none. `v` runs `devcrate dev start` or `stop`,
+whichever applies; its output is `logs\dev-<host>.log` in the Logs pane.
 
 `d` also takes the host out of the devcrate hosts block, as `devcrate site
 remove` does — both call the same `site::delete`.

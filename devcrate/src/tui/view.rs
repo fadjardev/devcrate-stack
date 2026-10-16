@@ -395,12 +395,29 @@ fn render_sites(frame: &mut Frame, app: &App, area: Rect) {
                 ),
             };
             let root = site.root.clone().unwrap_or_else(|| "no root directive".into());
+            let dev = app
+                .report
+                .as_ref()
+                .and_then(|report| report.dev.iter().find(|dev| dev.host == site.host))
+                .map(|dev| match dev.running {
+                    true => Span::styled(
+                        dev.url
+                            .as_deref()
+                            .and_then(|url| url.trim_end_matches('/').rsplit(':').next())
+                            .map(|port| format!("● :{port}"))
+                            .unwrap_or_else(|| "● running".into()),
+                        Style::new().fg(OK),
+                    ),
+                    false => Span::styled("✗ exited", Style::new().fg(BAD)),
+                })
+                .unwrap_or_else(|| Span::styled("-", Style::new().fg(MUTED)));
             Row::new(vec![
                 Cell::from(Line::from(vec![
                     Span::styled(if site.tls { "https://" } else { "http://" }, Style::new().fg(MUTED)),
                     Span::styled(site.host.clone(), Style::new().bold()),
                 ])),
                 Cell::from(Line::from(php)),
+                Cell::from(Line::from(dev)),
                 Cell::from(root).style(Style::new().fg(MUTED)),
             ])
         })
@@ -410,9 +427,9 @@ fn render_sites(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_stateful_widget(
         Table::new(
             rows,
-            [Constraint::Min(24), Constraint::Length(12), Constraint::Min(20)],
+            [Constraint::Min(24), Constraint::Length(12), Constraint::Length(10), Constraint::Min(20)],
         )
-        .header(table_header(["VHOST", "PHP", "ROOT"]))
+        .header(table_header(["VHOST", "PHP", "DEV", "ROOT"]))
         .block(focused(&format!("Sites ({})", app.sites.len())))
         .column_spacing(2)
         .row_highlight_style(highlight())
@@ -559,6 +576,7 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
             ("n", "new"),
             ("N", "new project"),
             ("p", "PHP"),
+            ("v", "dev"),
             ("o", "browser"),
             ("e", "folder"),
             ("c", "terminal"),
@@ -905,6 +923,7 @@ fn help_text() -> Text<'static> {
         section("Sites"),
         row("n", "new vhost"),
         row("N", "new Laravel / WordPress project"),
+        row("v", "the project's dev server (npm run dev) on / off"),
         row("p", "change PHP version"),
         row("o / e / c", "open in the browser / Explorer / a terminal"),
         row("d", "delete the conf"),

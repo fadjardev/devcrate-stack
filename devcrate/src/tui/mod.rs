@@ -290,6 +290,7 @@ mod tests {
                 service("php-8.5", "PHP 8.5", php, 9085, vec![200]),
             ],
             sites: vec!["myapp.test".into()],
+            dev: Vec::new(),
         }
     }
 
@@ -537,6 +538,57 @@ mod tests {
         app.on_key(KeyEvent::from(KeyCode::Right));
         let form = draw(&app);
         assert!(form.contains("WordPress") && form.contains("MariaDB"), "{form}");
+    }
+
+    /// The Sites table has a DEV column from the scan -- the port of a running
+    /// dev server, or that it exited -- and `v` asks for a toggle of the
+    /// selected site's.
+    #[test]
+    fn dev_servers_show_in_the_sites_pane() {
+        let mut app = App::new(stack());
+        let mut status = report(State::Up, State::Up);
+        status.dev = vec![
+            crate::devserver::DevStatus {
+                host: "myapp.test".into(),
+                running: true,
+                pid: 4242,
+                command: "npm run dev".into(),
+                url: Some("http://localhost:5173/".into()),
+                log: "logs\\dev-myapp.test.log".into(),
+            },
+            crate::devserver::DevStatus {
+                host: "shop.test".into(),
+                running: false,
+                pid: 4343,
+                command: "npm run dev".into(),
+                url: None,
+                log: "logs\\dev-shop.test.log".into(),
+            },
+        ];
+        app.on_status(status);
+        app.tab = app::Tab::Sites;
+        app.sites = vec![
+            crate::site::Site {
+                host: "myapp.test".into(),
+                root: Some("projects/myapp/public".into()),
+                fastcgi_port: Some(9085),
+                tls: true,
+            },
+            crate::site::Site {
+                host: "shop.test".into(),
+                root: Some("projects/shop".into()),
+                fastcgi_port: Some(9085),
+                tls: true,
+            },
+        ];
+        let screen = draw(&app);
+        assert!(screen.contains("DEV"), "{screen}");
+        assert!(screen.contains("● :5173"), "{screen}");
+        assert!(screen.contains("✗ exited"), "{screen}");
+        assert!(screen.contains("v dev"), "the footer names v: {screen}");
+
+        let job = app.on_key(KeyEvent::from(KeyCode::Char('v'))).expect("a job");
+        assert!(matches!(job, worker::Job::DevToggle(ref host) if host == "myapp.test"));
     }
 
     /// `o`, `e`, and `c` name what to open and leave the spawning to the loop,
