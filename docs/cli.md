@@ -130,9 +130,9 @@ visible rather than mysterious.
 | `devcrate install postgres <minor>` | **works** — downloads EDB's binaries zip (length/TLS), unpacks, runs `initdb` |
 | `devcrate install python <branch\|release>` | **works** — downloads the embeddable zip (length/TLS), enables site, bootstraps pip |
 | `devcrate install mariadb <version>` | **works** — downloads, unpacks, generates `my.ini`, creates the system tables in `data\` with `mariadb-install-db` (`root` with no password); a kept `data\` is left alone |
-| `devcrate install rabbitmq <version>` | **works** — downloads, unpacks, enables the management plugin |
-| `devcrate install erlang <version>` | **works** — downloads, unpacks the RabbitMQ dependency |
-| `devcrate install redis <version>` | **works** — downloads from GitHub (length/TLS), unpacks, generates `devcrate.conf` and `data\` |
+| `devcrate install rabbitmq <version>` | **works** — downloads from GitHub, sha256-verified against the release's digest, unpacks, enables the management plugin |
+| `devcrate install erlang <version>` | **works** — downloads from GitHub, sha256-verified, unpacks the RabbitMQ dependency; `latest` is the newest OTP 27 |
+| `devcrate install redis <version>` | **works** — downloads from GitHub, sha256-verified against the release's digest, unpacks, generates `devcrate.conf` and `data\` |
 | `devcrate install adminer [version]` | **works** — downloads from GitHub, sha256-verified against the release's digest, writes `adminer\` (see below) |
 | `devcrate install mailpit [version]` | **works** — downloads from GitHub, sha256-verified, a service on SMTP 1025 / UI 8025, points each `php.ini`'s `mail()` at it (see below) |
 | `devcrate install node <version>` / `devcrate install bun <version>` | **works** — downloads and installs into `node\` / `bun\` |
@@ -863,7 +863,7 @@ devcrate setup --undo          REM take back what was written outside it
 Setting up the stack in C:\devcrate
   nginx     nginx 1.30.6 installed into nginx\nginx-1.30.6
   PHP       PHP 8.5.11 installed into php\php-8.5
-  MariaDB   MariaDB 11.4.5 installed into mariadb
+  MariaDB   MariaDB 12.3.3 installed into mariadb
   Composer  Composer 2.10.3 installed into composer
   CLI PHP   php\current -> php\php-8.5
   mkcert    mkcert 1.4.4 placed at mkcert.exe (length-checked over TLS; the release publishes no checksum)
@@ -923,10 +923,10 @@ It leaves the stack alone: nothing installed is removed, nothing is stopped,
 and mkcert's CA stays trusted. A shortcut already deleted by hand is reported
 as gone.
 
-MariaDB's `latest` is the newest release this build of devcrate knows — its
-list is built in, not fetched (11.4.5 today) — whatever a stack set up earlier
-may be running. Its zip comes from MariaDB's download CDN, `dlm.mariadb.com`,
-and is verified against the `sha256sums.txt` MariaDB publishes beside it.
+MariaDB's `latest` is the newest release of the newest long-term-support
+series, read from MariaDB's REST API (12.3.3 today). Its zip comes from
+MariaDB's download CDN, `dlm.mariadb.com`, and is verified against the
+`sha256sums.txt` MariaDB publishes beside it.
 
 ### `devcrate autostart`
 
@@ -1038,9 +1038,39 @@ Where a runtime has a catalogue, a keyword can stand in for the version:
 pick from), `stable` / `mainline` for nginx, `lts` for Node.js, and the lines
 Composer already had (`stable`, `lts`, `preview`, `snapshot`). A version can
 also be a prefix — `devcrate install mariadb 11.4` takes the newest 11.4.x on
-the list. MariaDB, RabbitMQ, Erlang, and Redis are the exception to "the
-vendor's catalogue": their lists are built into the binary rather than
-fetched, so `latest` there means the newest release this build knows about.
+the list.
+
+Every list is the vendor's own: `releases.json` for PHP, the download page for
+nginx, `/versions` for Composer, `index.json` for Node.js, MariaDB's REST API,
+and the GitHub releases of Bun, RabbitMQ, Erlang/OTP, Redis (the redis-windows
+build), Adminer, Mailpit, and mkcert. Two `latest`s are chosen rather than
+taken from the top:
+
+- **MariaDB** — the newest release of the newest *long-term-support* series
+  that is still supported (12.3 today), not the newest rolling series (13.0),
+  which is replaced within months. The list shows the newest release of every
+  stable series not past its end of life, the LTS first.
+- **Erlang/OTP** — the newest release of OTP **27**, the series pinned in the
+  binary (`ERLANG_SERIES`). RabbitMQ supports a range of OTP series per release
+  and publishes it only as prose, so the series is raised on purpose, not by
+  whatever OTP shipped last; `devcrate install erlang 29.1.2` still installs
+  another.
+
+**Offline, the lists come from their last copy.** Each list is saved under
+`_downloads\catalogues\` in the stack root whenever it is fetched. When the
+vendor cannot be reached, that copy is used and the install says so:
+
+```
+  offline: the PHP release list could not be fetched (...); using the copy saved 2026-10-16 07:03 UTC
+```
+
+Only the lists are cached. What is downloaded from them is checked exactly as
+before, so a stale list can name an older release but never let an unchecked
+file through. A list never fetched on this stack has no copy, and the install
+fails as it always did. Python's builds, PECL's directory listings, and the
+checksum files fetched beside a download are not cached — they are read at
+download time, which needs the network anyway. The dashboard's install picker
+reads the same lists, offline copies included.
 
 ```
   fetching the release list from windows.php.net

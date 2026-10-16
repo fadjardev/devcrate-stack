@@ -9,7 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Version lists work offline.** Every catalogue — PHP, nginx, Composer, Node.js, Bun, MariaDB, RabbitMQ, Erlang, Redis, Adminer, Mailpit, mkcert — is saved in `_downloads\catalogues\` when it is fetched, and read from there when the vendor cannot be reached; the install says it is using the saved copy, and from when. Downloads from a saved list are checked exactly as before.
+
 - **`devcrate dev start|stop <site>` and `dev list`** — dev servers under supervision (roadmap item 9): a site's `npm run dev`, or `bun run dev` for a project with a Bun lockfile, run in its project folder through the stack's own Node or Bun, with `npm install` first when there is no `node_modules`. Tracked by PID and that process's start time in `run\dev\`, so a reused PID is never mistaken for it; output in `logs\dev-<host>.log`; a dev server that dies is reported as exited by `dev list`, `status` (and `status --json`), and the dashboard. Stopping kills its whole process tree by PID, never by image name, and `devcrate stop` with no service named stops every dev server first. In the dashboard, the Sites pane has a DEV column and `v` starts or stops the selected site's.
+
+### Changed
+
+- **MariaDB, RabbitMQ, Erlang, and Redis versions come from their vendors.** Their lists were two releases each written into the binary, so `latest` meant MariaDB 11.4.5 and RabbitMQ 4.0.5 long after newer ones shipped. MariaDB's now comes from its REST API, and `latest` is the newest long-term-support series (12.3.3 today); RabbitMQ's, Erlang's, and Redis's come from their GitHub releases, whose asset digests also make those downloads sha256-verified instead of length-checked. Erlang's `latest` is the newest OTP 27, the series RabbitMQ 4.x runs on, pinned on purpose.
 
 ### Fixed
 

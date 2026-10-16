@@ -32,9 +32,11 @@ no output. The program knows exactly what it needs — it should just get it.
   release of each line (stable, the 2.2 LTS, preview, snapshot) — so it is read,
   not scraped, and named by line rather than picked from a wall of point
   releases.*
-- [ ] Cache the catalogue so the UI stays responsive offline — *not built. The
-  archive cache in `_downloads\` makes a repeat install work offline, but listing
-  versions still needs the network, for both runtimes.*
+- [x] Cache the catalogue so the UI stays responsive offline — *done
+  2026-10-16: every version list is saved in `_downloads\catalogues\` when it
+  is fetched and read from there, with a note saying so, when the vendor cannot
+  be reached. The archive cache in `_downloads\` already made a repeat install
+  work offline.*
 
 | Runtime    | Source                                                                |
 | ---------- | --------------------------------------------------------------------- |

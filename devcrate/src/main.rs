@@ -67,6 +67,8 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli) -> Result<u8> {
     let stack = Stack::open(root::resolve(cli.root)?)?;
+    // Version lists are saved here as they are fetched, and read back offline.
+    install::set_catalogue_cache(stack.root.join("_downloads").join("catalogues"));
 
     let Some(command) = cli.command else {
         return tui::run(stack);

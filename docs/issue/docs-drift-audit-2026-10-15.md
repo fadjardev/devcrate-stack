@@ -1,7 +1,7 @@
 # Docs and the dashboard's install picker have drifted from what the code does
 
-**Status: open.** Items 1–13 are fixed. Item 14, found while fixing the
-picker, is not. See [Definition of done](#definition-of-done).
+**Status: fixed.** Items 1–13 were fixed on 2026-10-15; item 14, found while
+fixing the picker, on 2026-10-16. See [Definition of done](#definition-of-done).
 
 ## Summary
 
@@ -179,8 +179,10 @@ and the catalogue code in `install/`; 6–8 touch `site.rs`, `hosts.rs`, and
 - [x] An unelevated hosts write is atomic (temp file, then rename).
 - [x] `uninstall php` refuses the `current` version without `--force`.
 - [x] The dashboard never forces an install over an existing version (15).
-- [ ] MariaDB, RabbitMQ, Erlang, and Redis read their vendors' release lists
-      instead of a list built into the binary (14).
+- [x] MariaDB, RabbitMQ, Erlang, and Redis read their vendors' release lists
+      instead of a list built into the binary (14). — *MariaDB's REST API, and
+      GitHub releases for the other three, whose asset digests now make those
+      downloads sha256-verified too.*
 - [x] Each GitHub issue's checkboxes match its mirror; finished issues are
       closed. — *Bodies of #1–#3 replaced with their mirrors on 2026-10-15,
       after the mirrors' own stale notes were corrected (#1's site creation,

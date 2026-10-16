@@ -37,6 +37,8 @@ mod rabbitmq;
 mod redis;
 pub mod wordpress;
 
+pub use download::set_catalogue_cache;
+
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
@@ -1940,10 +1942,10 @@ pub fn fallback_offerings() -> Vec<Offering> {
         Offering::new("nginx", "nginx (stable line)", "stable"),
         Offering::new("nginx", "nginx (mainline)", "mainline"),
         Offering::new("composer", "Composer (stable)", "stable"),
-        Offering::new("mariadb", "MariaDB (newest)", "latest"),
+        Offering::new("mariadb", "MariaDB (newest LTS)", "latest"),
         Offering::new("postgres", "PostgreSQL 13.23", "13.23"),
         Offering::new("redis", "Redis (newest)", "latest"),
-        Offering::new("erlang", "Erlang/OTP (newest) -- RabbitMQ needs it", "latest"),
+        Offering::new("erlang", "Erlang/OTP 27 (newest) -- RabbitMQ needs it", "latest"),
         Offering::new("rabbitmq", "RabbitMQ (newest)", "latest"),
         Offering::new("node", "Node.js (newest LTS)", "lts"),
         Offering::new("bun", "Bun (newest)", "latest"),
@@ -1992,13 +1994,13 @@ pub fn offerings() -> Vec<Offering> {
         None => keep("composer", &mut out),
     }
 
-    // These four lists are built into the binary rather than fetched (see
-    // download.rs), newest first -- the head is what `latest` would pick.
+    // Each list's head is what `latest` picks: the newest LTS for MariaDB, the
+    // newest of the pinned series for Erlang, the newest release otherwise.
     let mut newest = |runtime: &'static str, label: &str, head: Option<String>| match head {
         Some(v) => out.push(Offering::new(runtime, label.replace("{v}", &v), v)),
         None => keep(runtime, &mut out),
     };
-    newest("mariadb", "MariaDB {v}", download::mariadb_catalogue().ok().and_then(|c| c.first().map(|r| r.version.clone())));
+    newest("mariadb", "MariaDB {v} (LTS)", download::mariadb_catalogue().ok().and_then(|c| c.first().map(|r| r.version.clone())));
     newest("postgres", "", None);
     newest("redis", "Redis {v}", download::redis_catalogue().ok().and_then(|c| c.first().map(|r| r.version.clone())));
     newest(
@@ -2040,6 +2042,9 @@ pub fn offerings() -> Vec<Offering> {
         Some(version) => out.push(Offering::new("mailpit", format!("Mailpit {version}  (mail catcher)"), version)),
         None => keep("mailpit", &mut out),
     }
+    // The picker shows what it found either way; notes about a list read from
+    // its saved copy are not the next install's to report.
+    let _ = download::take_offline_notes();
     out
 }
 
@@ -2095,6 +2100,10 @@ fn install_by_download(
         Runtime::Adminer => choose_adminer(stack, version, emit)?,
         Runtime::Mailpit => choose_mailpit(stack, version, emit)?,
     };
+    // A list read from the saved copy says so, and how old it is.
+    for note in download::take_offline_notes() {
+        emit_line!(emit, "  {note}");
+    }
     // Nothing chosen means the catalogue was printed instead.
     let Some(Chosen { download: source, dest, replace_freely }) = chosen else {
         return Ok(InstallOutcome::Listed);
@@ -2358,7 +2367,8 @@ fn choose_mariadb(stack: &Stack, version: Option<&str>, emit: &mut dyn Emit) -> 
         for rel in &catalogue {
             emit_line!(emit, "    mariadb {} ({})", rel.version, rel.file_name);
         }
-        emit_line!(emit, "\n  Pass a version to install: `devcrate install mariadb 11.4.5`");
+        let example = catalogue.first().map(|r| r.version.as_str()).unwrap_or("latest");
+        emit_line!(emit, "\n  Pass a version to install: `devcrate install mariadb {example}` (`latest` is the first)");
         return Ok(None);
     };
 
@@ -2385,7 +2395,8 @@ fn choose_rabbitmq(stack: &Stack, version: Option<&str>, emit: &mut dyn Emit) ->
         for rel in &catalogue {
             emit_line!(emit, "    rabbitmq {} ({})", rel.version, rel.file_name);
         }
-        emit_line!(emit, "\n  Pass a version to install: `devcrate install rabbitmq 4.0.5`");
+        let example = catalogue.first().map(|r| r.version.as_str()).unwrap_or("latest");
+        emit_line!(emit, "\n  Pass a version to install: `devcrate install rabbitmq {example}` (`latest` is the first)");
         return Ok(None);
     };
 
@@ -2411,7 +2422,8 @@ fn choose_redis(stack: &Stack, version: Option<&str>, emit: &mut dyn Emit) -> Re
         for rel in &catalogue {
             emit_line!(emit, "    redis {} ({})", rel.version, rel.file_name);
         }
-        emit_line!(emit, "\n  Pass a version to install: `devcrate install redis 8.10.2`");
+        let example = catalogue.first().map(|r| r.version.as_str()).unwrap_or("latest");
+        emit_line!(emit, "\n  Pass a version to install: `devcrate install redis {example}` (`latest` is the first)");
         return Ok(None);
     };
 
@@ -2481,7 +2493,8 @@ fn choose_erlang(stack: &Stack, version: Option<&str>, emit: &mut dyn Emit) -> R
         for rel in &catalogue {
             emit_line!(emit, "    erlang {} ({})", rel.version, rel.file_name);
         }
-        emit_line!(emit, "\n  Pass a version to install: `devcrate install erlang 27.2`");
+        let example = catalogue.first().map(|r| r.version.as_str()).unwrap_or("latest");
+        emit_line!(emit, "\n  Pass a version to install: `devcrate install erlang {example}` (`latest` is the first)");
         return Ok(None);
     };
 

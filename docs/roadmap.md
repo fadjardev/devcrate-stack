@@ -13,7 +13,7 @@ not started. `in progress` - being built. `done` - shipped, see
 | # | Item | Status |
 | --- | --- | --- |
 | 1 | Rust TUI (`ratatui`), shipped as a single executable | done — see [tui.md](tui.md) |
-| 2 | Built-in runtime downloader / installer with version selection | done — PHP, nginx, Composer, MariaDB, RabbitMQ, Erlang/OTP, Node.js, Bun, PostgreSQL, Python, and Redis all done end to end, plus `uninstall`. **Not built:** a catalogue cache for listing versions offline; MariaDB, RabbitMQ, Erlang, and Redis read lists built into the binary rather than the vendor's |
+| 2 | Built-in runtime downloader / installer with version selection | done — PHP, nginx, Composer, MariaDB, RabbitMQ, Erlang/OTP, Node.js, Bun, PostgreSQL, Python, and Redis all done end to end, plus `uninstall`. Every list is the vendor's own, MariaDB's from its REST API and RabbitMQ's, Erlang's, and Redis's from GitHub releases (sha256-verified since 2026-10-16), and each is saved in `_downloads\catalogues\` to be listed offline |
 | 3 | Runs from any terminal, scriptable as well as interactive | done — see [cli.md](cli.md) |
 | 4 | Open an existing project: vhost + hosts entry + mkcert TLS, in one step | done — automated hosts block editing with UAC elevation, mkcert TLS issuance, smart web root & composer PHP constraint detection. **Not built:** certificate expiry reporting and reissue; mkcert as a managed install |
 | 5 | Node.js and Bun as managed runtimes | done — Node.js & Bun installer, version switcher, npm isolation (working since 2026-10-16: the `.npmrc` the installer wrote before then was read by nothing), and smart .nvmrc / package.json detection. Dev servers under supervision and the HMR proxy were carried into item 9 |

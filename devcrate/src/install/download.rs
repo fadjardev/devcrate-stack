@@ -328,19 +328,106 @@ pub fn sha256_for(sums: &str, file: &str) -> Option<String> {
     })
 }
 
+/// MariaDB's REST API: the major series, then one series' releases.
+const MARIADB_API_URL: &str = "https://downloads.mariadb.org/rest-api/mariadb/";
+
+/// The newest release of every stable series that has not reached its end of
+/// life, read from MariaDB's REST API -- the newest *long-term-support* series
+/// first, because that is what `latest` installs: a rolling series (13.0)
+/// is replaced within months, an LTS (12.3) is supported for years.
 pub fn mariadb_catalogue() -> Result<Vec<MariaDbRelease>> {
-    Ok(vec![
-        MariaDbRelease {
-            version: "11.4.5".to_string(),
-            file_name: "mariadb-11.4.5-winx64.zip".to_string(),
-            sha256: None,
-        },
-        MariaDbRelease {
-            version: "10.11.11".to_string(),
-            file_name: "mariadb-10.11.11-winx64.zip".to_string(),
-            sha256: None,
-        },
-    ])
+    let majors = catalogue_text("mariadb", "the MariaDB release list", MARIADB_API_URL)?;
+    let series = parse_mariadb_series(&majors, &today())?;
+    let mut releases = Vec::new();
+    for (id, _) in &series {
+        let url = format!("{MARIADB_API_URL}{id}/");
+        let Ok(text) = catalogue_text(&format!("mariadb-{id}"), &format!("the MariaDB {id} releases"), &url) else {
+            continue;
+        };
+        if let Some(version) = parse_mariadb_newest(&text) {
+            let file_name = format!("mariadb-{version}-winx64.zip");
+            releases.push(MariaDbRelease { version, file_name, sha256: None });
+        }
+    }
+    if releases.is_empty() {
+        bail!("MariaDB's REST API listed no stable series with a Windows build");
+    }
+    Ok(releases)
+}
+
+/// The stable series not past their end of life, as `(id, lts)`: the newest
+/// LTS first, then the rest newest first.
+pub fn parse_mariadb_series(json_text: &str, today: &str) -> Result<Vec<(String, bool)>> {
+    let json: serde_json::Value =
+        serde_json::from_str(json_text).context("the MariaDB release list is not JSON")?;
+    let majors = json
+        .get("major_releases")
+        .and_then(|m| m.as_array())
+        .context("the MariaDB release list has no major_releases")?;
+    let mut series: Vec<(String, bool)> = majors
+        .iter()
+        .filter(|m| m.get("release_status").and_then(|s| s.as_str()) == Some("Stable"))
+        .filter(|m| m.get("release_eol_date").and_then(|d| d.as_str()).is_none_or(|eol| eol >= today))
+        .filter_map(|m| {
+            let id = m.get("release_id")?.as_str()?.to_string();
+            let lts = m.get("release_support_type").and_then(|s| s.as_str()) == Some("Long Term Support");
+            Some((id, lts))
+        })
+        .collect();
+    series.sort_by_key(|(id, _)| std::cmp::Reverse(version_parts(id)));
+    if let Some(at) = series.iter().position(|(_, lts)| *lts) {
+        let lts = series.remove(at);
+        series.insert(0, lts);
+    }
+    Ok(series)
+}
+
+/// The newest release of one series that has a Windows x64 zip.
+pub fn parse_mariadb_newest(json_text: &str) -> Option<String> {
+    let json: serde_json::Value = serde_json::from_str(json_text).ok()?;
+    json.get("releases")?
+        .as_object()?
+        .iter()
+        .filter(|(version, release)| {
+            let wanted = format!("mariadb-{version}-winx64.zip");
+            release
+                .get("files")
+                .and_then(|f| f.as_array())
+                .is_some_and(|files| files.iter().any(|f| f.get("file_name").and_then(|n| n.as_str()) == Some(&wanted)))
+        })
+        .map(|(version, _)| version.clone())
+        .max_by(|a, b| version_parts(a).cmp(&version_parts(b)))
+}
+
+/// `12.3.3` -> [12, 3, 3], so 10.11 sorts above 10.6.
+fn version_parts(version: &str) -> Vec<u32> {
+    version.split('.').map(|p| p.parse().unwrap_or(0)).collect()
+}
+
+/// Today's date, `YYYY-MM-DD`, in UTC: what an end-of-life date is compared to.
+fn today() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    date_of(secs).0
+}
+
+/// Seconds since the epoch as (`YYYY-MM-DD`, `HH:MM`), UTC -- Howard Hinnant's
+/// civil-from-days, so no date crate is needed for two strings.
+fn date_of(secs: u64) -> (String, String) {
+    let days = (secs / 86_400) as i64;
+    let rem = secs % 86_400;
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    (format!("{year:04}-{month:02}-{day:02}"), format!("{:02}:{:02}", rem / 3600, (rem % 3600) / 60))
 }
 
 /// One installable RabbitMQ release.
@@ -364,19 +451,29 @@ impl RabbitMqRelease {
     }
 }
 
+/// RabbitMQ's GitHub releases, newest first, each with the sha256 GitHub
+/// recorded for its Windows zip.
 pub fn rabbitmq_catalogue() -> Result<Vec<RabbitMqRelease>> {
-    Ok(vec![
-        RabbitMqRelease {
-            version: "4.0.5".to_string(),
-            file_name: "rabbitmq-server-windows-4.0.5.zip".to_string(),
-            sha256: None,
-        },
-        RabbitMqRelease {
-            version: "4.0.0".to_string(),
-            file_name: "rabbitmq-server-windows-4.0.0.zip".to_string(),
-            sha256: None,
-        },
-    ])
+    let text = github_releases_n("rabbitmq/rabbitmq-server", 30)?;
+    let mut found = parse_github_tagged(&text, "v", |v| format!("rabbitmq-server-windows-{v}.zip"))?;
+    newest_first(&mut found);
+    Ok(found
+        .into_iter()
+        .map(|r| RabbitMqRelease { version: r.version, file_name: r.file_name, sha256: r.sha256 })
+        .collect())
+}
+
+/// Move the newest release of `series` to the front, where `latest` looks.
+fn pinned_first(releases: &mut Vec<GithubRelease>, series: &str) {
+    let prefix = format!("{series}.");
+    if let Some(at) = releases.iter().position(|r| r.version.starts_with(&prefix)) {
+        let pinned = releases.remove(at);
+        releases.insert(0, pinned);
+    }
+}
+
+fn newest_first(releases: &mut [GithubRelease]) {
+    releases.sort_by_key(|r| std::cmp::Reverse(version_parts(&r.version)));
 }
 
 /// One installable Redis release, from `redis-windows/redis-windows` on
@@ -403,19 +500,16 @@ impl RedisRelease {
     }
 }
 
+/// The redis-windows project's GitHub releases (Redis has no Windows build of
+/// its own), newest first, with GitHub's sha256 of each zip.
 pub fn redis_catalogue() -> Result<Vec<RedisRelease>> {
-    Ok(vec![
-        RedisRelease {
-            version: "8.10.2".to_string(),
-            file_name: "Redis-8.10.2-Windows-x64-msys2.zip".to_string(),
-            sha256: None,
-        },
-        RedisRelease {
-            version: "8.8.3".to_string(),
-            file_name: "Redis-8.8.3-Windows-x64-msys2.zip".to_string(),
-            sha256: None,
-        },
-    ])
+    let text = github_releases_n("redis-windows/redis-windows", 30)?;
+    let mut found = parse_github_tagged(&text, "", |v| format!("Redis-{v}-Windows-x64-msys2.zip"))?;
+    newest_first(&mut found);
+    Ok(found
+        .into_iter()
+        .map(|r| RedisRelease { version: r.version, file_name: r.file_name, sha256: r.sha256 })
+        .collect())
 }
 
 /// One installable Erlang/OTP release.
@@ -498,19 +592,24 @@ fn is_postgres_minor(version: &str) -> bool {
         && parts.iter().all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
 }
 
+/// The OTP series `latest` installs. RabbitMQ supports a range of OTP series
+/// per release and publishes it only as prose, so the series the stack runs is
+/// pinned here and raised on purpose; any other release is installed by naming
+/// it.
+pub const ERLANG_SERIES: &str = "27";
+
+/// Erlang/OTP's GitHub releases (`OTP-27.3.4.19`), with GitHub's sha256 of each
+/// Windows installer: the newest of [`ERLANG_SERIES`] first, then the rest
+/// newest first.
 pub fn erlang_catalogue() -> Result<Vec<ErlangRelease>> {
-    Ok(vec![
-        ErlangRelease {
-            version: "27.2".to_string(),
-            file_name: "otp_win64_27.2.exe".to_string(),
-            sha256: None,
-        },
-        ErlangRelease {
-            version: "26.2.5.5".to_string(),
-            file_name: "otp_win64_26.2.5.5.exe".to_string(),
-            sha256: None,
-        },
-    ])
+    let text = github_releases_n("erlang/otp", 50)?;
+    let mut found = parse_github_tagged(&text, "OTP-", |v| format!("otp_win64_{v}.exe"))?;
+    newest_first(&mut found);
+    pinned_first(&mut found, ERLANG_SERIES);
+    Ok(found
+        .into_iter()
+        .map(|r| ErlangRelease { version: r.version, file_name: r.file_name, sha256: r.sha256 })
+        .collect())
 }
 
 /// An archive on disk, ready for [`super::from_archive`].
@@ -556,14 +655,7 @@ fn download_agent() -> ureq::Agent {
 /// The releases windows.php.net offers, oldest branch first.
 pub fn php_catalogue() -> Result<Vec<PhpRelease>> {
     let url = format!("{RELEASES_URL}releases.json");
-    let mut response = agent()
-        .get(&url)
-        .call()
-        .with_context(|| format!("fetching the PHP release list from {url}"))?;
-    let json = response
-        .body_mut()
-        .read_to_string()
-        .with_context(|| format!("reading the PHP release list from {url}"))?;
+    let json = catalogue_text("php", "the PHP release list", &url)?;
     parse_php_catalogue(&json)
 }
 
@@ -635,14 +727,7 @@ fn numeric_version(version: &str) -> (u32, u32) {
 /// legacy series newest first -- the page's own order, which is the order
 /// someone choosing a version wants to read.
 pub fn nginx_catalogue() -> Result<Vec<NginxRelease>> {
-    let mut response = agent()
-        .get(NGINX_PAGE_URL)
-        .call()
-        .with_context(|| format!("fetching the nginx download page from {NGINX_PAGE_URL}"))?;
-    let html = response
-        .body_mut()
-        .read_to_string()
-        .with_context(|| format!("reading the nginx download page from {NGINX_PAGE_URL}"))?;
+    let html = catalogue_text("nginx", "the nginx download page", NGINX_PAGE_URL)?;
     parse_nginx_catalogue(&html)
 }
 
@@ -780,14 +865,7 @@ impl ComposerCatalogue {
 
 /// The releases getcomposer.org offers.
 pub fn composer_catalogue() -> Result<ComposerCatalogue> {
-    let mut response = agent()
-        .get(COMPOSER_VERSIONS_URL)
-        .call()
-        .with_context(|| format!("fetching the Composer version list from {COMPOSER_VERSIONS_URL}"))?;
-    let json = response
-        .body_mut()
-        .read_to_string()
-        .with_context(|| format!("reading the Composer version list from {COMPOSER_VERSIONS_URL}"))?;
+    let json = catalogue_text("composer", "the Composer version list", COMPOSER_VERSIONS_URL)?;
     parse_composer_catalogue(&json)
 }
 
@@ -878,6 +956,75 @@ fn parse_sha256sum(text: &str) -> Result<String> {
         Ok(hash.to_ascii_lowercase())
     } else {
         bail!("expected a sha256 and a file name, got {text:?}")
+    }
+}
+
+/// Where fetched catalogues are kept: `_downloads\catalogues\` of the stack the
+/// command runs on. Unset (in tests), nothing is cached.
+static CATALOGUE_CACHE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Catalogues that came from the cache because the vendor could not be
+/// reached, as lines to show -- collected here so every catalogue need not
+/// carry where it came from through its callers.
+static OFFLINE_NOTES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Keep fetched catalogues under `dir`. Called once, by `main`, with the stack.
+pub fn set_catalogue_cache(dir: PathBuf) {
+    let _ = CATALOGUE_CACHE.set(dir);
+}
+
+/// The offline notes collected since the last call.
+pub fn take_offline_notes() -> Vec<String> {
+    OFFLINE_NOTES.lock().map(|mut notes| std::mem::take(&mut *notes)).unwrap_or_default()
+}
+
+/// A catalogue's text: fetched, and saved under `key` for next time; or, when
+/// the vendor cannot be reached, the copy saved last time, with a note that
+/// says so and how old it is. No copy and no network is the fetch's own error.
+///
+/// Only the lists are cached. What is downloaded from them is checked against
+/// the same hashes as ever, so a stale list can name an older release but never
+/// let an unchecked file through.
+fn catalogue_text(key: &str, what: &str, url: &str) -> Result<String> {
+    let fetched = agent()
+        .get(url)
+        .call()
+        .with_context(|| format!("fetching {what} from {url}"))
+        .and_then(|mut response| {
+            response.body_mut().read_to_string().with_context(|| format!("reading {what} from {url}"))
+        });
+    let cached = CATALOGUE_CACHE.get().map(|dir| dir.join(format!("{key}.txt")));
+    match (fetched, cached) {
+        (Ok(text), Some(path)) => {
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            let part = path.with_extension("part");
+            if std::fs::write(&part, &text).is_ok() {
+                let _ = std::fs::rename(&part, &path);
+            }
+            Ok(text)
+        }
+        (Ok(text), None) => Ok(text),
+        (Err(err), Some(path)) if path.is_file() => {
+            let text = std::fs::read_to_string(&path)
+                .with_context(|| format!("reading the saved copy of {what}"))?;
+            let saved = std::fs::metadata(&path)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| {
+                    let (day, time) = date_of(d.as_secs());
+                    format!("{day} {time} UTC")
+                })
+                .unwrap_or_else(|| "an unknown date".into());
+            let reason = err.root_cause().to_string();
+            if let Ok(mut notes) = OFFLINE_NOTES.lock() {
+                notes.push(format!("offline: {what} could not be fetched ({reason}); using the copy saved {saved}"));
+            }
+            Ok(text)
+        }
+        (Err(err), _) => Err(err),
     }
 }
 
@@ -1126,6 +1273,16 @@ pub fn parse_github_releases(
     json_text: &str,
     asset: impl Fn(&str) -> String,
 ) -> Result<Vec<GithubRelease>> {
+    parse_github_tagged(json_text, "v", asset)
+}
+
+/// [`parse_github_releases`] for a project whose tags carry another prefix
+/// than `v` (`OTP-27.3`) or none (`8.10.2`).
+pub fn parse_github_tagged(
+    json_text: &str,
+    prefix: &str,
+    asset: impl Fn(&str) -> String,
+) -> Result<Vec<GithubRelease>> {
     let val: serde_json::Value = serde_json::from_str(json_text).context("parsing the releases json")?;
     let Some(items) = val.as_array() else {
         bail!("the releases json is not an array");
@@ -1138,7 +1295,7 @@ pub fn parse_github_releases(
             continue;
         }
         let Some(tag) = item.get("tag_name").and_then(|v| v.as_str()) else { continue };
-        let version = tag.trim_start_matches('v').to_string();
+        let version = tag.strip_prefix(prefix).unwrap_or(tag).to_string();
         let wanted = asset(&version);
         let found = item
             .get("assets")
@@ -1162,9 +1319,14 @@ pub fn parse_github_releases(
 }
 
 fn github_releases(repo: &str) -> Result<String> {
-    let url = format!("https://api.github.com/repos/{repo}/releases?per_page=10");
-    let mut response = agent().get(&url).call().with_context(|| format!("fetching {url}"))?;
-    response.body_mut().read_to_string().with_context(|| format!("reading {url}"))
+    github_releases_n(repo, 10)
+}
+
+/// The newest `count` releases of a GitHub project -- more than ten for
+/// projects that publish several series side by side (Erlang's 29, 28, 27).
+fn github_releases_n(repo: &str, count: u32) -> Result<String> {
+    let url = format!("https://api.github.com/repos/{repo}/releases?per_page={count}");
+    catalogue_text(&format!("github-{}", repo.replace('/', "-")), &format!("the {repo} releases"), &url)
 }
 
 /// mkcert's releases: the Windows x64 executable, `mkcert-v<version>-windows-amd64.exe`.
@@ -1262,6 +1424,88 @@ pub fn pecl_build(extension: &str, version: Option<&str>, build: &str) -> Result
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn mariadb_latest_is_the_newest_lts_and_eol_series_are_dropped() {
+        let json = r#"{"major_releases": [
+            {"release_id": "13.2", "release_status": "Preview", "release_support_type": null, "release_eol_date": null},
+            {"release_id": "13.0", "release_status": "Stable", "release_support_type": "Rolling", "release_eol_date": null},
+            {"release_id": "12.3", "release_status": "Stable", "release_support_type": "Long Term Support", "release_eol_date": "2029-06-12"},
+            {"release_id": "11.8", "release_status": "Stable", "release_support_type": "Long Term Support", "release_eol_date": "2028-06-04"},
+            {"release_id": "10.11", "release_status": "Stable", "release_support_type": "Long Term Support", "release_eol_date": "2028-02-16"},
+            {"release_id": "10.6", "release_status": "Stable", "release_support_type": "Long Term Support", "release_eol_date": "2026-07-06"}
+        ]}"#;
+        let series = parse_mariadb_series(json, "2026-10-16").unwrap();
+        let ids: Vec<&str> = series.iter().map(|(id, _)| id.as_str()).collect();
+        assert_eq!(ids, ["12.3", "13.0", "11.8", "10.11"], "LTS first, preview and past-EOL gone");
+    }
+
+    #[test]
+    fn a_mariadb_series_yields_its_newest_windows_zip() {
+        let json = r#"{"releases": {
+            "12.3.2": {"files": [{"file_name": "mariadb-12.3.2-winx64.zip"}]},
+            "12.3.10": {"files": [{"file_name": "mariadb-12.3.10-winx64.zip"}]},
+            "12.3.11": {"files": [{"file_name": "mariadb-12.3.11.tar.gz"}]}
+        }}"#;
+        assert_eq!(parse_mariadb_newest(json).as_deref(), Some("12.3.10"), "numeric order, Windows zip required");
+    }
+
+    fn release(tag: &str, asset: &str) -> String {
+        format!(
+            r#"{{"tag_name": "{tag}", "draft": false, "prerelease": false, "assets": [{{"name": "{asset}", "browser_download_url": "https://example.test/{asset}", "digest": "sha256:{}"}}]}}"#,
+            "a".repeat(64)
+        )
+    }
+
+    #[test]
+    fn erlang_tags_lose_their_prefix_and_the_pinned_series_leads() {
+        let json = format!(
+            "[{}, {}, {}]",
+            release("OTP-29.1.2", "otp_win64_29.1.2.exe"),
+            release("OTP-27.3.4.19", "otp_win64_27.3.4.19.exe"),
+            release("OTP-28.5.0.8", "otp_win64_28.5.0.8.exe")
+        );
+        let mut found = parse_github_tagged(&json, "OTP-", |v| format!("otp_win64_{v}.exe")).unwrap();
+        newest_first(&mut found);
+        pinned_first(&mut found, "27");
+        let versions: Vec<&str> = found.iter().map(|r| r.version.as_str()).collect();
+        assert_eq!(versions, ["27.3.4.19", "29.1.2", "28.5.0.8"]);
+        assert!(found.iter().all(|r| r.sha256.is_some()), "GitHub's digest is kept");
+
+        let redis = format!("[{}]", release("8.10.2", "Redis-8.10.2-Windows-x64-msys2.zip"));
+        let found = parse_github_tagged(&redis, "", |v| format!("Redis-{v}-Windows-x64-msys2.zip")).unwrap();
+        assert_eq!(found[0].version, "8.10.2");
+    }
+
+    #[test]
+    fn dates_are_civil() {
+        assert_eq!(date_of(0), ("1970-01-01".to_string(), "00:00".to_string()));
+        assert_eq!(date_of(1_792_134_199), ("2026-10-16".to_string(), "07:03".to_string()));
+        assert_eq!(date_of(951_782_400).0, "2000-02-29");
+    }
+
+    /// With the vendor unreachable, a list comes from the copy saved when it
+    /// was last fetched, and a note says so; with no copy, the error stands.
+    #[test]
+    fn an_unreachable_catalogue_falls_back_to_its_saved_copy() {
+        let dir = std::env::temp_dir().join(format!("devcrate-catalogues-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        set_catalogue_cache(dir.clone());
+        let Some(cache) = CATALOGUE_CACHE.get() else { unreachable!() };
+        let key = format!("test-{}", std::process::id());
+        let path = cache.join(format!("{key}.txt"));
+        // Port 9 (discard) is closed on a normal machine: refused at once.
+        let url = "http://127.0.0.1:9/catalogue.json";
+
+        assert!(catalogue_text(&key, "the test list", url).is_err(), "no copy yet");
+        std::fs::write(&path, "[\"saved\"]").unwrap();
+        let _ = take_offline_notes();
+        assert_eq!(catalogue_text(&key, "the test list", url).unwrap(), "[\"saved\"]");
+        let notes = take_offline_notes();
+        assert!(notes.iter().any(|n| n.starts_with("offline: the test list could not be fetched") && n.contains("UTC")), "{notes:?}");
+        let _ = std::fs::remove_file(&path);
+    }
     use super::*;
 
     #[test]
@@ -1682,14 +1926,7 @@ pub fn parse_node_catalogue(json_text: &str) -> Result<NodeCatalogue> {
 
 pub fn fetch_node_catalogue() -> Result<NodeCatalogue> {
     let url = "https://nodejs.org/dist/index.json";
-    let mut response = agent()
-        .get(url)
-        .call()
-        .with_context(|| format!("fetching Node.js releases index from {url}"))?;
-    let text = response
-        .body_mut()
-        .read_to_string()
-        .with_context(|| format!("reading Node.js releases index from {url}"))?;
+    let text = catalogue_text("node", "the Node.js release index", url)?;
     parse_node_catalogue(&text)
 }
 
@@ -1744,14 +1981,7 @@ pub fn parse_bun_catalogue(json_text: &str) -> Result<BunCatalogue> {
 
 pub fn fetch_bun_catalogue() -> Result<BunCatalogue> {
     let url = "https://api.github.com/repos/oven-sh/bun/releases";
-    let mut response = agent()
-        .get(url)
-        .call()
-        .with_context(|| format!("fetching Bun releases from {url}"))?;
-    let text = response
-        .body_mut()
-        .read_to_string()
-        .with_context(|| format!("reading Bun releases from {url}"))?;
+    let text = catalogue_text("github-oven-sh-bun", "the Bun releases", url)?;
     parse_bun_catalogue(&text)
 }
 
