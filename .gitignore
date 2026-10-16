@@ -96,3 +96,6 @@ Thumbs.db
 Desktop.ini
 .DS_Store
 *.swp
+
+# --- Per-machine stack settings (auto-vhost ignore list names private folders) ---
+/devcrate.toml
