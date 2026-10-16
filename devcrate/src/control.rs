@@ -361,6 +361,13 @@ fn ask_nicely(stack: &Stack, service: &Service) -> Result<()> {
             if defaults.is_file() {
                 command.arg(format!("--defaults-file={}", defaults.display()));
             }
+            // Named outright: my.ini sets the port under [mysqld] only, which
+            // mariadb-admin does not read, so without this it shut down
+            // whichever server answered on 3306 -- another stack's included.
+            // A server not on this port is not reached, and is terminated by
+            // its process path like the rest.
+            let port = service.ports.first().copied().unwrap_or(3306);
+            command.args(["--protocol=TCP", "--host=127.0.0.1", &format!("--port={port}")]);
             run(command.args(["-u", "root", "shutdown"]))
         }
         ServiceKind::Postgres => {
@@ -635,6 +642,13 @@ fn launch(stack: &Stack, service: &Service) -> Result<()> {
             let defaults = dir.join("my.ini");
             if defaults.is_file() {
                 command.arg(format!("--defaults-file={}", defaults.display()));
+            }
+            // The stack's port wins over my.ini's, as PostgreSQL's `-p` does:
+            // it is the port `start` preflights, `status` probes, and `stop`
+            // shuts down on, and an install used to write 3306 whatever
+            // `[mariadb] port` said.
+            if let Some(&port) = service.ports.first() {
+                command.arg(format!("--port={port}"));
             }
             // The my.ini devcrate writes says `basedir=.` and `datadir=./data`
             // so the stack can move; those resolve against the working

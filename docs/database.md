@@ -65,6 +65,8 @@ If another MySQL/MariaDB (e.g. from FlyEnv/XAMPP) is running, it occupies port
 Can't start server: Bind on TCP/IP port ... 10048
 ```
 
-Stop the other service, or change `port` in `mariadb\my.ini` to e.g. `3307`
-(and update each app's DB config to match). See
+Stop the other service, or move MariaDB to e.g. `3307`: set `[mariadb] port =
+3307` in `devcrate.toml` — `devcrate start` passes it to `mariadbd`, overriding
+`my.ini` — and change `port` in `mariadb\my.ini` too if you start the stack with
+`start.bat`, which reads only `my.ini`. Update each app's DB config to match. See
 [troubleshooting.md](troubleshooting.md#port-3306-already-in-use).

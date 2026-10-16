@@ -106,8 +106,10 @@ vhost's `fastcgi_pass` at the correct port
 ## Port 3306 already in use
 
 Another MySQL/MariaDB (FlyEnv, XAMPP, etc.) holds the port and `mariadbd.exe`
-fails with `Bind on TCP/IP port ... 10048`. Stop that service, or set `port` in
-`mariadb\my.ini` to `3307` and update each app's DB config.
+fails with `Bind on TCP/IP port ... 10048`. Stop that service, or set
+`[mariadb] port = 3307` in `devcrate.toml` (`devcrate start` passes it to
+`mariadbd`, over whatever `my.ini` says; `start.bat` reads only `my.ini`, so
+change `port` there as well if you use it) and update each app's DB config.
 
 ## MariaDB: "data is empty -- MariaDB's system tables were never created"
 

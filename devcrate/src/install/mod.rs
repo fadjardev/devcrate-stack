@@ -404,7 +404,8 @@ fn mariadb_from_archive(
     mariadb::check(&staging, archive_path)?;
 
     progress(Progress::Configuring);
-    let configured = mariadb::configure(&staging)?;
+    let port = stack.by_kind(config::ServiceKind::MariaDb).and_then(|s| s.ports.first().copied()).unwrap_or(3306);
+    let configured = mariadb::configure(&staging, port)?;
 
     progress(Progress::Installing);
     let (replaced, kept) =

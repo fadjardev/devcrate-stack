@@ -47,20 +47,26 @@ pub fn check(dir: &Path, archive: &Path) -> Result<()> {
 }
 
 /// Generate default my.ini and ensure data directory exists.
-pub fn configure(dir: &Path) -> Result<Configured> {
+///
+/// `port` is the stack's (`[mariadb] port`, 3306 by default). `start` passes
+/// it to mariadbd as well, so the two cannot disagree; writing it here keeps
+/// the file honest for anything else that reads it.
+pub fn configure(dir: &Path, port: u16) -> Result<Configured> {
     let my_ini = dir.join("my.ini");
     let mut config_created = false;
 
     if !my_ini.is_file() {
-        let content = "\
+        let content = format!(
+            "\
 [mysqld]
-port=3306
+port={port}
 basedir=.
 datadir=./data
 bind-address=127.0.0.1
 default-storage-engine=InnoDB
 innodb_file_per_table=1
-";
+"
+        );
         let mut f = File::create(&my_ini)
             .with_context(|| format!("creating {}", my_ini.display()))?;
         f.write_all(content.as_bytes())?;
@@ -223,18 +229,18 @@ mod tests {
         let dir = unique_temp_dir("mariadb-configure");
         std::fs::create_dir_all(&dir).unwrap();
 
-        let first = configure(&dir).unwrap();
+        let first = configure(&dir, 3399).unwrap();
         assert!(first.config_created);
         assert!(first.data_dir_created);
         assert!(dir.join("my.ini").is_file());
         assert!(dir.join("data").is_dir());
 
         let content = std::fs::read_to_string(dir.join("my.ini")).unwrap();
-        assert!(content.contains("port=3306"));
+        assert!(content.contains("port=3399"), "the stack's port: {content}");
 
         // A hand-edited my.ini and an already-existing data dir are left alone.
         std::fs::write(dir.join("my.ini"), "[mysqld]\nport=3307\n").unwrap();
-        let second = configure(&dir).unwrap();
+        let second = configure(&dir, 3399).unwrap();
         assert!(!second.config_created);
         assert!(!second.data_dir_created);
         let unchanged = std::fs::read_to_string(dir.join("my.ini")).unwrap();
