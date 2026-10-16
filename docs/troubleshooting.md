@@ -4,8 +4,8 @@
 
 After `start.bat`, confirm:
 
-- [ ] `http://localhost` redirects to `https://localhost` (a 404 is fine - there
-      is no default vhost)
+- [ ] `http://localhost` answers 404 "devcrate: no site answers to this host" -
+      the default server in `nginx.conf`, which takes any host no vhost names
 - [ ] Each site loads over HTTPS with no certificate warning:
   - `https://hris.qhomedata.test`
   - `https://asm.qhomemart.test`

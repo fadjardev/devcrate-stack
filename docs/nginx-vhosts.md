@@ -4,6 +4,13 @@ Nginx serves every project over HTTPS on `:443` (with `:80` redirecting to
 HTTPS). The main config is `nginx\conf\nginx.conf`, which includes every
 per-project vhost from `conf\sites\*.conf`.
 
+`nginx.conf` also holds one server of its own: the `default_server` on `:80`,
+which answers any host no vhost names — `http://localhost` included — with a
+plain-text 404, "devcrate: no site answers to this host". It is also what
+gives a stack with no vhosts yet a port to listen on. There is no default on
+`:443`, which would need a certificate of its own; an unknown host over HTTPS
+still lands on the first vhost that listens there.
+
 ## Current sites
 
 | Host | Framework | PHP | Web root (under `projects\`) |

@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`http://localhost` and any host no vhost names get a 404 from devcrate.** `nginx.conf` now has a default server on port 80 that answers "devcrate: no site answers to this host". An unknown host used to fall through to whichever vhost loaded first, and a stack with no vhosts yet listened on nothing, so `start` reported nginx as never answering.
 - **MariaDB downloads come from `dlm.mariadb.com` and are sha256-verified.** They came from `archive.mariadb.org`, which was measured trickling at 13 KB/s — two hours for one zip — and were checked only against their length. The CDN serves the same files many times faster, and the `sha256sums.txt` MariaDB publishes in each release directory is now fetched and checked, the way Composer's sidecar is.
 
 ### Fixed
