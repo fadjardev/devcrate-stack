@@ -600,12 +600,26 @@ fn wait_for_port(service: &Service, grace: Duration) -> Started {
 fn launch(stack: &Stack, service: &Service) -> Result<()> {
     match service.kind {
         ServiceKind::MariaDb => {
+            let dir = ancestor(&service.install_marker, 2)?;
+            let data = dir.join("data");
+            // The zip ships no system tables, and an install before devcrate
+            // created them left an empty data\ that mariadbd exits on at once.
+            if std::fs::read_dir(&data).is_ok_and(|mut entries| entries.next().is_none()) {
+                return Err(anyhow!(
+                    "{} is empty -- MariaDB's system tables were never created.\n\
+                     Reinstall to create them, keeping my.ini: `devcrate install mariadb --force`.",
+                    stack.rel(&data)
+                ));
+            }
             let mut command = Command::new(&service.install_marker);
-            let defaults = ancestor(&service.install_marker, 2)?.join("my.ini");
+            let defaults = dir.join("my.ini");
             if defaults.is_file() {
                 command.arg(format!("--defaults-file={}", defaults.display()));
             }
-            background(&mut command)
+            // The my.ini devcrate writes says `basedir=.` and `datadir=./data`
+            // so the stack can move; those resolve against the working
+            // directory, which has to be MariaDB's own.
+            background(command.current_dir(&dir))
         }
 
         ServiceKind::Postgres => {

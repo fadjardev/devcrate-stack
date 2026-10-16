@@ -289,6 +289,9 @@ pub struct MariaDbInstalled {
     pub dir: String,
     pub config_created: bool,
     pub data_dir_created: bool,
+    /// `mariadb-install-db` created the system tables, as opposed to an
+    /// existing data directory being kept.
+    pub data_initialised: bool,
 }
 
 #[derive(Debug)]
@@ -406,6 +409,8 @@ fn mariadb_from_archive(
     progress(Progress::Installing);
     let (replaced, kept) =
         swap_keeping(stack, &stack.root, &staging, &dest, "mariadb", &["data", "my.ini"])?;
+    // After the swap, like PostgreSQL's initdb: a kept data\ is left alone.
+    let data_initialised = mariadb::initialise(&dest, |path| stack.rel(path))?;
 
     let receipt = Receipt {
         runtime: Runtime::MariaDb.as_str().to_string(),
@@ -430,6 +435,7 @@ fn mariadb_from_archive(
             dir: stack.rel(&dest),
             config_created: configured.config_created && !kept.iter().any(|k| k == "my.ini"),
             data_dir_created: configured.data_dir_created && !kept.iter().any(|k| k == "data"),
+            data_initialised,
         }),
     })
 }
@@ -3194,7 +3200,9 @@ fn print_mariadb_installed(done: &Installed, mariadb: &MariaDbInstalled, emit: &
     if mariadb.config_created {
         emit_line!(emit, "  my.ini generated with default settings");
     }
-    if mariadb.data_dir_created {
+    if mariadb.data_initialised {
+        emit_line!(emit, "  system tables created in {}\\data (mariadb-install-db); root has no password", mariadb.dir);
+    } else if mariadb.data_dir_created {
         emit_line!(emit, "  created data/ directory");
     }
     if done.replaced {

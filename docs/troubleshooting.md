@@ -109,6 +109,15 @@ Another MySQL/MariaDB (FlyEnv, XAMPP, etc.) holds the port and `mariadbd.exe`
 fails with `Bind on TCP/IP port ... 10048`. Stop that service, or set `port` in
 `mariadb\my.ini` to `3307` and update each app's DB config.
 
+## MariaDB: "data is empty -- MariaDB's system tables were never created"
+
+MariaDB's zip ships no data directory, and `mariadbd.exe` exits at once on an
+empty one. Installs made before devcrate ran `mariadb-install-db` left exactly
+that, so `start` refuses with this message rather than report a server that
+"exited immediately". `devcrate install mariadb <version> --force` keeps
+`my.ini` and the (empty) `data\` and creates the system tables in it; a
+`data\` that already holds a `mysql\` folder is never initialised over.
+
 ## Hosts entries keep disappearing
 
 If FlyEnv or a similar tool manages a `#X-HOSTS-BEGIN#` / `#X-HOSTS-END#` block

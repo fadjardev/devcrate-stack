@@ -3,6 +3,7 @@
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
+use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
 
@@ -80,6 +81,55 @@ innodb_file_per_table=1
     })
 }
 
+/// Create the system tables in `dest\data` if there are none, with the
+/// distribution's own `mariadb-install-db` -- MariaDB's `initdb`. The zip ships
+/// no data directory, and `mariadbd` exits at once on an empty one.
+///
+/// Idempotent by what the tool leaves behind: a `data\mysql` directory means a
+/// server has lived here, so it is kept and nothing runs. That is what lets
+/// `--force` replace the binaries and keep the databases. A `data\` holding
+/// other files but no `mysql\` is refused rather than initialised over.
+///
+/// `root@localhost` comes out with no password, which is what `devcrate db`
+/// and the Adminer login expect.
+pub fn initialise(dest: &Path, rel: impl Fn(&Path) -> String) -> Result<bool> {
+    let data = dest.join("data");
+    if data.join("mysql").is_dir() {
+        return Ok(false);
+    }
+    if std::fs::read_dir(&data).is_ok_and(|mut entries| entries.next().is_some()) {
+        bail!(
+            "{} holds files but no `mysql` system database; not initialising over it",
+            rel(&data)
+        );
+    }
+
+    let tool = ["mariadb-install-db.exe", "mysql_install_db.exe"]
+        .iter()
+        .map(|name| dest.join("bin").join(name))
+        .find(|path| path.is_file());
+    let Some(tool) = tool else {
+        bail!("{} has neither mariadb-install-db.exe nor mysql_install_db.exe", rel(&dest.join("bin")));
+    };
+
+    // Captured, never inherited: the dashboard can run this, and the
+    // terminal is the screen it drew.
+    let output = Command::new(&tool)
+        .arg(format!("--datadir={}", data.display()))
+        .stdin(Stdio::null())
+        .output()
+        .with_context(|| format!("running {}", rel(&tool)))?;
+    if !output.status.success() {
+        let detail = [output.stderr, output.stdout]
+            .iter()
+            .map(|stream| String::from_utf8_lossy(stream).trim().to_string())
+            .find(|text| !text.is_empty())
+            .unwrap_or_else(|| format!("exit code {}", output.status.code().unwrap_or(-1)));
+        bail!("mariadb-install-db failed: {}", detail.lines().last().unwrap_or(&detail));
+    }
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -133,6 +183,38 @@ mod tests {
         assert!(err.contains("not-mariadb.zip"));
         assert!(err.contains("bin/mariadbd.exe"));
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A data directory a server has lived in is kept, and nothing runs --
+    /// which is what lets `--force` replace the binaries under the databases.
+    #[test]
+    fn initialise_keeps_existing_system_tables() {
+        let dir = unique_temp_dir("mariadb-init-keep");
+        std::fs::create_dir_all(dir.join("data").join("mysql")).unwrap();
+        // No bin\ at all: had it tried to run the tool, this would fail.
+        assert!(!initialise(&dir, |p| p.display().to_string()).unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn initialise_refuses_a_data_directory_that_is_not_mariadbs() {
+        let dir = unique_temp_dir("mariadb-init-foreign");
+        std::fs::create_dir_all(dir.join("data")).unwrap();
+        std::fs::write(dir.join("data").join("notes.txt"), "mine").unwrap();
+        let err = initialise(&dir, |p| p.display().to_string()).unwrap_err().to_string();
+        assert!(err.contains("no `mysql` system database"), "{err}");
+        assert!(dir.join("data").join("notes.txt").is_file());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn initialise_names_the_missing_tool() {
+        let dir = unique_temp_dir("mariadb-init-notool");
+        std::fs::create_dir_all(dir.join("data")).unwrap();
+        std::fs::create_dir_all(dir.join("bin")).unwrap();
+        let err = initialise(&dir, |p| p.display().to_string()).unwrap_err().to_string();
+        assert!(err.contains("mariadb-install-db.exe"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

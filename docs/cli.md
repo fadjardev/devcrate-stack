@@ -124,7 +124,7 @@ visible rather than mysterious.
 | `devcrate install composer` (no version) | **works** — lists the lines getcomposer.org offers |
 | `devcrate install postgres <minor>` | **works** — downloads EDB's binaries zip (length/TLS), unpacks, runs `initdb` |
 | `devcrate install python <branch\|release>` | **works** — downloads the embeddable zip (length/TLS), enables site, bootstraps pip |
-| `devcrate install mariadb <version>` | **works** — downloads, unpacks, generates `my.ini` and `data\` |
+| `devcrate install mariadb <version>` | **works** — downloads, unpacks, generates `my.ini`, creates the system tables in `data\` with `mariadb-install-db` (`root` with no password); a kept `data\` is left alone |
 | `devcrate install rabbitmq <version>` | **works** — downloads, unpacks, enables the management plugin |
 | `devcrate install erlang <version>` | **works** — downloads, unpacks the RabbitMQ dependency |
 | `devcrate install redis <version>` | **works** — downloads from GitHub (length/TLS), unpacks, generates `devcrate.conf` and `data\` |
