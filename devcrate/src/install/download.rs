@@ -39,6 +39,14 @@
 //! makes a PECL DLL safe to install is matching the PHP build exactly, and PHP
 //! itself refuses one that does not; see [`crate::php_ext`].
 //!
+//! **WordPress** is the sixth, and the one with the weakest hash: its
+//! version-check API names the current release and the zip, and a `.sha1`
+//! sidecar sits beside each zip -- SHA-1, not sha256, because that (and MD5)
+//! is all WordPress publishes. The fetch itself is length-checked like
+//! nginx's, then the file is hashed with SHA-1 against the sidecar; the
+//! caller reports it as SHA-1, never as plain "verified". Not a runtime: it
+//! is what `devcrate new wordpress` unpacks into a project.
+//!
 //! Nothing here prints. The catalogues and the fetch return structured results
 //! and report progress through a callback, same as [`super::from_archive`],
 //! so the dashboard can drive them without touching stdout.
@@ -49,6 +57,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+use sha1::Sha1;
 use sha2::{Digest, Sha256};
 
 /// Where the PHP catalogue and archives live. windows.php.net answers with a
@@ -978,6 +987,99 @@ fn stream_to(
         );
     }
     Ok(got)
+}
+
+/// WordPress's version-check API: the current release, its zip, and the
+/// oldest PHP it supports.
+const WORDPRESS_VERSION_CHECK_URL: &str = "https://api.wordpress.org/core/version-check/1.7/";
+
+/// The current WordPress release, as the version-check API describes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WordPressRelease {
+    pub version: String,
+    /// The full zip: `https://downloads.wordpress.org/release/wordpress-7.1.3.zip`.
+    pub url: String,
+    /// The oldest PHP the release runs on: `7.4`.
+    pub min_php: String,
+}
+
+impl WordPressRelease {
+    /// No sha256 -- WordPress publishes none. [`wordpress_sha1`] is the check.
+    pub fn download(&self) -> Download {
+        Download {
+            url: self.url.clone(),
+            file_name: format!("wordpress-{}.zip", self.version),
+            sha256: None,
+        }
+    }
+}
+
+/// Read the first offer of a version-check response, which is the current
+/// release in the default locale.
+pub fn parse_wordpress_release(json_text: &str) -> Result<WordPressRelease> {
+    let json: serde_json::Value =
+        serde_json::from_str(json_text).context("the WordPress version-check response is not JSON")?;
+    let offer = json
+        .get("offers")
+        .and_then(|offers| offers.get(0))
+        .context("the WordPress version-check response has no offers")?;
+    let field = |name: &str| offer.get(name).and_then(|v| v.as_str()).map(str::to_string);
+    let version = field("version").context("the WordPress offer names no version")?;
+    let url = offer
+        .get("packages")
+        .and_then(|p| p.get("full"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .or_else(|| field("download"))
+        .context("the WordPress offer names no download")?;
+    if !url.starts_with("https://") || !url.ends_with(".zip") {
+        bail!("the WordPress offer's download is not an https zip: {url}");
+    }
+    Ok(WordPressRelease { version, url, min_php: field("php_version").unwrap_or_default() })
+}
+
+pub fn wordpress_release() -> Result<WordPressRelease> {
+    let url = WORDPRESS_VERSION_CHECK_URL;
+    let mut response =
+        agent().get(url).call().with_context(|| format!("fetching the WordPress release from {url}"))?;
+    let text = response
+        .body_mut()
+        .read_to_string()
+        .with_context(|| format!("reading the WordPress release from {url}"))?;
+    parse_wordpress_release(&text)
+}
+
+/// The SHA-1 WordPress publishes beside a zip, in `<zip url>.sha1`.
+pub fn wordpress_sha1(release: &WordPressRelease) -> Result<String> {
+    let url = format!("{}.sha1", release.url);
+    let mut response =
+        agent().get(&url).call().with_context(|| format!("fetching the WordPress checksum from {url}"))?;
+    let text = response
+        .body_mut()
+        .read_to_string()
+        .with_context(|| format!("reading the WordPress checksum from {url}"))?;
+    let hash = text.split_whitespace().next().unwrap_or("");
+    if hash.len() == 40 && hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        Ok(hash.to_ascii_lowercase())
+    } else {
+        bail!("the checksum sidecar at {url} is not a SHA-1: {text:?}")
+    }
+}
+
+/// Streaming SHA-1 of a file on disk, as lowercase hex. Only for what a vendor
+/// publishes nothing stronger for -- WordPress.
+pub fn sha1_of(path: &Path) -> Result<String> {
+    let mut file = File::open(path).with_context(|| format!("reading {}", path.display()))?;
+    let mut hasher = Sha1::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let n = file.read(&mut buffer)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buffer[..n]);
+    }
+    Ok(hex(&hasher.finalize()))
 }
 
 /// Streaming sha256 of a file on disk, as lowercase hex.

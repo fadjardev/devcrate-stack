@@ -145,6 +145,7 @@ dashboard never forces: replacing a DLL already there stays `php ext install
 | Key | Action |
 | --- | --- |
 | `n` | New vhost: a form for the hostname, project path (typed or picked with **Browse**), PHP version (or auto-detect), and whether to add the hosts entry and issue a certificate |
+| `N` | New Laravel or WordPress project: a form for the kind, the name, the PHP version, and the database |
 | `p` | Change the selected vhost's PHP version |
 | `o` | Open the site in the default browser |
 | `e` | Open the project folder in Explorer |
@@ -157,6 +158,15 @@ block and UAC prompt, the same mkcert issuance — see
 it rewrites the `fastcgi_pass` line and nothing else, so a hand-edited conf
 survives. `d` deletes only the conf — the project folder under `projects\` and
 the certificate are left alone, and the confirmation says so.
+
+`N` is `devcrate new` — see [cli.md](cli.md#devcrate-new). The form previews
+the host the name becomes and refuses, in place, a name that cannot be one;
+WordPress offers MariaDB alone. The hosts entry and the certificate are always
+on, as they are on the command line by default. Composer's and artisan's output
+cannot go to the screen, so it goes to `logs\new-<name>.log` in the stack root,
+which the Logs pane lists under `devcrate`; the footer names each step as it
+starts, and the result names what was not finished, with the command that
+finishes it.
 
 `d` also takes the host out of the devcrate hosts block, as `devcrate site
 remove` does — both call the same `site::delete`.

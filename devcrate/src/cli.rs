@@ -90,6 +90,30 @@ pub enum Command {
 
     /// Databases on the stack's MariaDB or PostgreSQL.
     Db(DbArgs),
+
+    /// Create a Laravel or WordPress project: the code, its vhost, its
+    /// database, and its .env / wp-config.php filled in.
+    New(NewArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct NewArgs {
+    /// laravel or wordpress.
+    pub kind: String,
+    /// Folder under projects\; the site is <name>.test. Letters, digits, - and . only.
+    pub name: String,
+    /// PHP version (8.5, 85, php-8.5); defaults to the one php\current names.
+    #[arg(long)]
+    pub php: Option<String>,
+    /// mariadb (default), postgres, or sqlite. WordPress takes mariadb only.
+    #[arg(long)]
+    pub db: Option<String>,
+    /// Do not add the hosts-file entry.
+    #[arg(long)]
+    pub no_hosts: bool,
+    /// Do not issue a certificate for the host.
+    #[arg(long)]
+    pub no_tls: bool,
 }
 
 #[derive(Debug, Args)]

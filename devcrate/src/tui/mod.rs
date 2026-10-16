@@ -483,6 +483,62 @@ mod tests {
         assert!(matches!(job, worker::Job::SiteRemove(host) if host == "myapp.test"));
     }
 
+    /// `N` opens the quick-create form: a name that cannot be a host is
+    /// refused in the form, and a good one becomes a `devcrate new` job with
+    /// the database chosen -- WordPress offering MariaDB alone.
+    #[test]
+    fn a_new_project_is_chosen_in_a_form() {
+        let mut app = App::new(stack());
+        app.tab = app::Tab::Sites;
+        assert!(draw(&app).contains("new project"), "the footer names N");
+
+        app.on_key(KeyEvent::from(KeyCode::Char('N')));
+        let form = draw(&app);
+        assert!(form.contains("New project") && form.contains("Laravel"), "{form}");
+        assert!(form.contains("MariaDB"), "MariaDB is the default: {form}");
+
+        app.on_key(KeyEvent::from(KeyCode::Tab));
+        for c in "my app".chars() {
+            app.on_key(KeyEvent::from(KeyCode::Char(c)));
+        }
+        assert!(app.on_key(KeyEvent::from(KeyCode::Enter)).is_none(), "refused");
+        assert!(draw(&app).contains("cannot be a hostname"));
+
+        app.on_key(KeyEvent::from(KeyCode::Backspace));
+        app.on_key(KeyEvent::from(KeyCode::Backspace));
+        app.on_key(KeyEvent::from(KeyCode::Backspace));
+        app.on_key(KeyEvent::from(KeyCode::Backspace));
+        app.on_key(KeyEvent::from(KeyCode::Char('-')));
+        app.on_key(KeyEvent::from(KeyCode::Char('b')));
+        assert!(draw(&app).contains("https://my-b.test"), "the host is previewed");
+
+        // Database: MariaDB -> PostgreSQL -> SQLite.
+        app.on_key(KeyEvent::from(KeyCode::Tab));
+        app.on_key(KeyEvent::from(KeyCode::Tab));
+        app.on_key(KeyEvent::from(KeyCode::Right));
+        app.on_key(KeyEvent::from(KeyCode::Right));
+        assert!(draw(&app).contains("SQLite"));
+
+        let job = app.on_key(KeyEvent::from(KeyCode::Enter)).expect("a job");
+        assert!(matches!(
+            job,
+            worker::Job::New { kind: crate::create::Kind::Laravel, ref name, php: None, database: crate::create::Database::Sqlite }
+                if name == "my-b"
+        ));
+        assert!(app.modal.is_none());
+
+        // WordPress has one database to offer, whatever was chosen before.
+        app.busy = None;
+        app.on_key(KeyEvent::from(KeyCode::Char('N')));
+        app.on_key(KeyEvent::from(KeyCode::Right));
+        for _ in 0..3 {
+            app.on_key(KeyEvent::from(KeyCode::Tab));
+        }
+        app.on_key(KeyEvent::from(KeyCode::Right));
+        let form = draw(&app);
+        assert!(form.contains("WordPress") && form.contains("MariaDB"), "{form}");
+    }
+
     /// `o`, `e`, and `c` name what to open and leave the spawning to the loop,
     /// with no job -- so they work while an install is running.
     #[test]

@@ -613,7 +613,7 @@ pub fn parent_domain(host: &str) -> &str {
 
 /// Default to whatever the CLI resolves to, so `site add myapp.test` picks the
 /// version already in use rather than guessing.
-fn default_php(stack: &Stack) -> Result<&crate::config::Service> {
+pub fn default_php(stack: &Stack) -> Result<&crate::config::Service> {
     let current = stack
         .current_php()
         .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()));

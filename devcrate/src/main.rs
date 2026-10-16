@@ -11,6 +11,7 @@ mod bun;
 mod cli;
 mod config;
 mod control;
+mod create;
 mod db;
 mod hosts;
 mod ini_block;
@@ -157,6 +158,19 @@ fn run(cli: Cli) -> Result<u8> {
         Command::Stop(args) => control::stop(&stack, args.service.as_deref()),
         Command::Restart(args) => control::restart(&stack, args.service.as_deref()),
         Command::Setup(args) => setup::print(&stack, !args.no_start),
+        Command::New(args) => {
+            let database = args.db.as_deref().map(create::Database::parse).transpose()?;
+            let request = create::Request {
+                kind: create::Kind::parse(&args.kind)?,
+                name: &args.name,
+                php: args.php.as_deref(),
+                database,
+                no_hosts: args.no_hosts,
+                no_tls: args.no_tls,
+                output: create::Output::Inherit,
+            };
+            create::print(&stack, &request)
+        }
         Command::Install(args) => install::install(
             &stack,
             &args.runtime,

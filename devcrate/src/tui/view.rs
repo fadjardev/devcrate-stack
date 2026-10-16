@@ -557,6 +557,7 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
         ],
         Tab::Sites => &[
             ("n", "new"),
+            ("N", "new project"),
             ("p", "PHP"),
             ("o", "browser"),
             ("e", "folder"),
@@ -713,6 +714,74 @@ fn render_modal(frame: &mut Frame, app: &App, modal: &Modal) {
             ]);
             popup(frame, "Create New Site (vhost)", text, 72, 12);
         }
+        Modal::NewProject(form) => {
+            let versions = app.php_versions();
+            let php_label = match form.php_index.checked_sub(1).and_then(|i| versions.get(i)) {
+                Some((_, name)) => name.clone(),
+                None => "php\\current".to_string(),
+            };
+            let style = |idx| match form.active_field == idx {
+                true => Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+                false => Style::new().fg(Color::Reset),
+            };
+            let label = |idx, text: &'static str| {
+                let marker = if form.active_field == idx { "› " } else { "  " };
+                Span::styled(format!("{marker}{text:<12}"), style(idx))
+            };
+            let choice = |idx, text: String| {
+                vec![
+                    Span::styled("‹ ", Style::new().fg(MUTED)),
+                    Span::styled(text, style(idx)),
+                    Span::styled(" ›", Style::new().fg(MUTED)),
+                ]
+            };
+            let host = crate::create::names(form.name.trim()).map(|(host, _)| host).unwrap_or_default();
+            let mut lines = vec![
+                Line::from([vec![label(0, "Kind")], choice(0, form.kind().label().to_string())].concat()),
+                Line::from(vec![
+                    label(1, "Name"),
+                    Span::styled(form.name.clone(), style(1)),
+                    if form.active_field == 1 {
+                        Span::styled("▏", Style::new().fg(ACCENT).add_modifier(Modifier::SLOW_BLINK))
+                    } else {
+                        Span::raw("")
+                    },
+                    Span::styled(
+                        if host.is_empty() { String::new() } else { format!("   https://{host}") },
+                        Style::new().fg(MUTED),
+                    ),
+                ]),
+                Line::from([vec![label(2, "PHP")], choice(2, php_label)].concat()),
+                Line::from([vec![label(3, "Database")], choice(3, form.database().label().to_string())].concat()),
+                Line::from(""),
+                Line::from(vec![
+                    Span::raw(" ".repeat(14)),
+                    if form.active_field == 4 {
+                        Span::styled("  Create Project  ", Style::new().bg(ACCENT).fg(Color::Black).bold())
+                    } else {
+                        Span::styled("  Create Project  ", Style::new().fg(ACCENT))
+                    },
+                ]),
+            ];
+            lines.push(match &form.error {
+                Some(error) => Line::from(Span::styled(error.clone(), Style::new().fg(BAD))),
+                None => Line::from(Span::styled(
+                    "Into projects\\<name>, never over a folder with content. Composer's output goes to logs\\.",
+                    Style::new().fg(MUTED),
+                )),
+            });
+            lines.push(Line::from(vec![
+                key("Tab ↑↓"),
+                Span::styled(" fields  ·  ", Style::new().fg(MUTED)),
+                key("← →"),
+                Span::styled(" choose  ·  ", Style::new().fg(MUTED)),
+                key("Enter"),
+                Span::styled(" create  ·  ", Style::new().fg(MUTED)),
+                key("Esc"),
+                Span::styled(" cancel", Style::new().fg(MUTED)),
+            ]));
+            popup(frame, "New project (devcrate new)", Text::from(lines), 80, 12);
+        }
         Modal::PhpPicker { purpose, index } => {
             let versions = app.php_versions();
             let title = match purpose {
@@ -834,6 +903,7 @@ fn help_text() -> Text<'static> {
         Line::from(""),
         section("Sites"),
         row("n", "new vhost"),
+        row("N", "new Laravel / WordPress project"),
         row("p", "change PHP version"),
         row("o / e / c", "open in the browser / Explorer / a terminal"),
         row("d", "delete the conf"),

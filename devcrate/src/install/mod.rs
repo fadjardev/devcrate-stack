@@ -35,6 +35,7 @@ mod postgres;
 mod python;
 mod rabbitmq;
 mod redis;
+pub mod wordpress;
 
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};

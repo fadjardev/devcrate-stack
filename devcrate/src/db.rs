@@ -224,6 +224,19 @@ fn output(command: &mut Command) -> Result<String> {
 // The core
 // ---------------------------------------------------------------------------
 
+/// The port the stack's server for `engine` listens on, as configured.
+pub fn port(stack: &Stack, engine: Engine) -> u16 {
+    stack.by_kind(engine.kind()).and_then(|service| service.ports.first().copied()).unwrap_or(match engine {
+        Engine::MariaDb => 3306,
+        Engine::Postgres => 5432,
+    })
+}
+
+/// The PostgreSQL superuser's password as the clients here send it.
+pub fn postgres_password_value() -> String {
+    std::env::var("PGPASSWORD").unwrap_or_else(|_| crate::install::postgres_default_password().to_string())
+}
+
 /// The databases on a server, its own system databases left out.
 pub fn list(stack: &Stack, engine: Engine) -> Result<Vec<String>> {
     Client::open(stack, engine)?.databases()

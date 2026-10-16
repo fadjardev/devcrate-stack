@@ -60,6 +60,8 @@ pub enum Modal {
     ExtPicker { php: String, php_name: String, index: usize, rows: Vec<ExtRow> },
     /// Type details for a new vhost.
     NewSite(NewSiteForm),
+    /// Choose what `devcrate new` makes.
+    NewProject(NewProjectForm),
     /// Confirm something that cannot be undone.
     Confirm { question: String, job: Job },
     /// The full output of the last job, when it was more than one line.
@@ -109,6 +111,41 @@ impl NewSiteForm {
             issue_tls: true,
             active_field: 0,
         }
+    }
+}
+
+/// `N` on the Sites tab: `devcrate new` as a form. Hosts entry and certificate
+/// are always on, as they are on the command line by default.
+#[derive(Debug, Clone, Default)]
+pub struct NewProjectForm {
+    pub wordpress: bool,
+    pub name: String,
+    /// 0 = whatever php\current names, 1.. = the PHP versions in order.
+    pub php_index: usize,
+    /// Into [`NewProjectForm::databases`].
+    pub db_index: usize,
+    /// 0 kind, 1 name, 2 PHP, 3 database, 4 the Create button.
+    pub active_field: usize,
+    /// Why the last Enter was refused, shown under the fields.
+    pub error: Option<String>,
+}
+
+impl NewProjectForm {
+    pub const FIELDS: usize = 5;
+
+    pub fn kind(&self) -> crate::create::Kind {
+        if self.wordpress { crate::create::Kind::WordPress } else { crate::create::Kind::Laravel }
+    }
+
+    /// WordPress runs on MariaDB alone.
+    pub fn databases(&self) -> &'static [crate::create::Database] {
+        use crate::create::Database;
+        if self.wordpress { &[Database::MariaDb] } else { &[Database::MariaDb, Database::Postgres, Database::Sqlite] }
+    }
+
+    pub fn database(&self) -> crate::create::Database {
+        let choices = self.databases();
+        choices[self.db_index.min(choices.len() - 1)]
     }
 }
 
@@ -606,6 +643,10 @@ impl App {
                 self.modal = Some(Modal::NewSite(NewSiteForm::new()));
                 None
             }
+            KeyCode::Char('N') => {
+                self.modal = Some(Modal::NewProject(NewProjectForm::default()));
+                None
+            }
             KeyCode::Char('p') => {
                 let host = self.selected_site()?.host.clone();
                 self.modal =
@@ -660,6 +701,59 @@ impl App {
 
     fn modal_key(&mut self, key: KeyEvent) -> Option<Job> {
         let versions = self.php_versions();
+        if let Some(Modal::NewProject(form)) = &mut self.modal {
+            let fields = NewProjectForm::FIELDS;
+            let cycle = |i: usize, len: usize, forward: bool| match forward {
+                true => (i + 1) % len.max(1),
+                false => (i + len.max(1) - 1) % len.max(1),
+            };
+            let mut job = None;
+            match key.code {
+                KeyCode::Esc => self.modal = None,
+                KeyCode::Tab | KeyCode::Down => form.active_field = cycle(form.active_field, fields, true),
+                KeyCode::BackTab | KeyCode::Up => form.active_field = cycle(form.active_field, fields, false),
+                KeyCode::Left | KeyCode::Right | KeyCode::Char(' ') if form.active_field != 1 => {
+                    let forward = key.code != KeyCode::Left;
+                    match form.active_field {
+                        0 => {
+                            form.wordpress = !form.wordpress;
+                            form.db_index = 0;
+                        }
+                        2 => form.php_index = cycle(form.php_index, versions.len() + 1, forward),
+                        3 => form.db_index = cycle(form.db_index, form.databases().len(), forward),
+                        _ => {}
+                    }
+                }
+                KeyCode::Enter => match crate::create::names(form.name.trim()) {
+                    Ok(_) => {
+                        job = Some(Job::New {
+                            kind: form.kind(),
+                            name: form.name.trim().to_string(),
+                            php: form.php_index.checked_sub(1).and_then(|i| versions.get(i)).map(|v| v.0.clone()),
+                            database: form.database(),
+                        });
+                    }
+                    Err(err) => {
+                        form.error = Some(format!("{err:#}"));
+                        form.active_field = 1;
+                    }
+                },
+                KeyCode::Backspace if form.active_field == 1 => {
+                    form.name.pop();
+                    form.error = None;
+                }
+                KeyCode::Char(c) if form.active_field == 1 => {
+                    form.name.push(c);
+                    form.error = None;
+                }
+                _ => {}
+            }
+            if let Some(job) = job {
+                self.modal = None;
+                return self.submit(job);
+            }
+            return None;
+        }
         if let Some(Modal::NewSite(form)) = &mut self.modal {
             match key.code {
                 KeyCode::Esc => self.modal = None,

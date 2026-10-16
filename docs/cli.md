@@ -116,6 +116,7 @@ visible rather than mysterious.
 | `devcrate site set-php <host> <version>` | **works** — repoints an existing vhost |
 | `devcrate site remove <host>` | **works** — removes the conf, keeps the project |
 | `devcrate site sync [--dry-run]` | **works** — auto-vhost: serves each folder under `projects\` that no vhost serves yet as `<folder>.test` |
+| `devcrate new laravel\|wordpress <name>` | **works** — code, vhost, database, and `.env` / `wp-config.php` in one step (see below) |
 | `devcrate setup [--no-start]` | **works** — installs nginx, PHP, MariaDB, Composer, and mkcert where missing, trusts mkcert's CA, starts the stack (see below) |
 | `devcrate install php <version>` | **works** — downloads, verifies sha256, installs |
 | `devcrate install php` (no version) | **works** — lists the versions windows.php.net offers |
@@ -691,6 +692,93 @@ Two things it deliberately will not do:
 The configuration is tested with `nginx -t` before the reload, as with
 `site add`. Changing the version does **not** start that version's FastCGI
 worker — the output says which one you need.
+
+### `devcrate new`
+
+```
+devcrate new laravel shop                  REM MariaDB database "shop", php\current
+devcrate new laravel api --db postgres --php 8.2
+devcrate new laravel spike --db sqlite     REM Laravel's own default; no server needed
+devcrate new wordpress blog                REM MariaDB only
+```
+
+```
+New Laravel project shop
+  ...      checking
+  ...      composer create-project laravel/laravel
+  (Composer's own output)
+  ...      moving into place
+  ...      creating the vhost
+  ...      creating the database
+  ...      writing the configuration
+  ...      running php artisan migrate
+  (artisan's own output)
+  fetched  Laravel Framework 13.36.0 with Composer, under PHP 8.5
+  created  projects\shop
+  vhost    https://shop.test -> projects\shop\public (PHP 8.5)
+           reloaded nginx
+  database MariaDB shop created
+  wrote    projects\shop\.env (APP_URL, DB_*)
+  migrated php artisan migrate
+Ready: https://shop.test
+```
+
+A working project in one step, Laragon's quick-create. The name is the folder
+under `projects\` and becomes `https://<name>.test`; the database is named
+after it with `-` and `.` turned into `_` (`my-shop` -> `my_shop`).
+
+**Preflight, before anything is written.** Each of these stops the command
+with nothing created:
+
+- a name that cannot be a hostname (a space, an underscore);
+- `projects\<name>` with anything in it — an empty folder is fine;
+- an existing `<name>.test.conf`;
+- the PHP (`--php`, else `php\current`) not loading an extension the project
+  needs — `openssl`, `mbstring`, plus `fileinfo` and the PDO driver for Laravel
+  or `mysqli` for WordPress — named with the `devcrate php ext enable ... --php
+  <version>` that fixes it;
+- for Laravel, no Composer (`devcrate install composer`); for WordPress, a PHP
+  older than the release supports;
+- the database server not answering — checked now, not after the download.
+
+**Then, in order:**
+
+1. **The code, into `projects\_new-<name>`.** Laravel is `composer
+   create-project laravel/laravel`, run with that same PHP (so Composer picks
+   the newest Laravel it supports) and with Composer's home and cache in
+   `composer\` unless `COMPOSER_HOME` / `COMPOSER_CACHE_DIR` say otherwise.
+   WordPress is the current release named by wordpress.org's version-check
+   API, cached in `_downloads\` as `wordpress-<version>.zip` and checked against
+   the `.sha1` WordPress publishes beside it — every time, the cached copy
+   included. That is SHA-1, because WordPress publishes nothing stronger, and
+   the output says SHA-1. The `_` prefix is what auto-vhost skips, so the
+   dashboard cannot serve a half-downloaded project; if this step fails the
+   staging folder is removed and nothing is left.
+2. **Renamed to `projects\<name>`**, and the vhost made at once, through the
+   same code as `site add`, with the PHP that ran Composer (not the minimum
+   `composer.json` would suggest). Nothing is written into the folder by the
+   vhost step — Laravel's `public\` is served, WordPress's folder itself.
+3. **The database** — `devcrate db create`, so utf8mb4 on MariaDB, and an
+   existing database is used as it is.
+4. **The configuration.** Laravel's `.env` gets `APP_URL=https://<host>` and,
+   on MariaDB or PostgreSQL, `DB_CONNECTION` (`mariadb`, or `mysql` for a
+   skeleton older than Laravel 11; `pgsql`), `DB_HOST`, `DB_PORT`,
+   `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD` — each replacing the line that
+   sets it, or the commented `# DB_HOST=` Laravel leaves, with everything else
+   untouched. WordPress gets `wp-config.php` from its own sample: the database
+   as `root` with no password at `127.0.0.1:<port>`, and every salt a fresh
+   random string made locally.
+5. **Laravel only, on a database server: `php artisan migrate --force`**, so
+   the session and cache tables the skeleton expects exist. With `--db sqlite`
+   the skeleton's own post-install migration has done it.
+
+From step 2 on, a failure does not undo the project — it is real work by then.
+The step is reported as `NOT DONE` with the command that finishes it, and the
+exit code is 1. `--no-hosts` and `--no-tls` are passed to the vhost step as in
+`site add`.
+
+`npm install` and the Vite dev server are not run: those are the dev-server
+half of roadmap item 9, not built yet.
 
 ### `devcrate setup`
 

@@ -99,6 +99,8 @@ pub enum Job {
     Setup,
     /// `devcrate site sync`: serve the folders no vhost serves yet.
     SiteSync,
+    /// `devcrate new`: a Laravel or WordPress project, start to finish.
+    New { kind: crate::create::Kind, name: String, php: Option<String>, database: crate::create::Database },
 }
 
 impl Job {
@@ -128,6 +130,7 @@ impl Job {
             Job::PhpExtInstall { php, ext } => format!("Downloading & installing {ext} for {php}"),
             Job::Setup => "Setting up the stack".to_string(),
             Job::SiteSync => "Serving new folders under projects".to_string(),
+            Job::New { kind, name, .. } => format!("Creating the {} project {name}", kind.label()),
         }
     }
 
@@ -598,6 +601,57 @@ fn run(stack: &Stack, job: Job, tx: &Sender<Event>) -> JobResult {
                     JobResult { label, lines, failed, sites_changed: false }
                 }
                 Err(err) => failure(label, err),
+            }
+        }
+
+        // Composer and artisan write to a log file, never to this screen; the
+        // steps go to the footer as they start.
+        Job::New { kind, name, php, database } => {
+            let log = crate::create::log_path(stack, &name);
+            let request = crate::create::Request {
+                kind,
+                name: &name,
+                php: php.as_deref(),
+                database: Some(database),
+                no_hosts: false,
+                no_tls: false,
+                output: crate::create::Output::Log(log.clone()),
+            };
+            let mut last = None::<std::time::Instant>;
+            let mut on_progress = |progress: crate::create::Progress| {
+                let text = match progress {
+                    crate::create::Progress::Step(step) => format!("{name}: {step}"),
+                    crate::create::Progress::Bytes(done, total) => {
+                        if last.is_some_and(|at| at.elapsed() < Duration::from_millis(100)) {
+                            return;
+                        }
+                        last = Some(std::time::Instant::now());
+                        let mb = |b: u64| b as f64 / 1_048_576.0;
+                        match total {
+                            Some(total) => format!("{name}: downloading {:.1} / {:.1} MB", mb(done), mb(total)),
+                            None => format!("{name}: downloading {:.1} MB", mb(done)),
+                        }
+                    }
+                };
+                let _ = tx.send(Event::Progress(text));
+            };
+            match crate::create::run(stack, &request, &mut on_progress) {
+                Ok(created) => {
+                    let failed = !created.unfinished.is_empty();
+                    let mut lines = created.lines;
+                    lines.extend(created.unfinished.iter().map(|line| format!("NOT DONE {line}")));
+                    if !failed {
+                        lines.push(format!("Ready: https://{}", created.host));
+                    }
+                    JobResult { label, lines, failed, sites_changed: true }
+                }
+                Err(err) => {
+                    let mut result = failure(label, err);
+                    if log.is_file() {
+                        result.lines.push(format!("log: {}", stack.rel(&log)));
+                    }
+                    result
+                }
             }
         }
 
