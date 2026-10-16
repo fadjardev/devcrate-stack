@@ -91,6 +91,10 @@ pub enum Command {
     /// Databases on the stack's MariaDB or PostgreSQL.
     Db(DbArgs),
 
+    /// Start the stack when you log on to Windows. Off unless switched on.
+    #[command(subcommand)]
+    Autostart(AutostartCommand),
+
     /// Create a Laravel or WordPress project: the code, its vhost, its
     /// database, and its .env / wp-config.php filled in.
     New(NewArgs),
@@ -204,6 +208,26 @@ pub struct SetupArgs {
     /// Install and trust, but do not start the stack.
     #[arg(long)]
     pub no_start: bool,
+    /// Do not make the Start Menu / Desktop shortcuts and Windows Terminal profile.
+    #[arg(long)]
+    pub no_shortcuts: bool,
+    /// Remove what setup and autostart wrote outside the stack root: the
+    /// shortcuts, the Windows Terminal profile, the autostart task.
+    #[arg(long, conflicts_with_all = ["no_start", "no_shortcuts"])]
+    pub undo: bool,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AutostartCommand {
+    /// Run `devcrate start` when this user logs on (a Task Scheduler task; no Administrator).
+    On,
+    /// Remove the logon task.
+    Off,
+    /// Whether it is on, and how its last run went.
+    Status,
+    /// What the logon task runs: start the stack with no console, into logs\autostart.log.
+    #[command(hide = true)]
+    Run,
 }
 
 #[derive(Debug, Subcommand)]

@@ -99,6 +99,8 @@ pub enum Job {
     Setup,
     /// `devcrate site sync`: serve the folders no vhost serves yet.
     SiteSync,
+    /// `devcrate autostart on` / `off`, whichever it is not.
+    AutostartToggle,
     /// `devcrate new`: a Laravel or WordPress project, start to finish.
     New { kind: crate::create::Kind, name: String, php: Option<String>, database: crate::create::Database },
 }
@@ -131,6 +133,7 @@ impl Job {
             Job::Setup => "Setting up the stack".to_string(),
             Job::SiteSync => "Serving new folders under projects".to_string(),
             Job::New { kind, name, .. } => format!("Creating the {} project {name}", kind.label()),
+            Job::AutostartToggle => "Switching autostart".to_string(),
         }
     }
 
@@ -604,6 +607,21 @@ fn run(stack: &Stack, job: Job, tx: &Sender<Event>) -> JobResult {
             }
         }
 
+        Job::AutostartToggle => {
+            let switched = crate::integration::autostart_status(stack).and_then(|state| match state {
+                crate::integration::Autostart::Off => crate::integration::autostart_on(stack).map(|_| {
+                    "autostart on: `devcrate start` runs at logon; logs\\autostart.log says what it did"
+                }),
+                crate::integration::Autostart::On { .. } => {
+                    crate::integration::autostart_off(stack).map(|_| "autostart off: the logon task is removed")
+                }
+            });
+            match switched {
+                Ok(line) => JobResult { label, lines: vec![line.to_string()], failed: false, sites_changed: false },
+                Err(err) => failure(label, err),
+            }
+        }
+
         // Composer and artisan write to a log file, never to this screen; the
         // steps go to the footer as they start.
         Job::New { kind, name, php, database } => {
@@ -685,7 +703,7 @@ fn run(stack: &Stack, job: Job, tx: &Sender<Event>) -> JobResult {
                     let _ = tx.send(Event::Progress(text.to_string()));
                 }
             };
-            match crate::setup::run(&root, true, &mut on_step, &mut on_progress) {
+            match crate::setup::run(&root, true, true, &mut on_step, &mut on_progress) {
                 Ok(_) => JobResult { label, lines, failed: false, sites_changed: false },
                 Err(err) => {
                     lines.push(format!("stopped at {err:#}"));

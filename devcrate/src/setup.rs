@@ -2,7 +2,9 @@
 //!
 //! nginx, the newest PHP, MariaDB, Composer, and mkcert, each through the
 //! installer `devcrate install` already uses; then mkcert's local CA trusted,
-//! `php\current` pointed at a PHP if nothing is, and the stack started.
+//! `php\current` pointed at a PHP if nothing is, the stack started, and
+//! shortcuts to the dashboard made -- the one step that writes outside the
+//! root, recorded so `setup --undo` can take it back (see [`crate::integration`]).
 //!
 //! Every step looks first and acts only on what is missing, so a stack that is
 //! already set up comes out of a second run unchanged -- the same steps report
@@ -47,6 +49,7 @@ const RUNTIMES: [(&str, &str); 4] =
 pub fn run(
     root: &StackRoot,
     start: bool,
+    shortcuts: bool,
     on_step: &mut dyn FnMut(&Step),
     on_progress: &mut dyn FnMut(&str),
 ) -> Result<Vec<Step>> {
@@ -165,6 +168,20 @@ pub fn run(
         };
         record(Step { name: "start", outcome }, &mut steps);
     }
+
+    // Last: the stack works without them, so a shell that refuses to make a
+    // shortcut stops nothing that matters.
+    if shortcuts {
+        let places = crate::integration::Places::of_user().map_err(|err| anyhow!("shortcuts: {err:#}"))?;
+        let made =
+            crate::integration::write_shortcuts(&stack, &places).map_err(|err| anyhow!("shortcuts: {err:#}"))?;
+        let names: Vec<String> = made.iter().map(|m| m.path.display().to_string()).collect();
+        let outcome = match made.iter().all(|m| m.existed) {
+            true => Outcome::Present(names.join(", ")),
+            false => Outcome::Done(names.join(", ")),
+        };
+        record(Step { name: "shortcuts", outcome }, &mut steps);
+    }
     Ok(steps)
 }
 
@@ -228,7 +245,7 @@ pub fn describe(step: &Step) -> String {
 }
 
 /// `devcrate setup`.
-pub fn print(stack: &Stack, start: bool) -> Result<u8> {
+pub fn print(stack: &Stack, start: bool, shortcuts: bool) -> Result<u8> {
     let root = StackRoot { path: stack.root.clone(), source: stack.root_source };
     println!("Setting up the stack in {}", stack.root.display());
     let mut on_step = |step: &Step| println!("  {}", describe(step));
@@ -239,7 +256,7 @@ pub fn print(stack: &Stack, start: bool) -> Result<u8> {
             println!("            {text}");
         }
     };
-    match run(&root, start, &mut on_step, &mut on_progress) {
+    match run(&root, start, shortcuts, &mut on_step, &mut on_progress) {
         Ok(steps) => {
             if steps.iter().all(|s| matches!(s.outcome, Outcome::Present(_))) {
                 println!("Nothing to do: the stack was already set up.");
@@ -274,7 +291,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("php")).unwrap();
         let stack_root = StackRoot { path: root.clone(), source: crate::root::RootSource::Flag };
-        let err = run(&stack_root, false, &mut |_| {}, &mut |_| {}).err().expect("refused");
+        let err = run(&stack_root, false, false, &mut |_| {}, &mut |_| {}).err().expect("refused");
         assert!(err.to_string().contains("nginx.conf is missing"), "{err}");
         assert!(!root.join("_downloads").exists(), "nothing downloaded");
         let _ = std::fs::remove_dir_all(&root);

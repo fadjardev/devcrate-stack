@@ -900,6 +900,7 @@ fn help_text() -> Text<'static> {
         row("U", "uninstall one (never forces, never deletes data)"),
         row("u", "repoint php\\current (the CLI version)"),
         row("e", "a PHP version's extensions, Xdebug too"),
+        row("A", "autostart on / off (devcrate start at logon)"),
         Line::from(""),
         section("Sites"),
         row("n", "new vhost"),

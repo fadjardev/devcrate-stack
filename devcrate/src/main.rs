@@ -14,6 +14,7 @@ mod control;
 mod create;
 mod db;
 mod hosts;
+mod integration;
 mod ini_block;
 mod install;
 mod junction;
@@ -157,7 +158,12 @@ fn run(cli: Cli) -> Result<u8> {
         Command::Start(args) => control::start(&stack, args.service.as_deref()),
         Command::Stop(args) => control::stop(&stack, args.service.as_deref()),
         Command::Restart(args) => control::restart(&stack, args.service.as_deref()),
-        Command::Setup(args) => setup::print(&stack, !args.no_start),
+        Command::Setup(args) if args.undo => integration::print_undo(&stack),
+        Command::Setup(args) => setup::print(&stack, !args.no_start, !args.no_shortcuts),
+        Command::Autostart(cli::AutostartCommand::On) => integration::print_autostart(&stack, "on"),
+        Command::Autostart(cli::AutostartCommand::Off) => integration::print_autostart(&stack, "off"),
+        Command::Autostart(cli::AutostartCommand::Status) => integration::print_autostart(&stack, "status"),
+        Command::Autostart(cli::AutostartCommand::Run) => integration::run_at_logon(&stack),
         Command::New(args) => {
             let database = args.db.as_deref().map(create::Database::parse).transpose()?;
             let request = create::Request {

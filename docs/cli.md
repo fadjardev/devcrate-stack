@@ -117,7 +117,9 @@ visible rather than mysterious.
 | `devcrate site remove <host>` | **works** — removes the conf, keeps the project |
 | `devcrate site sync [--dry-run]` | **works** — auto-vhost: serves each folder under `projects\` that no vhost serves yet as `<folder>.test` |
 | `devcrate new laravel\|wordpress <name>` | **works** — code, vhost, database, and `.env` / `wp-config.php` in one step (see below) |
-| `devcrate setup [--no-start]` | **works** — installs nginx, PHP, MariaDB, Composer, and mkcert where missing, trusts mkcert's CA, starts the stack (see below) |
+| `devcrate setup [--no-start] [--no-shortcuts]` | **works** — installs nginx, PHP, MariaDB, Composer, and mkcert where missing, trusts mkcert's CA, starts the stack, makes shortcuts to the dashboard (see below) |
+| `devcrate setup --undo` | **works** — removes the shortcuts, the Windows Terminal profile, and the autostart task, nothing else |
+| `devcrate autostart on\|off\|status` | **works** — `devcrate start` at logon, through Task Scheduler, no Administrator; off by default |
 | `devcrate install php <version>` | **works** — downloads, verifies sha256, installs |
 | `devcrate install php` (no version) | **works** — lists the versions windows.php.net offers |
 | `devcrate install nginx <version>` | **works** — downloads and installs a build into the prefix |
@@ -783,8 +785,10 @@ half of roadmap item 9, not built yet.
 ### `devcrate setup`
 
 ```
-devcrate setup              REM a working stack, started
-devcrate setup --no-start   REM the same, left stopped
+devcrate setup                 REM a working stack, started, with shortcuts
+devcrate setup --no-start      REM the same, left stopped
+devcrate setup --no-shortcuts  REM nothing written outside the stack root
+devcrate setup --undo          REM take back what was written outside it
 ```
 
 ```
@@ -797,6 +801,7 @@ Setting up the stack in C:\devcrate
   mkcert    mkcert 1.4.4 placed at mkcert.exe (length-checked over TLS; the release publishes no checksum)
   local CA  already there: mkcert's CA, trusted by this user
   start     3 started, 3 up
+  shortcuts C:\Users\you\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Devcrate.lnk, C:\Users\you\Desktop\Devcrate.lnk, C:\Users\you\AppData\Local\Microsoft\Windows Terminal\Fragments\Devcrate\C-devcrate.json
 Ready. `devcrate` opens the dashboard; `devcrate site add myapp.test` serves a project.
 ```
 
@@ -822,10 +827,65 @@ and that `php.ini` kept as it is, rather than refused as already installed.
 mkcert's GitHub releases carry no checksum, so its download is length-checked
 over TLS, the same as nginx's, and the line says so.
 
+**Shortcuts — the one step that writes outside the stack root.** Last, after
+the stack is up, `setup` makes a shortcut to the dashboard in the Start Menu
+and on the Desktop (wherever Windows says the Desktop is — often OneDrive), and,
+where Windows Terminal is installed, a Windows Terminal profile. The profile is
+a *fragment* in `%LOCALAPPDATA%\Microsoft\Windows Terminal\Fragments\Devcrate\`,
+the documented way for an app to add one; your own `settings.json` is not
+touched. All three run the stack root's `devcrate.exe` with `--root`. They are
+named `Devcrate`, or `Devcrate (<folder>)` when the root folder is called
+something else, so two stack roots get two sets. A second `setup` rewrites
+them — which also repoints them at a root that has moved — and reports them as
+already there. `--no-shortcuts` skips the step.
+
+Everything written outside the root, the autostart task included, is recorded
+in the root's `devcrate-setup.json`, and **`setup --undo`** removes exactly what
+that lists — never another root's shortcuts — then the receipt itself:
+
+```
+  removed  C:\Users\you\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Devcrate.lnk
+  removed  C:\Users\you\Desktop\Devcrate.lnk
+  removed  C:\Users\you\AppData\Local\Microsoft\Windows Terminal\Fragments\Devcrate\C-devcrate.json
+  removed  the autostart task \Devcrate\Start C-devcrate
+Nothing outside C:\devcrate is devcrate's any more. The stack itself is untouched.
+```
+
+It leaves the stack alone: nothing installed is removed, nothing is stopped,
+and mkcert's CA stays trusted. A shortcut already deleted by hand is reported
+as gone.
+
 MariaDB's `latest` is the newest release this build of devcrate knows — its
 list is built in, not fetched (11.4.5 today) — whatever a stack set up earlier
 may be running. Its zip comes from MariaDB's download CDN, `dlm.mariadb.com`,
 and is verified against the `sha256sums.txt` MariaDB publishes beside it.
+
+### `devcrate autostart`
+
+```
+devcrate autostart on       REM devcrate start whenever you log on
+devcrate autostart status   REM on or off, and how the last run went
+devcrate autostart off
+```
+
+```
+autostart on (\Devcrate\Start C-devcrate); last ran 2026-10-16 09:02, all started
+```
+
+Off unless switched on. `on` registers a Task Scheduler task,
+`\Devcrate\Start <root>`, that runs at logon for your user only, with your
+ordinary rights — no Administrator, no stored password — and also on battery.
+It runs `devcrate --root <root> autostart run`, which lets go of its console
+straight away (a console window may flash for an instant), starts the stack
+like `devcrate start`, and writes what each service did to
+`logs\autostart.log` in the stack root — the only place to see it, and listed
+in the dashboard's Logs pane. `status` reads the task's last run time and exit
+code: 1 means at least one service did not start.
+
+`on` again rewrites the task, which repoints it at a root that has moved. `off`
+removes it, and the `\Devcrate\` task folder once nothing else is in it.
+`setup --undo` removes it too. In the dashboard, `A` on the Services pane
+switches it.
 
 ### `devcrate install`
 

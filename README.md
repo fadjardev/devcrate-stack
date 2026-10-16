@@ -31,8 +31,10 @@ to XAMPP / Laragon / FlyEnv.
    double-click it). On a stack with nothing installed it opens on a first-run
    screen; `s` runs `devcrate setup` — nginx, the newest PHP, MariaDB, Composer,
    and mkcert downloaded and installed into the folder, mkcert's CA trusted
-   (Windows asks you to confirm that once), and the stack started. From a
-   terminal, `devcrate setup` does the same.
+   (Windows asks you to confirm that once), the stack started, and shortcuts
+   to the dashboard made in the Start Menu, on the Desktop, and in Windows
+   Terminal (`devcrate setup --undo` removes them). From a terminal,
+   `devcrate setup` does the same.
 
 `devcrate.exe` is not put on `PATH`; add the stack root to it to type `devcrate`
 from anywhere. Adding a site (`devcrate site add`, `devcrate new`, or auto-vhost)

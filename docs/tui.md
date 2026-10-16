@@ -84,6 +84,7 @@ a rescan rather than waiting for the next one.
 | `i` | Open the **Install Service / Runtime** picker — see [Installing and removing](#installing-and-removing) |
 | `U` | Open the **Uninstall** picker: everything installed, removed after a confirmation |
 | `u` | Repoint `php\current` — the CLI PHP version |
+| `A` | Autostart on / off: `devcrate start` at logon (`devcrate autostart`) |
 | `e` | On a PHP row: that version's **extensions**, switched on and off with `Enter` or `Space` |
 
 Start and stop go through the same order, the same graceful commands, and the

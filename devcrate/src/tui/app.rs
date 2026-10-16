@@ -585,6 +585,7 @@ impl App {
             KeyCode::Char('S') => self.submit(Job::Start(None)),
             KeyCode::Char('X') => self.submit(Job::Stop(None)),
             KeyCode::Char('T') => self.submit(Job::Restart(None)),
+            KeyCode::Char('A') => self.submit(Job::AutostartToggle),
             KeyCode::Char('u') => {
                 self.modal = Some(Modal::PhpPicker { purpose: PhpPurpose::Cli, index: 0 });
                 None

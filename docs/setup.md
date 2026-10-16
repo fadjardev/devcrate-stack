@@ -31,8 +31,10 @@ detail for each step lives in [installation.md](installation.md).
    double-click it). On a stack with nothing installed it opens on a first-run
    screen; `s` runs `devcrate setup` — nginx, the newest PHP, MariaDB, Composer,
    and mkcert downloaded and installed into the folder, mkcert's CA trusted
-   (Windows asks you to confirm that once), and the stack started. From a
-   terminal, `devcrate setup` does the same.
+   (Windows asks you to confirm that once), the stack started, and shortcuts
+   to the dashboard made in the Start Menu, on the Desktop, and in Windows
+   Terminal (`devcrate setup --undo` removes them). From a terminal,
+   `devcrate setup` does the same.
 
 That is the whole of it; the numbered steps below are the manual route from a
 clone, and what each of `setup`'s steps does by hand.
