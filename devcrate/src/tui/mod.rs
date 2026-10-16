@@ -474,6 +474,7 @@ mod tests {
             host: "myapp.test".into(),
             root: Some("projects/myapp.test/public".into()),
             fastcgi_port: Some(9085),
+            proxy_port: None,
             tls: true,
         }];
 
@@ -574,12 +575,14 @@ mod tests {
                 host: "myapp.test".into(),
                 root: Some("projects/myapp/public".into()),
                 fastcgi_port: Some(9085),
+                proxy_port: None,
                 tls: true,
             },
             crate::site::Site {
                 host: "shop.test".into(),
                 root: Some("projects/shop".into()),
                 fastcgi_port: Some(9085),
+                proxy_port: None,
                 tls: true,
             },
         ];
@@ -620,6 +623,7 @@ mod tests {
             host: host.into(),
             root: Some(format!("projects/{host}")),
             fastcgi_port: Some(9085),
+            proxy_port: None,
             tls: true,
         };
         app.sites = vec![site("myapp.test"), site("old.test"), site("moved.test")];
@@ -632,6 +636,40 @@ mod tests {
         assert!(matches!(job, worker::Job::CertRenew(ref host) if host == "myapp.test"));
     }
 
+    /// A proxy vhost shows where it forwards in the PHP column, and the New
+    /// Site form takes a port -- digits only -- that makes the site a proxy.
+    #[test]
+    fn a_proxy_site_is_shown_and_made_from_the_form() {
+        let mut app = App::new(stack());
+        app.on_status(report(State::Up, State::Up));
+        app.tab = app::Tab::Sites;
+        app.sites = vec![crate::site::Site {
+            host: "api.test".into(),
+            root: Some("projects/api".into()),
+            fastcgi_port: None,
+            proxy_port: Some(3000),
+            tls: true,
+        }];
+        let screen = draw(&app);
+        assert!(screen.contains("→ :3000"), "{screen}");
+        assert!(!screen.contains("no fastcgi_pass"), "{screen}");
+
+        app.on_key(KeyEvent::from(KeyCode::Char('n')));
+        for c in "front.test".chars() {
+            app.on_key(KeyEvent::from(KeyCode::Char(c)));
+        }
+        for _ in 0..4 {
+            app.on_key(KeyEvent::from(KeyCode::Tab));
+        }
+        for c in "51x73".chars() {
+            app.on_key(KeyEvent::from(KeyCode::Char(c)));
+        }
+        let form = draw(&app);
+        assert!(form.contains("localhost:5173"), "letters are not taken: {form}");
+        let job = app.on_key(KeyEvent::from(KeyCode::Enter)).expect("a job");
+        assert!(matches!(job, worker::Job::SiteAdd { ref host, proxy: Some(5173), .. } if host == "front.test"));
+    }
+
     /// `o`, `e`, and `c` name what to open and leave the spawning to the loop,
     /// with no job -- so they work while an install is running.
     #[test]
@@ -642,6 +680,7 @@ mod tests {
             host: "myapp.test".into(),
             root: Some("projects/myapp.test/public".into()),
             fastcgi_port: Some(9085),
+            proxy_port: None,
             tls: true,
         }];
         app.busy = Some("Downloading & installing php 8.4".into());

@@ -21,6 +21,9 @@ pub struct Site {
     pub root: Option<String>,
     /// Port from `fastcgi_pass 127.0.0.1:<port>`.
     pub fastcgi_port: Option<u16>,
+    /// Port from `proxy_pass http://127.0.0.1:<port>`: a vhost that forwards
+    /// to another server (a Node app, a dev server) instead of running PHP.
+    pub proxy_port: Option<u16>,
     /// A `listen` on 443 or with `ssl` -- every generated conf has one; a
     /// hand-written one may not.
     pub tls: bool,
@@ -36,6 +39,7 @@ impl Site {
 
         let mut root = None;
         let mut fastcgi_port = None;
+        let mut proxy_port = None;
         let mut tls = false;
 
         for line in text.lines() {
@@ -58,6 +62,17 @@ impl Site {
                     .next()
                     .and_then(|p| p.trim().parse().ok());
             }
+            if proxy_port.is_none()
+                && let Some(rest) = line.strip_prefix("proxy_pass ")
+            {
+                proxy_port = rest
+                    .trim()
+                    .trim_end_matches(';')
+                    .trim_end_matches('/')
+                    .rsplit(':')
+                    .next()
+                    .and_then(|p| p.trim().parse().ok());
+            }
             if let Some(rest) = line.strip_prefix("listen ") {
                 tls |= rest
                     .trim_end_matches(';')
@@ -66,7 +81,7 @@ impl Site {
             }
         }
 
-        Site { host, root, fastcgi_port, tls }
+        Site { host, root, fastcgi_port, proxy_port, tls }
     }
 
     /// Where a browser should be sent for this vhost.
@@ -159,23 +174,6 @@ pub fn detect_composer_php(project_dir: &Path) -> Option<String> {
     }
 }
 
-/// Create a vhost: web root, conf, junction, reload.
-pub fn create(
-    stack: &Stack,
-    host: &str,
-    project_path: Option<&Path>,
-    want_php: Option<&str>,
-    no_hosts: bool,
-    no_tls: bool,
-    force: bool,
-) -> Result<Created> {
-    create_with(
-        stack,
-        host,
-        &Request { project_path, want_php, no_hosts, no_tls, force, untouched: false },
-    )
-}
-
 /// What [`create_with`] is asked for beyond the hostname.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Request<'a> {
@@ -188,6 +186,9 @@ pub struct Request<'a> {
     /// no placeholder `index.php`. Auto-vhost serves folders someone already
     /// put work in, and writing into them is not its business.
     pub untouched: bool,
+    /// Forward to `127.0.0.1:<port>` instead of running PHP. Nothing is
+    /// written into the project folder, which need not exist.
+    pub proxy: Option<u16>,
 }
 
 /// The folder directly under `projects\` that `path` names, if it is one --
@@ -205,7 +206,8 @@ fn folder_in_projects(stack: &Stack, path: &Path) -> Option<String> {
 }
 
 pub fn create_with(stack: &Stack, host: &str, request: &Request) -> Result<Created> {
-    let Request { project_path, want_php, no_hosts, no_tls, force, untouched } = *request;
+    let Request { project_path, want_php, no_hosts, no_tls, force, untouched, proxy } = *request;
+    let untouched = untouched || proxy.is_some();
     let host = check_host(host)?;
 
     // Checked before anything is created: a path that does not resolve would
@@ -236,19 +238,26 @@ pub fn create_with(stack: &Stack, host: &str, request: &Request) -> Result<Creat
         (stack.root.join("projects").join(host), host.to_string(), true)
     };
 
-    let php_hint = want_php
-        .map(|s| s.to_string())
-        .or_else(|| detect_composer_php(&project_dir));
-
-    let service = match php_hint {
-        Some(wanted) => php::find(stack, &wanted)?,
-        None => default_php(stack)?,
+    // A proxy needs no PHP; anything else is served by one.
+    let service = match proxy {
+        Some(_) => None,
+        None => {
+            let php_hint = want_php.map(|s| s.to_string()).or_else(|| detect_composer_php(&project_dir));
+            Some(match php_hint {
+                Some(wanted) => php::find(stack, &wanted)?,
+                None => default_php(stack)?,
+            })
+        }
     };
-    let port = service
-        .ports
-        .first()
-        .copied()
-        .ok_or_else(|| anyhow!("{} has no FastCGI port configured", service.id))?;
+    let port = match (&service, proxy) {
+        (_, Some(port)) => port,
+        (Some(service), None) => service
+            .ports
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow!("{} has no FastCGI port configured", service.id))?,
+        (None, None) => unreachable!("no PHP is chosen only for a proxy"),
+    };
 
     let conf = stack.sites_dir().join(format!("{host}.conf"));
     if conf.exists() && !force {
@@ -307,17 +316,22 @@ pub fn create_with(stack: &Stack, host: &str, request: &Request) -> Result<Creat
     let sites_dir = stack.sites_dir();
     std::fs::create_dir_all(&sites_dir)
         .with_context(|| format!("creating {}", sites_dir.display()))?;
-    std::fs::write(
-        &conf,
-        conf_text_custom(host, &service.name, &service.id, port, &root_rel, &cert_name),
-    )
-    .with_context(|| format!("writing {}", conf.display()))?;
+    let text = match &service {
+        Some(service) => conf_text_custom(host, &service.name, &service.id, port, &root_rel, &cert_name),
+        // A proxy keeps a root only when there is a folder for it to name --
+        // the dashboard opens it, and a dev server runs in it.
+        None => proxy_conf_text(host, port, target_projects_dir.is_dir().then_some(root_rel.as_str()), &cert_name),
+    };
+    std::fs::write(&conf, text).with_context(|| format!("writing {}", conf.display()))?;
 
     control::ensure_projects_junction(stack)?;
 
     Ok(Created {
         host: host.to_string(),
-        php_name: service.name.clone(),
+        php_name: match &service {
+            Some(service) => service.name.clone(),
+            None => format!("proxy to localhost:{port}"),
+        },
         port,
         conf: stack.rel(&conf),
         public: stack.rel(&public),
@@ -329,16 +343,10 @@ pub fn create_with(stack: &Stack, host: &str, request: &Request) -> Result<Creat
     })
 }
 
-pub fn add(
-    stack: &Stack,
-    host: &str,
-    project_path: Option<&Path>,
-    want_php: Option<&str>,
-    no_hosts: bool,
-    no_tls: bool,
-    force: bool,
-) -> Result<u8> {
-    let made = create(stack, host, project_path, want_php, no_hosts, no_tls, force)?;
+/// `devcrate site add`: [`create_with`], printed.
+pub fn add(stack: &Stack, host: &str, request: &Request) -> Result<u8> {
+    let proxy = request.proxy;
+    let made = create_with(stack, host, request)?;
 
     let verb = if made.public_existed { "exists  " } else { "created " };
     println!("  {verb} {}", made.public);
@@ -359,7 +367,10 @@ pub fn add(
     println!("  {}", made.reload.note());
 
     println!();
-    println!("https://{} -> {} (fastcgi {})", made.host, made.php_name, made.port);
+    match proxy {
+        Some(_) => println!("https://{} -> {}", made.host, made.php_name),
+        None => println!("https://{} -> {} (fastcgi {})", made.host, made.php_name, made.port),
+    }
     println!("  SSL cert: {}", made.cert_name);
     Ok(exit::OK)
 }
@@ -385,6 +396,9 @@ pub struct Repointed {
     pub reload: Reload,
     /// True when the vhost already pointed there and nothing was written.
     pub unchanged: bool,
+    /// Set when the vhost was a proxy and its conf was written anew: where
+    /// the old one was kept.
+    pub backup: Option<String>,
 }
 
 pub fn repoint_site(stack: &Stack, host: &str, wanted: &str) -> Result<Repointed> {
@@ -404,7 +418,12 @@ pub fn repoint_site(stack: &Stack, host: &str, wanted: &str) -> Result<Repointed
         .copied()
         .ok_or_else(|| anyhow!("{} has no FastCGI port configured", service.id))?;
 
-    let was = Site::read(&conf).fastcgi_port;
+    let site = Site::read(&conf);
+    if site.proxy_port.is_some() {
+        return proxy_to_php(stack, host, &conf, &site, service, port);
+    }
+
+    let was = site.fastcgi_port;
     let mut done = Repointed {
         host: host.to_string(),
         php_name: service.name.clone(),
@@ -414,6 +433,7 @@ pub fn repoint_site(stack: &Stack, host: &str, wanted: &str) -> Result<Repointed
         conf: stack.rel(&conf),
         reload: Reload::NginxNotRunning,
         unchanged: was == Some(port),
+        backup: None,
     };
     if done.unchanged {
         return Ok(done);
@@ -434,6 +454,107 @@ pub fn repoint_site(stack: &Stack, host: &str, wanted: &str) -> Result<Repointed
     Ok(done)
 }
 
+/// A vhost turned from PHP into a proxy, or the other way.
+#[derive(Debug)]
+pub struct Converted {
+    pub host: String,
+    pub conf: String,
+    /// Where the old conf was kept: `<host>.conf.bak`.
+    pub backup: String,
+    pub reload: Reload,
+}
+
+/// Write a whole conf anew -- turning PHP into a proxy or back changes its
+/// location blocks, so there is no one line to swap -- keeping the old one as
+/// `<host>.conf.bak` (which `include sites/*.conf` does not read), and putting
+/// it back when nginx refuses the new one.
+fn rewrite_conf(stack: &Stack, conf: &Path, text: &str) -> Result<(String, Reload)> {
+    let backup = conf.with_extension("conf.bak");
+    std::fs::copy(conf, &backup).with_context(|| format!("keeping {}", backup.display()))?;
+    std::fs::write(conf, text).with_context(|| format!("writing {}", conf.display()))?;
+    let reload = Reload::of(stack);
+    if let Reload::Failed(why) = &reload {
+        std::fs::copy(&backup, conf).with_context(|| format!("restoring {}", conf.display()))?;
+        let _ = Reload::of(stack);
+        return Err(anyhow!("nginx refused the new {}: {why}\nThe old conf is back in place.", stack.rel(conf)));
+    }
+    Ok((stack.rel(&backup), reload))
+}
+
+/// The certificate file a conf names, by its name in `certs\`.
+fn cert_name_of(text: &str) -> String {
+    crate::cert::ssl_files(text)
+        .0
+        .and_then(|cert| Path::new(&cert).file_name().map(|n| n.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| "_wildcard.test.pem".to_string())
+}
+
+/// `devcrate site set-proxy`: make a vhost forward to `127.0.0.1:<port>`. Its
+/// root, certificate, and logs carry over.
+pub fn set_proxy(stack: &Stack, host: &str, port: u16) -> Result<Option<Converted>> {
+    let host = check_host(host)?;
+    let conf = stack.sites_dir().join(format!("{host}.conf"));
+    if !conf.is_file() {
+        return Err(anyhow!("{} does not exist; `devcrate site add {host} --proxy {port}` creates it", stack.rel(&conf)));
+    }
+    let site = Site::read(&conf);
+    if site.proxy_port == Some(port) {
+        return Ok(None);
+    }
+    let text = std::fs::read_to_string(&conf).with_context(|| format!("reading {}", conf.display()))?;
+    let root = site.root.as_deref().map(|r| r.trim_matches('"'));
+    let new = proxy_conf_text(host, port, root, &cert_name_of(&text));
+    let (backup, reload) = rewrite_conf(stack, &conf, &new)?;
+    Ok(Some(Converted { host: host.to_string(), conf: stack.rel(&conf), backup, reload }))
+}
+
+/// A proxy vhost back to PHP, through `set-php` or the dashboard's `p`.
+fn proxy_to_php(
+    stack: &Stack,
+    host: &str,
+    conf: &Path,
+    site: &Site,
+    service: &crate::config::Service,
+    port: u16,
+) -> Result<Repointed> {
+    let root = site.root.as_deref().map(|r| r.trim_matches('"')).ok_or_else(|| {
+        anyhow!(
+            "{} is a proxy with no root, and PHP needs a folder to serve. \
+             Remove it and add it with one: `devcrate site add {host} --path <folder>`.",
+            stack.rel(conf)
+        )
+    })?;
+    let text = std::fs::read_to_string(conf).with_context(|| format!("reading {}", conf.display()))?;
+    let new = conf_text_custom(host, &service.name, &service.id, port, root, &cert_name_of(&text));
+    let (backup, reload) = rewrite_conf(stack, conf, &new)?;
+    Ok(Repointed {
+        host: host.to_string(),
+        php_name: service.name.clone(),
+        php_id: service.id.clone(),
+        port,
+        was: None,
+        conf: stack.rel(conf),
+        reload,
+        unchanged: false,
+        backup: Some(backup),
+    })
+}
+
+/// `devcrate site set-proxy`, printed.
+pub fn print_set_proxy(stack: &Stack, host: &str, port: u16) -> Result<u8> {
+    let Some(done) = set_proxy(stack, host, port)? else {
+        println!("{host} already forwards to localhost:{port}");
+        return Ok(exit::OK);
+    };
+    println!("  {} : now forwards to http://localhost:{port}", done.conf);
+    println!("  the old conf is kept as {}", done.backup);
+    println!("  {}", done.reload.note());
+    println!();
+    println!("https://{} -> http://localhost:{port}", done.host);
+    println!("Something has to be listening there: a Node app, or `devcrate dev start {}`.", done.host);
+    Ok(exit::OK)
+}
+
 pub fn set_php(stack: &Stack, host: &str, wanted: &str) -> Result<u8> {
     let done = repoint_site(stack, host, wanted)?;
     if done.unchanged {
@@ -444,9 +565,13 @@ pub fn set_php(stack: &Stack, host: &str, wanted: &str) -> Result<u8> {
         return Ok(exit::OK);
     }
 
-    match done.was {
-        Some(old) => println!("  {} : fastcgi {old} -> {}", done.conf, done.port),
-        None => println!("  {} : fastcgi -> {}", done.conf, done.port),
+    match (&done.backup, done.was) {
+        (Some(backup), _) => {
+            println!("  {} : proxy -> fastcgi {}", done.conf, done.port);
+            println!("  the old conf is kept as {backup}");
+        }
+        (None, Some(old)) => println!("  {} : fastcgi {old} -> {}", done.conf, done.port),
+        (None, None) => println!("  {} : fastcgi -> {}", done.conf, done.port),
     }
 
     if let Reload::Failed(why) = &done.reload {
@@ -625,6 +750,69 @@ pub fn default_php(stack: &Stack) -> Result<&crate::config::Service> {
     }
 }
 
+/// A vhost that forwards everything to `localhost:<port>` -- a Node app, a
+/// dev server -- over HTTP/1.1 with WebSocket upgrades passed through, so hot
+/// reload and sockets work behind `https://<host>`.
+///
+/// `localhost`, not `127.0.0.1`: Vite and other Node servers listen on `::1`
+/// alone by default on Windows, and nginx resolves `localhost` to both
+/// addresses and moves on to the next when one refuses -- measured: a
+/// `127.0.0.1` upstream answered 502 for a default Vite, `localhost` 200. The `map` that turns an
+/// Upgrade header into `Connection: upgrade` is named after the host, so two
+/// proxy vhosts never declare the same variable; site confs are included
+/// inside nginx.conf's `http` block, where `map` belongs.
+pub fn proxy_conf_text(host: &str, port: u16, root_rel: Option<&str>, cert_name: &str) -> String {
+    let key_name = cert_name.replace(".pem", "-key.pem");
+    let upgrade: String =
+        host.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' }).collect();
+    let root = match root_rel {
+        Some(root) => format!("    root   {root};\n\n"),
+        None => String::new(),
+    };
+    format!(
+        "# Auto-generated by devcrate site add --proxy\n\
+         # Domain  : {host}\n\
+         # Proxy   : http://localhost:{port}\n\
+         # Cert    : {cert_name}\n\
+         # Paths: root/logs are prefix-relative, certs are conf-relative.\n\
+         \n\
+         map $http_upgrade $devcrate_upgrade_{upgrade} {{\n\
+         \x20   default  upgrade;\n\
+         \x20   ''       close;\n\
+         }}\n\
+         \n\
+         server {{\n\
+         \x20   listen       80;\n\
+         \x20   server_name  {host};\n\
+         \x20   return 301   https://$host$request_uri;\n\
+         }}\n\
+         \n\
+         server {{\n\
+         \x20   listen       443 ssl;\n\
+         \x20   server_name  {host};\n\
+         \n\
+         {root}\
+         \x20   ssl_certificate      certs/{cert_name};\n\
+         \x20   ssl_certificate_key  certs/{key_name};\n\
+         \n\
+         \x20   access_log  logs/{host}.access.log  main;\n\
+         \x20   error_log   logs/{host}.error.log   warn;\n\
+         \n\
+         \x20   location / {{\n\
+         \x20       proxy_pass          http://localhost:{port};\n\
+         \x20       proxy_http_version  1.1;\n\
+         \x20       proxy_set_header    Host               $host;\n\
+         \x20       proxy_set_header    X-Real-IP          $remote_addr;\n\
+         \x20       proxy_set_header    X-Forwarded-For    $proxy_add_x_forwarded_for;\n\
+         \x20       proxy_set_header    X-Forwarded-Proto  https;\n\
+         \x20       proxy_set_header    Upgrade            $http_upgrade;\n\
+         \x20       proxy_set_header    Connection         $devcrate_upgrade_{upgrade};\n\
+         \x20       proxy_read_timeout  1h;\n\
+         \x20   }}\n\
+         }}\n"
+    )
+}
+
 #[allow(dead_code)]
 fn conf_text(host: &str, php_name: &str, php_id: &str, port: u16) -> String {
     conf_text_custom(
@@ -694,6 +882,63 @@ fn conf_text_custom(
 
 #[cfg(test)]
 mod tests {
+    use crate::root::{RootSource, StackRoot};
+
+    #[test]
+    fn a_proxy_conf_forwards_upgrades_under_its_own_map() {
+        let conf = proxy_conf_text("api.shop.test", 3000, Some("projects/shop"), "_wildcard.shop.test.pem");
+        assert!(conf.contains("map $http_upgrade $devcrate_upgrade_api_shop_test {"), "{conf}");
+        assert!(conf.contains("proxy_pass          http://localhost:3000;"));
+        assert!(conf.contains("proxy_set_header    Connection         $devcrate_upgrade_api_shop_test;"));
+        assert!(conf.contains("proxy_set_header    X-Forwarded-Proto  https;"));
+        assert!(conf.contains("    root   projects/shop;\n"));
+        assert!(conf.contains("ssl_certificate_key  certs/_wildcard.shop.test-key.pem;"));
+        assert!(!proxy_conf_text("api.shop.test", 3000, None, "x.pem").contains("root "), "no folder, no root");
+
+        let path = std::env::temp_dir().join(format!("devcrate-proxy-{}.conf", std::process::id()));
+        std::fs::write(&path, &conf).unwrap();
+        let site = Site::read(&path);
+        assert_eq!((site.proxy_port, site.fastcgi_port, site.tls), (Some(3000), None, true));
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// PHP to proxy and back: the conf is written anew each way, the old one
+    /// kept as .conf.bak, and the root and certificate carry over. nginx is not
+    /// running here, so nothing is reloaded or tested.
+    #[test]
+    fn a_vhost_turns_into_a_proxy_and_back() {
+        let root = std::env::temp_dir().join(format!("devcrate-convert-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("nginx").join("conf").join("sites")).unwrap();
+        std::fs::write(root.join("nginx").join("conf").join("nginx.conf"), "").unwrap();
+        let php = root.join("php").join("php-8.5");
+        std::fs::create_dir_all(&php).unwrap();
+        std::fs::write(php.join("php-cgi.exe"), "").unwrap();
+        let stack = Stack::open(StackRoot { path: root.clone(), source: RootSource::Flag }).unwrap();
+        let conf = stack.sites_dir().join("shop.test.conf");
+        std::fs::write(
+            &conf,
+            conf_text_custom("shop.test", "PHP 8.5", "php-8.5", 9085, "projects/shop/public", "_wildcard.shop.test.pem"),
+        )
+        .unwrap();
+
+        let done = set_proxy(&stack, "shop.test", 5173).unwrap().expect("converted");
+        assert!(done.backup.ends_with("shop.test.conf.bak"), "{}", done.backup);
+        assert!(std::fs::read_to_string(stack.sites_dir().join("shop.test.conf.bak")).unwrap().contains("fastcgi_pass"));
+        let site = Site::read(&conf);
+        assert_eq!(site.proxy_port, Some(5173));
+        assert_eq!(site.root.as_deref(), Some("projects/shop/public"), "the root carries over");
+        assert!(std::fs::read_to_string(&conf).unwrap().contains("certs/_wildcard.shop.test.pem;"));
+        assert!(set_proxy(&stack, "shop.test", 5173).unwrap().is_none(), "already there");
+        assert_eq!(stack.sites().len(), 1, "the .bak is not a site");
+
+        let back = repoint_site(&stack, "shop.test", "8.5").unwrap();
+        assert!(back.backup.is_some());
+        let site = Site::read(&conf);
+        assert_eq!((site.proxy_port, site.fastcgi_port), (None, Some(9085)));
+        assert_eq!(site.root.as_deref(), Some("projects/shop/public"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
     use super::*;
 
     #[test]
@@ -751,7 +996,8 @@ mod tests {
         .unwrap();
 
         let missing = root.join("no-such-folder");
-        let err = create(&stack, "db.test", Some(&missing), None, true, true, false)
+        let request = Request { project_path: Some(&missing), no_hosts: true, no_tls: true, ..Default::default() };
+        let err = create_with(&stack, "db.test", &request)
             .err()
             .expect("refused")
             .to_string();
@@ -800,6 +1046,7 @@ mod tests {
             host: host.into(),
             root: Some(root.into()),
             fastcgi_port: None,
+            proxy_port: None,
             tls: true,
         };
         let real = crate::root::clean(&root).unwrap();

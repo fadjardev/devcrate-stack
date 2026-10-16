@@ -113,7 +113,8 @@ visible rather than mysterious.
 | `devcrate nginx use <version>` | **works** — repoints `nginx\current` |
 | `devcrate nginx migrate` | **works** — moves a pre-restructure stack into the current layout |
 | `devcrate site add <host>` | **works** — web root, conf, junction, reload |
-| `devcrate site set-php <host> <version>` | **works** — repoints an existing vhost |
+| `devcrate site set-php <host> <version>` | **works** — repoints an existing vhost; a proxy vhost becomes PHP again |
+| `devcrate site add <host> --proxy <port>` / `site set-proxy <host> <port>` | **works** — a vhost that forwards to `localhost:<port>` (a Node app, a dev server), WebSockets included (see below) |
 | `devcrate site remove <host>` | **works** — removes the conf, keeps the project |
 | `devcrate site sync [--dry-run]` | **works** — auto-vhost: serves each folder under `projects\` that no vhost serves yet as `<folder>.test` |
 | `devcrate cert list` / `cert renew [site...] [--all]` | **works** — each HTTPS vhost's certificate: expiry, whether it covers the host, whether this machine's mkcert CA issued it; issue it again (see below) |
@@ -575,6 +576,7 @@ rather than by its name, so an unmigrated stack still starts, and `start.bat`,
 devcrate site add myapp.test --php 8.5
 devcrate site add myapp.test              REM defaults to the current CLI version
 devcrate site add myapp.test --path D:\work\myapp   REM serve a folder that lives elsewhere
+devcrate site add api.test --proxy 3000   REM forward to a Node app on localhost:3000
 devcrate site remove myapp.test
 ```
 
@@ -624,6 +626,51 @@ and reloads. The project folder it served is never touched, and neither is the
 certificate. When auto-vhost is on and that folder is still under `projects\`,
 the next sync serves it again — `remove` says so; add the folder to
 `[sites] ignore` to keep it unserved.
+
+### Proxy vhosts
+
+```
+devcrate site add api.test --proxy 3000      REM a new vhost that forwards to localhost:3000
+devcrate site set-proxy shop.test 5173       REM an existing one, its root and certificate kept
+devcrate site set-php shop.test 8.5          REM and back to PHP
+```
+
+A vhost for something that is not PHP — a Node app, an API, a dev server that
+is itself the site — at `https://<host>` with the same certificate, hosts
+entry, and logs as any other. Its conf forwards every request to
+`http://localhost:<port>` over HTTP/1.1, with `Host`, `X-Real-IP`,
+`X-Forwarded-For`, and `X-Forwarded-Proto: https` set, and WebSocket upgrades
+passed through (hot reload, sockets). The `Upgrade` -> `Connection` mapping is
+a `map` named after the host, written in the vhost's own conf — inside
+`nginx.conf`'s `http` block, where site confs are included — so `nginx.conf`
+needs nothing added and two proxy vhosts never declare the same variable.
+
+- **`localhost`, not `127.0.0.1`.** A default Vite dev server — and Node
+  servers generally — listens on `::1` alone on Windows. Measured with Vite 6:
+  a `127.0.0.1` upstream answered 502, `localhost` 200, because nginx resolves
+  `localhost` to both addresses and tries the next when one refuses.
+- **Nothing is written into the project.** `--path` (or `projects\<host>`, when
+  it exists) only gives the conf a `root`, which the dashboard's `e` / `c` and
+  `devcrate dev` use to find the folder; without one the conf has no `root`.
+- **Vite checks the `Host` header.** The real host is passed through, as a
+  reverse proxy should, and Vite 6 and later refuse one they do not know —
+  `Blocked request. This host ("shop.test") is not allowed`. Allow `.test` in
+  the project's `vite.config.js`: `server: { allowedHosts: ['.test'] }`.
+  (A Laravel project needs none of this: its page is served by PHP and loads
+  Vite's assets from `[::1]:5173` directly — see [`devcrate dev`](#devcrate-dev).)
+- **Turning a vhost into a proxy, or back, writes its conf anew** — the
+  `location` blocks differ, so there is no one line to swap. The root and the
+  certificate carry over; the old conf is kept as `<host>.conf.bak`, which
+  `include sites/*.conf` does not read. When nginx is running the new conf is
+  tested first, and one nginx refuses is replaced by the old one again.
+
+Verified on 2026-10-16 against a second nginx on spare ports: `nginx -t`
+accepts the generated conf, a page came through from Vite, and Vite's HMR
+WebSocket answered `101 Switching Protocols` and `{"type":"connected"}`
+through it.
+
+`site list` shows a proxy vhost as `-> :3000`, and the dashboard's Sites pane
+as `→ :3000`.
 
 ### `devcrate site sync`
 
@@ -683,11 +730,17 @@ https://myapp.test -> PHP 7.4 (fastcgi 9074)
 The FastCGI worker for PHP 7.4 has to be running: `devcrate start php-7.4`.
 ```
 
-This is the only command that **edits** a conf rather than writing or deleting
-one, so it edits as little as it can: the `fastcgi_pass` port, and the generated
-`# PHP :` header comment so it does not go stale. Every other line comes through
-byte for byte — including anything added by hand since the file was generated,
-which is exactly what regenerating the file from a template would throw away.
+It **edits** the conf rather than writing it anew, and as little as it can: the
+`fastcgi_pass` port, and the generated `# PHP :` header comment so it does not
+go stale. Every other line comes through byte for byte — including anything
+added by hand since the file was generated, which is exactly what regenerating
+the file from a template would throw away. (`cert renew` edits the same way:
+the two `ssl_certificate` lines and nothing else.)
+
+The one exception is a **proxy** vhost: turning it back into PHP changes its
+`location` blocks, so there is no one line to swap. Its conf is written anew
+with the same root and certificate, the old one kept as `<host>.conf.bak` —
+see [Proxy vhosts](#proxy-vhosts).
 
 Two things it deliberately will not do:
 
@@ -814,9 +867,9 @@ asset loaded from `[::1]:5173` with no mixed-content or CORS error, a CSS edit
 was applied in place by hot module replacement without a reload, and a Blade
 edit reloaded the page. Browsers treat `localhost` and `[::1]` as secure
 origins, and the plugin allows the `.test` origin, which is why it works. Not
-measured: other browsers, and front ends other than Laravel's plugin — a Vite
-app that is itself the site, with no PHP in front, needs a vhost that proxies
-to it, which is a separate roadmap item.
+measured: other browsers, and front ends other than Laravel's plugin. A Vite
+app that is itself the site, with no PHP in front, is served through a
+[proxy vhost](#proxy-vhosts) instead.
 
 ### `devcrate new`
 
@@ -1705,11 +1758,12 @@ ignored, so a typo is an error instead of a setting that silently does nothing.
   directives it wrote (`root`, `fastcgi_pass`) and ignores the rest, so a
   hand-edited conf is reported as it stands. `site add` writes a whole file or
   refuses, `site remove` deletes only a file it would have written itself, and
-  `site set-php` rewrites one line and copies the rest through unchanged. No
-  command reformats a conf or regenerates one from a template. Editing anything
-  *other* than the PHP version — the web root, the certificate, an added
-  `location` block — is still a manual edit; a general vhost editor belongs to
-  [roadmap](roadmap.md) item 1.
+  `site set-php` rewrites one line and copies the rest through unchanged, as
+  `cert renew` does with the two `ssl_certificate` lines. The one regeneration
+  is turning a vhost into a proxy or back (`site set-proxy`, or `set-php` on a
+  proxy), and it keeps the old conf as `<host>.conf.bak`. Editing anything else
+  — the web root, an added `location` block — is still a manual edit; a general
+  vhost editor belongs to [roadmap](roadmap.md) item 1.
 - **Never touches your project code.** `site remove` leaves `projects\<host>\`
   exactly where it is.
 - **Never touches the hosts file outside its own block.** `site add` writes

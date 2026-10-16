@@ -86,6 +86,7 @@ pub enum Job {
         php: Option<String>,
         no_hosts: bool,
         no_tls: bool,
+        proxy: Option<u16>,
     },
     SiteSetPhp { host: String, version: String },
     SiteRemove(String),
@@ -390,13 +391,25 @@ fn run(stack: &Stack, job: Job, tx: &Sender<Event>) -> JobResult {
             Err(err) => failure(label, err),
         },
 
-        Job::SiteAdd { host, path, php, no_hosts, no_tls } => {
+        Job::SiteAdd { host, path, php, no_hosts, no_tls, proxy } => {
             let p = path.as_ref().map(Path::new);
-            match site::create(stack, &host, p, php.as_deref(), no_hosts, no_tls, false) {
+            let request = site::Request {
+                project_path: p,
+                want_php: php.as_deref(),
+                no_hosts,
+                no_tls,
+                force: false,
+                untouched: false,
+                proxy,
+            };
+            match site::create_with(stack, &host, &request) {
                 Ok(made) => {
                     let mut lines = vec![
                         format!("wrote {}", made.conf),
-                        format!("https://{} -> {} (fastcgi {})", made.host, made.php_name, made.port),
+                        match proxy {
+                            Some(_) => format!("https://{} -> {}", made.host, made.php_name),
+                            None => format!("https://{} -> {} (fastcgi {})", made.host, made.php_name, made.port),
+                        },
                         made.reload.note(),
                     ];
                     if made.hosts_updated {

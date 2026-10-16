@@ -385,9 +385,10 @@ fn render_sites(frame: &mut Frame, app: &App, area: Rect) {
         .sites
         .iter()
         .map(|site| {
-            let php = match app.php_for_port(site.fastcgi_port) {
-                Some(name) => Span::styled(name.to_string(), Style::new().fg(ACCENT)),
-                None => Span::styled(
+            let php = match (site.proxy_port, app.php_for_port(site.fastcgi_port)) {
+                (Some(port), _) => Span::styled(format!("→ :{port}"), Style::new().fg(ACCENT)),
+                (None, Some(name)) => Span::styled(name.to_string(), Style::new().fg(ACCENT)),
+                (None, None) => Span::styled(
                     site.fastcgi_port
                         .map(|port| format!("port {port}"))
                         .unwrap_or_else(|| "no fastcgi_pass".into()),
@@ -672,7 +673,9 @@ fn render_modal(frame: &mut Frame, app: &App, modal: &Modal) {
         }
         Modal::NewSite(form) => {
             let versions = app.php_versions();
-            let php_label = if form.php_index == 0 {
+            let php_label = if !form.proxy.is_empty() {
+                "— (proxied)".to_string()
+            } else if form.php_index == 0 {
                 "Auto-detect (composer.json / default)".to_string()
             } else if let Some((_, name)) = versions.get(form.php_index - 1) {
                 name.clone()
@@ -726,29 +729,38 @@ fn render_modal(frame: &mut Frame, app: &App, modal: &Modal) {
                     Span::styled(" ›", Style::new().fg(MUTED)),
                 ]),
                 Line::from(vec![
-                    label(4, "Hosts File"),
+                    label(4, "Proxy Port"),
+                    if form.proxy.is_empty() {
+                        Span::styled("none -- serve PHP  (digits: forward to localhost:<port>)", Style::new().fg(MUTED))
+                    } else {
+                        Span::styled(format!("localhost:{}", form.proxy), f_style(4))
+                    },
+                    cursor(4),
+                ]),
+                Line::from(vec![
+                    label(5, "Hosts File"),
                     Span::styled(
                         format!(
                             "{}{}",
                             check(form.update_hosts),
                             if form.update_hosts { "Auto-add to Windows hosts" } else { "Skip hosts update" }
                         ),
-                        f_style(4),
+                        f_style(5),
                     ),
                 ]),
                 Line::from(vec![
-                    label(5, "TLS Certificate"),
+                    label(6, "TLS Certificate"),
                     Span::styled(
                         format!(
                             "{}{}",
                             check(form.issue_tls),
                             if form.issue_tls { "Auto-issue wildcard SSL (mkcert)" } else { "Skip TLS certificate" }
                         ),
-                        f_style(5),
+                        f_style(6),
                     ),
                 ]),
                 Line::from(""),
-                Line::from(vec![Span::raw(" ".repeat(19)), button(6, "  Create Site  ")]),
+                Line::from(vec![Span::raw(" ".repeat(19)), button(7, "  Create Site  ")]),
                 Line::from(""),
                 Line::from(vec![
                     key("Tab j k"),
@@ -759,7 +771,7 @@ fn render_modal(frame: &mut Frame, app: &App, modal: &Modal) {
                     Span::styled(" cancel", Style::new().fg(MUTED)),
                 ]),
             ]);
-            popup(frame, "Create New Site (vhost)", text, 72, 12);
+            popup(frame, "Create New Site (vhost)", text, 80, 13);
         }
         Modal::NewProject(form) => {
             let versions = app.php_versions();

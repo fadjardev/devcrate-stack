@@ -145,7 +145,7 @@ dashboard never forces: replacing a DLL already there stays `php ext install
 
 | Key | Action |
 | --- | --- |
-| `n` | New vhost: a form for the hostname, project path (typed or picked with **Browse**), PHP version (or auto-detect), and whether to add the hosts entry and issue a certificate |
+| `n` | New vhost: a form for the hostname, project path (typed or picked with **Browse**), PHP version (or auto-detect), a proxy port (digits; set, the site forwards to `localhost:<port>` instead of PHP), and whether to add the hosts entry and issue a certificate |
 | `N` | New Laravel or WordPress project: a form for the kind, the name, the PHP version, and the database |
 | `p` | Change the selected vhost's PHP version |
 | `v` | Start or stop the selected site's dev server (`devcrate dev`) |
@@ -154,6 +154,10 @@ dashboard never forces: replacing a DLL already there stays `php ext install
 | `e` | Open the project folder in Explorer |
 | `c` | Open a terminal in the project folder — Windows Terminal where installed, a cmd window otherwise |
 | `d` | Delete the vhost's conf (asks first) |
+
+A proxy vhost shows `→ :3000` in the PHP column. `p` on one turns it back into
+PHP, writing its conf anew and keeping the old one as `<host>.conf.bak` — see
+[cli.md](cli.md#proxy-vhosts).
 
 `n` is `devcrate site add`: the same web-root and PHP detection, the same hosts
 block and UAC prompt, the same mkcert issuance — see
@@ -259,10 +263,11 @@ escape sequences into a file.
   and deleting a database's data are CLI-only (`--force`, `--data`), and the
   dashboard names the command when it refuses.
 - **Install from a local archive.** `--from` is a CLI affordance.
-- **Edit anything in a vhost except its PHP version.** The web root, the
-  certificate, an added `location` block: still a manual edit. The dashboard, like
-  the subcommands, never reformats or regenerates a conf you may have changed by
-  hand.
+- **Edit anything in a vhost except its PHP version and its certificate.** The
+  web root, an added `location` block: still a manual edit. The dashboard, like
+  the subcommands, edits a conf one line at a time; the one regeneration —
+  turning a proxy vhost back into PHP with `p` — keeps the old conf as
+  `<host>.conf.bak`.
 - **Detect a crash it did not witness.** Supervision here is by observation
   between two scans, not by owning the process. A service that dies while the
   dashboard is closed reads as `stopped` the next time it opens, because that is

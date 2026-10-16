@@ -372,6 +372,8 @@ pub enum SiteCommand {
     Add(SiteAddArgs),
     /// Point an existing vhost at another PHP version.
     SetPhp(SiteSetPhpArgs),
+    /// Make an existing vhost forward to localhost:<port> (the old conf is kept as .conf.bak).
+    SetProxy(SiteSetProxyArgs),
     /// Remove a vhost's conf. The project folder is left alone.
     Remove(SiteRemoveArgs),
     /// Serve every folder under projects\ that no vhost serves yet, as
@@ -394,8 +396,11 @@ pub struct SiteAddArgs {
     #[arg(long, value_name = "PATH")]
     pub path: Option<PathBuf>,
     /// PHP version to serve it with, e.g. 8.5. Defaults to detection or CLI version.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "proxy")]
     pub php: Option<String>,
+    /// Forward to localhost:<PORT> instead of running PHP: a Node app, a dev server.
+    #[arg(long, value_name = "PORT")]
+    pub proxy: Option<u16>,
     /// Skip automatic hosts file update.
     #[arg(long)]
     pub no_hosts: bool,
@@ -405,6 +410,14 @@ pub struct SiteAddArgs {
     /// Overwrite the conf if one already exists for this host.
     #[arg(long)]
     pub force: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct SiteSetProxyArgs {
+    /// Hostname of an existing vhost.
+    pub host: String,
+    /// The port on localhost to forward to.
+    pub port: u16,
 }
 
 #[derive(Debug, Args)]

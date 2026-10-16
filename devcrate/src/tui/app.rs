@@ -98,7 +98,9 @@ pub struct NewSiteForm {
     pub php_index: usize, // 0 = Auto-detect, 1.. = PHP versions
     pub update_hosts: bool,
     pub issue_tls: bool,
-    pub active_field: usize, // 0: host, 1: path, 2: browse button, 3: php, 4: hosts, 5: tls, 6: submit button
+    /// Digits only; set, the site forwards to localhost:<proxy> instead of PHP.
+    pub proxy: String,
+    pub active_field: usize, // 0: host, 1: path, 2: browse, 3: php, 4: proxy port, 5: hosts, 6: tls, 7: submit
 }
 
 impl NewSiteForm {
@@ -109,6 +111,7 @@ impl NewSiteForm {
             php_index: 0,
             update_hosts: true,
             issue_tls: true,
+            proxy: String::new(),
             active_field: 0,
         }
     }
@@ -766,11 +769,11 @@ impl App {
         if let Some(Modal::NewSite(form)) = &mut self.modal {
             match key.code {
                 KeyCode::Esc => self.modal = None,
-                KeyCode::Tab | KeyCode::Down => form.active_field = (form.active_field + 1) % 7,
+                KeyCode::Tab | KeyCode::Down => form.active_field = (form.active_field + 1) % 8,
                 KeyCode::BackTab | KeyCode::Up => {
-                    form.active_field = if form.active_field == 0 { 6 } else { form.active_field - 1 };
+                    form.active_field = if form.active_field == 0 { 7 } else { form.active_field - 1 };
                 }
-                KeyCode::Char('b') if form.active_field != 0 && form.active_field != 1 => {
+                KeyCode::Char('b') if !matches!(form.active_field, 0 | 1 | 4) => {
                     if let Some(picked) = pick_project_folder() {
                         form.path = picked.clone();
                         if form.host.trim().is_empty()
@@ -790,7 +793,7 @@ impl App {
                                 form.host = format!("{}.test", name.to_string_lossy());
                             }
                         }
-                    } else if form.active_field == 6 || (!form.host.trim().is_empty() && (form.active_field == 0 || form.active_field == 1)) {
+                    } else if form.active_field == 7 || (!form.host.trim().is_empty() && matches!(form.active_field, 0 | 1 | 4)) {
                         let host = form.host.trim().to_string();
                         if !host.is_empty() {
                             let path = if form.path.trim().is_empty() { None } else { Some(form.path.trim().to_string()) };
@@ -801,23 +804,25 @@ impl App {
                                 php,
                                 no_hosts: !form.update_hosts,
                                 no_tls: !form.issue_tls,
+                                proxy: form.proxy.parse().ok(),
                             };
                             self.modal = None;
                             return self.submit(job);
                         }
                     } else {
-                        form.active_field = (form.active_field + 1) % 7;
+                        form.active_field = (form.active_field + 1) % 8;
                     }
                 }
                 KeyCode::Backspace => match form.active_field {
                     0 => { form.host.pop(); }
                     1 => { form.path.pop(); }
+                    4 => { form.proxy.pop(); }
                     _ => {}
                 },
                 KeyCode::Left => match form.active_field {
                     3 => form.php_index = form.php_index.saturating_sub(1),
-                    4 => form.update_hosts = !form.update_hosts,
-                    5 => form.issue_tls = !form.issue_tls,
+                    5 => form.update_hosts = !form.update_hosts,
+                    6 => form.issue_tls = !form.issue_tls,
                     _ => {}
                 },
                 KeyCode::Right | KeyCode::Char(' ') => match form.active_field {
@@ -836,13 +841,15 @@ impl App {
                             form.php_index += 1;
                         }
                     }
-                    4 => form.update_hosts = !form.update_hosts,
-                    5 => form.issue_tls = !form.issue_tls,
+                    5 => form.update_hosts = !form.update_hosts,
+                    6 => form.issue_tls = !form.issue_tls,
                     _ => {}
                 },
                 KeyCode::Char(c) => match form.active_field {
                     0 => form.host.push(c),
                     1 => form.path.push(c),
+                    // A port: five digits at most, and the type checks the range.
+                    4 if c.is_ascii_digit() && form.proxy.len() < 5 => form.proxy.push(c),
                     _ => {}
                 },
                 _ => {}
@@ -875,6 +882,7 @@ impl App {
                                 php: Some(chosen),
                                 no_hosts: false,
                                 no_tls: false,
+                                proxy: None,
                             })
                         }
                     };

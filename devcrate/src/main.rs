@@ -132,16 +132,18 @@ fn run(cli: Cli) -> Result<u8> {
             Ok(exit::OK)
         }
         Command::Site(SiteCommand::Add(args)) => {
-            site::add(
-                &stack,
-                &args.host,
-                args.path.as_deref(),
-                args.php.as_deref(),
-                args.no_hosts,
-                args.no_tls,
-                args.force,
-            )
+            let request = site::Request {
+                project_path: args.path.as_deref(),
+                want_php: args.php.as_deref(),
+                no_hosts: args.no_hosts,
+                no_tls: args.no_tls,
+                force: args.force,
+                untouched: false,
+                proxy: args.proxy,
+            };
+            site::add(&stack, &args.host, &request)
         }
+        Command::Site(SiteCommand::SetProxy(args)) => site::print_set_proxy(&stack, &args.host, args.port),
         Command::Site(SiteCommand::SetPhp(args)) => {
             site::set_php(&stack, &args.host, &args.version)
         }
@@ -297,10 +299,11 @@ fn site_list(stack: &Stack) {
     let width = sites.iter().map(|s| s.host.chars().count()).max().unwrap_or(0);
 
     for site in &sites {
-        let php = site
-            .fastcgi_port
-            .map(|p| format!("php {p}"))
-            .unwrap_or_else(|| "no fastcgi_pass".into());
+        let php = match (site.proxy_port, site.fastcgi_port) {
+            (Some(port), _) => format!("-> :{port}"),
+            (None, Some(port)) => format!("php {port}"),
+            (None, None) => "no fastcgi_pass".into(),
+        };
         let root = site.root.as_deref().unwrap_or("no root directive");
         println!("  {:<width$}  {php:<10}  {root}", site.host);
     }

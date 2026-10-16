@@ -373,6 +373,7 @@ pub fn run(stack: &Stack, request: &Request, progress: &mut dyn FnMut(Progress))
         no_tls: request.no_tls,
         untouched: true,
         force: false,
+        proxy: None,
     };
     match site::create_with(stack, &plan.host, &site_request) {
         Ok(made) => {
