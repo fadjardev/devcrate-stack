@@ -3084,20 +3084,9 @@ fn node_from_archive(
     std::fs::rename(&valid_dir, &dest)?;
     let _ = std::fs::remove_dir_all(&staging);
 
-    let npm_global = node_root.join("npm-global");
-    let npm_cache = node_root.join("npm-cache");
-    let _ = std::fs::create_dir_all(&npm_global);
-    let _ = std::fs::create_dir_all(&npm_cache);
-
-    let npmrc = dest.join(".npmrc");
-    if !npmrc.exists() {
-        let text = format!(
-            "prefix={}\ncache={}\n",
-            npm_global.display().to_string().replace('\\', "/"),
-            npm_cache.display().to_string().replace('\\', "/")
-        );
-        let _ = std::fs::write(&npmrc, text);
-    }
+    // npm reads <prefix>\etc\npmrc as its global config on Windows; a .npmrc
+    // beside node.exe, which this used to write, is read by nothing.
+    let _ = crate::node::ensure_npmrc(&node_root, &dest);
 
     let receipt = Receipt {
         runtime: Runtime::Node.as_str().to_string(),
@@ -3120,7 +3109,7 @@ fn node_from_archive(
         replaced: false,
         details: Details::Node(NodeInstalledDetails {
             dir: stack.rel(&dest),
-            global_dir: stack.rel(&npm_global),
+            global_dir: stack.rel(&node_root.join("npm-global")),
         }),
     })
 }

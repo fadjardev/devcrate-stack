@@ -1,7 +1,8 @@
 //! Installing Node.js into `node\v<version>\`.
 //!
 //! Validates `node.exe` and `npm.cmd`, creates portable `npm-global` and `npm-cache`
-//! directories under `node\`, and writes a default `.npmrc` to isolate NPM.
+//! directories under `node\`, and writes `etc\npmrc` -- npm's global config on
+//! Windows -- so its cache and global prefix stay inside them.
 
 use std::fs;
 use std::path::{Path, PathBuf};

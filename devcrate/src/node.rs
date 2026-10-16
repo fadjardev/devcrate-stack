@@ -63,9 +63,32 @@ pub fn find(stack: &Stack, wanted: &str) -> Result<NodeInstalledVersion> {
     bail!("no installed Node.js version matches '{wanted}'")
 }
 
+/// Keep npm's cache and global packages inside `node\`: a `prefix` and `cache`
+/// in `<version>\etc\npmrc`, which is the global config npm reads on Windows
+/// (`<prefix>\etc\npmrc`, the prefix defaulting to node.exe's folder). Written
+/// only when missing, so an edited one stays. Returns whether it was written.
+pub fn ensure_npmrc(node_root: &Path, version_dir: &Path) -> std::io::Result<bool> {
+    let npmrc = version_dir.join("etc").join("npmrc");
+    if npmrc.exists() {
+        return Ok(false);
+    }
+    let npm_global = node_root.join("npm-global");
+    let npm_cache = node_root.join("npm-cache");
+    std::fs::create_dir_all(&npm_global)?;
+    std::fs::create_dir_all(&npm_cache)?;
+    std::fs::create_dir_all(version_dir.join("etc"))?;
+    let slashed = |p: &Path| p.display().to_string().replace('\\', "/");
+    std::fs::write(&npmrc, format!("prefix={}\ncache={}\n", slashed(&npm_global), slashed(&npm_cache)))?;
+    Ok(true)
+}
+
 pub fn switch(stack: &Stack, wanted: &str) -> Result<u8> {
     let target = find(stack, wanted)?;
     let node_dir = stack.root.join("node");
+    // Installs before this was fixed wrote a .npmrc npm never read.
+    if ensure_npmrc(&node_dir, &target.path).unwrap_or(false) {
+        println!("npm's cache and global prefix now kept in node\\ (wrote etc\\npmrc)");
+    }
     let current_junction = node_dir.join("current");
 
     if current_junction.exists() {
