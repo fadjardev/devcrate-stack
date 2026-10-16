@@ -1,9 +1,10 @@
 # Releasing
 
 How a version of Devcrate is cut, tagged, and published. This is the procedure
-v0.2.0 was released with; follow it in order. Everything up to
-[Publish](#5-publish) is local and can be undone; everything from there on is
-public, so it is done only with the owner's go-ahead.
+v0.2.0 was released with, plus the release zip added after it; follow it in
+order. Everything up to [Publish](#6-publish) is local and can be undone;
+everything from there on is public, so it is done only with the owner's
+go-ahead.
 
 ## Versioning
 
@@ -107,7 +108,32 @@ chore(release): vX.Y.Z
 
 (Plus the `Co-Authored-By` trailer when an assistant made the commit.)
 
-## 5. Publish
+## 5. Package
+
+The release zip is what a new user downloads instead of cloning: the stack's
+configuration and `devcrate.exe`, in a `devcrate\` folder that is the stack
+root once extracted. Built from the release commit, with the build from step 3:
+
+```sh
+scripts/package.sh X.Y.Z
+```
+
+It writes `dist/devcrate-X.Y.Z-windows-x64.zip` and its `.sha256`, and refuses
+when the working tree has uncommitted changes, when `devcrate.exe --version` is
+not `devcrate X.Y.Z`, or when the binary is older than the source. The zip is
+`git archive HEAD` — so `.bat` files are CRLF whatever the checkout has — with
+`devcrate.exe` added and these left out: the Rust source (`devcrate\`),
+`scripts\`, the issue mirrors (`docs\issue\`), `.gitignore` and
+`.gitattributes`, and `php\` — the `php.ini` files there are this repo's own
+stack, and a new stack gets one generated for each version it installs, so it
+lists only the PHP versions it has. The exclusions are pathspecs, not
+`export-ignore`, which would also strip them from GitHub's own "Source code"
+download. Last, it
+unpacks the zip into a scratch folder and runs `devcrate status` against it.
+
+`dist\` is gitignored.
+
+## 6. Publish
 
 Public from here on. Ask the owner first if you are not the owner.
 
@@ -119,13 +145,15 @@ git tag -a vX.Y.Z <release-commit> -m "Devcrate vX.Y.Z - <summary>"
 git push origin vX.Y.Z
 ```
 
-Then the GitHub Release, with the binary and its checksum attached:
+Then the GitHub Release, with the zip, the bare binary (for updating a stack
+that already exists), and a checksum for each:
 
 ```sh
-mkdir assets
-cp devcrate/target/release/devcrate.exe assets/
-(cd assets && sha256sum devcrate.exe | sed 's/\*//' > devcrate.exe.sha256)
-gh release create vX.Y.Z assets/devcrate.exe assets/devcrate.exe.sha256 \
+cp devcrate/target/release/devcrate.exe dist/
+(cd dist && sha256sum devcrate.exe | sed 's/\*//' > devcrate.exe.sha256)
+gh release create vX.Y.Z \
+  dist/devcrate-X.Y.Z-windows-x64.zip dist/devcrate-X.Y.Z-windows-x64.zip.sha256 \
+  dist/devcrate.exe dist/devcrate.exe.sha256 \
   --title "Devcrate vX.Y.Z" --notes-file release-notes.md --verify-tag
 ```
 
@@ -144,20 +172,21 @@ Not the changelog again — it is linked, and it is long. The notes carry:
 - **Known limitations** — what is not done or not verified, in the same plain
   words the roadmap and the audits use. A release that hides a gap is the thing
   this project's docs exist to avoid.
-- **Download** — what the binary is, where it goes, and its sha256.
+- **Download** — the zip for a new stack (extract it, run `devcrate.exe`, press
+  `s`), the bare binary for an existing one, and the sha256 of each.
 
-## 6. Verify
+## 7. Verify
 
 ```sh
-gh release view vX.Y.Z                      # not a draft, not a pre-release, both assets
-gh release download vX.Y.Z -p devcrate.exe -D check && sha256sum check/devcrate.exe
+gh release view vX.Y.Z                      # not a draft, not a pre-release, all four assets
+gh release download vX.Y.Z -D check && (cd check && sha256sum -c *.sha256)
 gh api repos/fadjardev/devcrate-stack/tags -q '.[].name'
 ```
 
-The downloaded binary's hash must match the one in the notes, and the changelog's
-links at the `vX.Y.Z` tag must resolve.
+The downloaded files' hashes must match the ones in the notes, and the
+changelog's links at the `vX.Y.Z` tag must resolve.
 
-## 7. Afterwards
+## 8. Afterwards
 
 - Copy the release build over the stack root's `devcrate.exe` (close the
   dashboard first — Windows will not replace a running executable), so the

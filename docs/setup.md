@@ -15,6 +15,30 @@ detail for each step lives in [installation.md](installation.md).
 
 ---
 
+## 0. The quick way: the release zip
+
+1. Install the [Visual C++ Redistributable x64](https://aka.ms/vs/17/release/vc_redist.x64.exe)
+   if the machine does not have it — PHP exits silently without it, and
+   `setup` does not install it.
+2. Download `devcrate-<version>-windows-x64.zip` from the
+   [Releases](https://github.com/fadjardev/devcrate-stack/releases) page (each
+   release from the first one that carries it; v0.2.0 and earlier ship the
+   bare binary only) and check it against its `.sha256`.
+3. Extract it anywhere. The `devcrate\` folder it holds is the stack root:
+   `devcrate.exe`, the nginx configuration, the batch scripts, and these docs.
+   No `php\` — each PHP version gets its `php.ini` when it is installed.
+4. Run `devcrate.exe` from Windows Terminal, PowerShell, or cmd (or
+   double-click it). On a stack with nothing installed it opens on a first-run
+   screen; `s` runs `devcrate setup` — nginx, the newest PHP, MariaDB, Composer,
+   and mkcert downloaded and installed into the folder, mkcert's CA trusted
+   (Windows asks you to confirm that once), and the stack started. From a
+   terminal, `devcrate setup` does the same.
+
+That is the whole of it; the numbered steps below are the manual route from a
+clone, and what each of `setup`'s steps does by hand.
+
+---
+
 ## 1. Install the Visual C++ Redistributable (first!)
 
 PHP for Windows needs the matching VC++ runtime. If `php-cgi.exe` exits

@@ -15,6 +15,31 @@ to XAMPP / Laragon / FlyEnv.
 > **not** committed (see [`.gitignore`](.gitignore)). Follow the steps below to rebuild
 > a working stack from a fresh clone.
 
+## Quick start: the release zip
+
+1. Install the [Visual C++ Redistributable x64](https://aka.ms/vs/17/release/vc_redist.x64.exe)
+   if the machine does not have it — PHP exits silently without it, and
+   `setup` does not install it.
+2. Download `devcrate-<version>-windows-x64.zip` from the
+   [Releases](https://github.com/fadjardev/devcrate-stack/releases) page (each
+   release from the first one that carries it; v0.2.0 and earlier ship the
+   bare binary only) and check it against its `.sha256`.
+3. Extract it anywhere. The `devcrate\` folder it holds is the stack root:
+   `devcrate.exe`, the nginx configuration, the batch scripts, and these docs.
+   No `php\` — each PHP version gets its `php.ini` when it is installed.
+4. Run `devcrate.exe` from Windows Terminal, PowerShell, or cmd (or
+   double-click it). On a stack with nothing installed it opens on a first-run
+   screen; `s` runs `devcrate setup` — nginx, the newest PHP, MariaDB, Composer,
+   and mkcert downloaded and installed into the folder, mkcert's CA trusted
+   (Windows asks you to confirm that once), and the stack started. From a
+   terminal, `devcrate setup` does the same.
+
+`devcrate.exe` is not put on `PATH`; add the stack root to it to type `devcrate`
+from anywhere. Adding a site (`devcrate site add`, `devcrate new`, or auto-vhost)
+asks for elevation once to write the hosts file. The rest of this README, and
+the [setup guide](docs/setup.md)'s manual steps, are for building a stack from a
+clone instead.
+
 ## Documentation
 
 Everything lives in [`docs/`](docs/index.md) ([index](docs/index.md)):

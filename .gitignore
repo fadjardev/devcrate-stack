@@ -13,6 +13,7 @@
 *.7z
 *.tar.gz
 /_downloads/
+/dist/
 mkcert.exe
 
 # --- Logs, crash dumps, temp ---
