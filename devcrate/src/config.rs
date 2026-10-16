@@ -33,6 +33,8 @@ pub struct Config {
     pub redis: RedisConfig,
     #[serde(default)]
     pub mailpit: MailpitConfig,
+    #[serde(default)]
+    pub sites: SitesConfig,
     /// One table per installed PHP version. Empty means "discover them".
     #[serde(default)]
     pub php: Vec<PhpConfig>,
@@ -90,6 +92,19 @@ pub struct RedisConfig {
     /// by side, so it is a single directory like MariaDB's.
     pub dir: Option<PathBuf>,
     pub port: Option<u16>,
+}
+
+/// Auto-vhost: a folder under `projects\` with no vhost serving it becomes
+/// `<folder>.test` (see [`crate::autosite`]).
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SitesConfig {
+    /// On unless set to `false`, as in Laragon.
+    pub auto: Option<bool>,
+    /// Folder names under `projects\` auto-vhost leaves alone, matched
+    /// without regard to case.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ignore: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -221,6 +236,10 @@ pub struct Stack {
     /// not a service, so it lives here rather than in `services`.
     pub python_dir: PathBuf,
     pub services: Vec<Service>,
+    /// Whether auto-vhost runs: `[sites] auto`, on by default.
+    pub auto_sites: bool,
+    /// `[sites] ignore`: folders under `projects\` auto-vhost never serves.
+    pub auto_sites_ignore: Vec<String>,
 }
 
 impl Stack {
@@ -366,6 +385,8 @@ impl Stack {
             php_dir,
             python_dir,
             services,
+            auto_sites: config.sites.auto.unwrap_or(true),
+            auto_sites_ignore: config.sites.ignore.clone(),
         })
     }
 
@@ -483,6 +504,9 @@ impl Stack {
             config.mailpit.smtp_port = mailpit.ports.first().copied();
             config.mailpit.ui_port = mailpit.ports.get(1).copied();
         }
+
+        config.sites.auto = Some(self.auto_sites);
+        config.sites.ignore = self.auto_sites_ignore.clone();
 
         config.php = self
             .php_services()

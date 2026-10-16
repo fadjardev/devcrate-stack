@@ -203,6 +203,9 @@ pub struct App {
     pub welcome: Option<Welcome>,
     /// Whether the first scan has been seen, which is what decides it.
     welcome_decided: bool,
+    /// Folders auto-vhost has already been run for this session. One that
+    /// failed is not tried again every two seconds -- nor its UAC prompt.
+    auto_tried: HashSet<String>,
 
     watches: HashMap<String, Watch>,
     /// Services the user took down on purpose. Not crashes.
@@ -249,6 +252,7 @@ impl App {
             quit: false,
             welcome: None,
             welcome_decided: false,
+            auto_tried: HashSet::new(),
             watches: HashMap::new(),
             deliberate: HashSet::new(),
             log_target_dirty: true,
@@ -346,6 +350,28 @@ impl App {
         if let Some(Modal::InstallPicker { index }) = &mut self.modal {
             *index = (*index).min(self.install_options.len() - 1);
         }
+    }
+
+    /// The scanner found folders no vhost serves. Serve them, unless that
+    /// would interrupt something: a running action, an open form or picker,
+    /// or the first-run screen. Those folders are then simply still unserved
+    /// at the next scan, two seconds on.
+    pub fn on_unserved(&mut self, folders: Vec<String>) -> Option<Job> {
+        if self.busy.is_some() || self.modal.is_some() || self.welcome.is_some() {
+            return None;
+        }
+        let fresh: Vec<String> = folders.into_iter().filter(|f| !self.auto_tried.contains(f)).collect();
+        if fresh.is_empty() {
+            return None;
+        }
+        self.auto_tried.extend(fresh);
+        self.submit(Job::SiteSync)
+    }
+
+    /// A vhost was deleted from here; its folder stays unserved until the
+    /// dashboard is reopened.
+    pub fn on_auto_skip(&mut self, folder: String) {
+        self.auto_tried.insert(folder);
     }
 
     pub fn on_setup_step(&mut self, line: String) {

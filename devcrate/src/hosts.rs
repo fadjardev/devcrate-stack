@@ -212,15 +212,26 @@ fn replace_atomically(target: &Path, content: &str) -> std::io::Result<()> {
 
 /// Add an IP mapping for `host` in the devcrate block.
 pub fn add_entry(host: &str) -> Result<HostsResult> {
+    add_entries(&[host])
+}
+
+/// Add every one of `hosts` in a single write -- so a batch costs at most one
+/// elevation prompt, not one per host.
+pub fn add_entries(hosts: &[&str]) -> Result<HostsResult> {
     let target = hosts_path();
     let content = fs::read_to_string(&target).unwrap_or_default();
     let mut entries = read_devcrate_entries(&content);
 
-    if entries.iter().any(|e| e.eq_ignore_ascii_case(host)) {
+    let before = entries.len();
+    for host in hosts {
+        if !entries.iter().any(|e| e.eq_ignore_ascii_case(host)) {
+            entries.push(host.to_string());
+        }
+    }
+    if entries.len() == before {
         return Ok(HostsResult::Unchanged);
     }
 
-    entries.push(host.to_string());
     let (new_content, changed) = update_devcrate_block(&content, entries);
 
     if !changed {

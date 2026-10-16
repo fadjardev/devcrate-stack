@@ -161,6 +161,15 @@ the certificate are left alone, and the confirmation says so.
 `d` also takes the host out of the devcrate hosts block, as `devcrate site
 remove` does — both call the same `site::delete`.
 
+**Auto-vhost.** While `[sites] auto` is on (the default), each scan also looks
+for folders under `projects\` that no vhost serves, and serves them through
+the same `devcrate site sync` — see [cli.md](cli.md#devcrate-site-sync). It
+waits rather than interrupts: not while another action runs, a form or picker
+is open, or the first-run screen is up. Each folder is tried once per session,
+so one that fails is not retried — with its UAC prompt — every two seconds,
+and a site deleted with `d` is not served straight back; it returns the next
+time the dashboard opens unless its folder is in `[sites] ignore`.
+
 `o` sends the browser to `https://<host>/`, or `http://` when the conf has no
 `listen` on 443 or with `ssl`. `e` and `c` open the *project* folder, not the
 web root: the conf's `root` is resolved against the nginx prefix and followed

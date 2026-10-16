@@ -291,6 +291,16 @@ pub enum SiteCommand {
     SetPhp(SiteSetPhpArgs),
     /// Remove a vhost's conf. The project folder is left alone.
     Remove(SiteRemoveArgs),
+    /// Serve every folder under projects\ that no vhost serves yet, as
+    /// <folder>.test (auto-vhost). Only ever adds.
+    Sync(SiteSyncArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct SiteSyncArgs {
+    /// Show what would be added, and write nothing.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Args)]

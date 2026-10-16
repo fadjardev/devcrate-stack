@@ -63,6 +63,12 @@ pub enum Event {
     /// The stack as read from disk again after a job that could have changed
     /// what is installed. Sent just before that job's `Done`.
     Restacked(Arc<Stack>),
+    /// Folders under `projects\` no vhost serves, found by the scanner while
+    /// auto-vhost is on. Sent only when there are some.
+    Unserved(Vec<String>),
+    /// A folder whose vhost was just deleted, not to be served again this
+    /// session.
+    AutoSkip(String),
     /// The install picker's entries, read from the vendors' catalogues.
     Offerings(Vec<crate::install::Offering>),
 }
@@ -91,6 +97,8 @@ pub enum Job {
     PhpExtInstall { php: String, ext: String },
     /// `devcrate setup`: install what is missing and start the stack.
     Setup,
+    /// `devcrate site sync`: serve the folders no vhost serves yet.
+    SiteSync,
 }
 
 impl Job {
@@ -119,6 +127,7 @@ impl Job {
             Job::PhpExt { php, ext, on: false } => format!("Disabling {ext} on {php}"),
             Job::PhpExtInstall { php, ext } => format!("Downloading & installing {ext} for {php}"),
             Job::Setup => "Setting up the stack".to_string(),
+            Job::SiteSync => "Serving new folders under projects".to_string(),
         }
     }
 
@@ -191,9 +200,19 @@ pub fn spawn_scanner(stack: SharedStack, tx: Sender<Event>) -> Sender<()> {
     let (nudge_tx, nudge_rx) = channel::<()>();
     thread::spawn(move || {
         loop {
-            let report = status::report(&current(&stack));
+            let now = current(&stack);
+            let report = status::report(&now);
             if tx.send(Event::Status(Box::new(report))).is_err() {
                 return;
+            }
+            // Auto-vhost's look is a directory listing and a canonicalize
+            // per folder and vhost -- cheap beside the port probes above.
+            if now.auto_sites {
+                let unserved: Vec<String> =
+                    crate::autosite::plan(&now).new.into_iter().map(|candidate| candidate.folder).collect();
+                if !unserved.is_empty() && tx.send(Event::Unserved(unserved)).is_err() {
+                    return;
+                }
             }
             match nudge_rx.recv_timeout(REFRESH) {
                 Ok(()) | Err(RecvTimeoutError::Timeout) => {}
@@ -417,7 +436,13 @@ fn run(stack: &Stack, job: Job, tx: &Sender<Event>) -> JobResult {
                         gone.host
                     ));
                 }
-                lines.push(format!("projects\\{} was left alone", gone.host));
+                lines.push(format!("{} was left alone", gone.folder));
+                // Not again this session: the scanner would otherwise serve
+                // it straight back, two seconds after it was deleted.
+                if let Some(folder) = &gone.auto_returns {
+                    let _ = tx.send(Event::AutoSkip(folder.clone()));
+                    lines.push("auto-vhost serves it again next session -- add it to [sites] ignore in devcrate.toml".into());
+                }
                 JobResult { label, lines, failed: false, sites_changed: true }
             }
             Err(err) => failure(label, err),
@@ -575,6 +600,18 @@ fn run(stack: &Stack, job: Job, tx: &Sender<Event>) -> JobResult {
                 Err(err) => failure(label, err),
             }
         }
+
+        Job::SiteSync => match crate::autosite::sync(stack, crate::autosite::Options::FULL) {
+            Ok(synced) => {
+                let mut lines = crate::autosite::describe(&synced);
+                if lines.is_empty() {
+                    lines.push("nothing new to serve".into());
+                }
+                let failed = lines.iter().any(|line| line.starts_with("FAILED") || line.starts_with("hosts "));
+                JobResult { label, lines, failed, sites_changed: true }
+            }
+            Err(err) => failure(label, err),
+        },
 
         // The same `setup::run` the command calls. Each finished step is sent
         // as it lands, for the first-run screen to tick off; download progress

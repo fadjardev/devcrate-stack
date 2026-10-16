@@ -6,6 +6,7 @@
 //! Composer, MariaDB, RabbitMQ, Erlang/OTP, Node.js, Bun, PostgreSQL, Python,
 //! and Redis end to end. `uninstall` is the mirror of it, one runtime at a time.
 
+mod autosite;
 mod bun;
 mod cli;
 mod config;
@@ -138,6 +139,7 @@ fn run(cli: Cli) -> Result<u8> {
             site::set_php(&stack, &args.host, &args.version)
         }
         Command::Site(SiteCommand::Remove(args)) => site::remove(&stack, &args.host),
+        Command::Site(SiteCommand::Sync(args)) => autosite::print(&stack, args.dry_run),
 
         Command::Node(NodeCommand::List) => {
             node_list(&stack);

@@ -97,6 +97,14 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, stack: Arc<Stac
                 Event::Progress(text) => app.on_progress(text),
                 Event::SetupStep(line) => app.on_setup_step(line),
                 Event::Restacked(stack) => app.on_restacked(stack),
+                Event::AutoSkip(folder) => app.on_auto_skip(folder),
+                Event::Unserved(folders) => {
+                    if let Some(job) = app.on_unserved(folders)
+                        && actor.send(job).is_err()
+                    {
+                        bail!("the worker thread has gone away");
+                    }
+                }
             }
         }
 
@@ -228,6 +236,8 @@ mod tests {
             nginx_bin: root.join("nginx").join("nginx-1.31.1").join("nginx.exe"),
             php_dir: root.join("php"),
             python_dir: root.join("python"),
+            auto_sites: true,
+            auto_sites_ignore: Vec::new(),
             services: vec![
                 Service {
                     id: "nginx".into(),
@@ -645,6 +655,31 @@ mod tests {
         for want in ["step13", "✗ stopped at start", "s carry on"] {
             assert!(screen.contains(want), "{want} missing:\n{screen}");
         }
+    }
+
+    /// A folder the scanner reports unserved is served once per session, and
+    /// never in the middle of something else.
+    #[test]
+    fn unserved_folders_are_served_once_and_never_mid_action() {
+        let mut app = App::new(stack());
+        app.on_status(report(State::Up, State::Up));
+
+        app.on_key(KeyEvent::from(KeyCode::Char('?')));
+        assert!(app.on_unserved(vec!["shop".into()]).is_none(), "not over an open modal");
+        app.modal = None;
+
+        let job = app.on_unserved(vec!["shop".into()]).expect("served");
+        assert!(matches!(job, worker::Job::SiteSync));
+        assert!(app.on_unserved(vec!["blog".into()]).is_none(), "not while the first runs");
+        app.on_done(worker::JobResult {
+            label: "Serving new folders under projects".into(),
+            lines: vec!["FAILED   shop: no PHP".into()],
+            failed: true,
+            sites_changed: true,
+        });
+
+        assert!(app.on_unserved(vec!["shop".into()]).is_none(), "a failed folder is not retried every scan");
+        assert!(app.on_unserved(vec!["shop".into(), "blog".into()]).is_some(), "a new one still is");
     }
 
     /// Only the first scan decides: a stack with something installed never

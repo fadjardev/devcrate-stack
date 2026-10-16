@@ -115,6 +115,7 @@ visible rather than mysterious.
 | `devcrate site add <host>` | **works** — web root, conf, junction, reload |
 | `devcrate site set-php <host> <version>` | **works** — repoints an existing vhost |
 | `devcrate site remove <host>` | **works** — removes the conf, keeps the project |
+| `devcrate site sync [--dry-run]` | **works** — auto-vhost: serves each folder under `projects\` that no vhost serves yet as `<folder>.test` |
 | `devcrate setup [--no-start]` | **works** — installs nginx, PHP, MariaDB, Composer, and mkcert where missing, trusts mkcert's CA, starts the stack (see below) |
 | `devcrate install php <version>` | **works** — downloads, verifies sha256, installs |
 | `devcrate install php` (no version) | **works** — lists the versions windows.php.net offers |
@@ -570,7 +571,9 @@ devcrate site remove myapp.test
 
 `--path` serves an existing folder through a junction at `projects\<host>`. A
 relative path is taken from the current directory, not the stack root, and a
-path that does not exist is refused before anything is created.
+path that does not exist is refused before anything is created. A folder that
+is already directly under `projects\` is served where it is, under its own
+name — `root projects/<folder>` — with no junction beside it.
 
 ```
   created  projects\myapp.test\public
@@ -602,11 +605,56 @@ Differences from `new-vhost.bat`:
   the script reuses: browsers refuse a wildcard directly under a TLD, so it is
   rejected for `myapp.test` (`ERR_CERT_COMMON_NAME_INVALID`).
 
-The hosts-file entry is still yours to add, as with the script; automating it
-needs elevation and is [roadmap](roadmap.md) item 4.
+The host goes into a marked devcrate block in the hosts file. Writing that file
+needs elevation, so Windows asks (UAC) unless the account can already write it;
+declining leaves the vhost in place and prints the line to add by hand.
+`--no-hosts` skips the step.
 
-`site remove` deletes **only** the conf and reloads. The project folder under
-`projects\` is never touched, and neither is the certificate.
+`site remove` deletes **only** the conf, takes the host out of the hosts block,
+and reloads. The project folder it served is never touched, and neither is the
+certificate. When auto-vhost is on and that folder is still under `projects\`,
+the next sync serves it again — `remove` says so; add the folder to
+`[sites] ignore` to keep it unserved.
+
+### `devcrate site sync`
+
+```
+devcrate site sync --dry-run   REM what would be added; writes nothing
+devcrate site sync             REM add them
+```
+
+```
+Auto-vhost in C:\devcrate\projects
+  new      https://shop.test -> projects\shop (PHP 8.5)
+  ignored  scratch
+  skipped  my app: not a usable hostname -- rename it, or `site add` it by hand
+  6 folder(s) already served
+```
+
+Auto-vhost, the way Laragon does it: every folder directly under `projects\`
+that no vhost serves becomes `https://<folder>.test` (a folder already named
+`*.test` keeps its name), through the same code as `site add` — PHP from the
+project's `composer.json` or `php\current`, a certificate, the hosts entry.
+
+- **It only adds.** An existing conf is never rewritten, and a folder that
+  disappears never takes its conf with it.
+- **It writes nothing into the folder** — no `public\`, no placeholder
+  `index.php`, as `site add` would make for a new project. A `public\` that is
+  there is served; otherwise the folder itself is.
+- **"Served" means where a conf's `root` really lands**, junctions followed, so
+  a folder reached through `--path`, or named differently from its host, is
+  recognised as taken.
+- **Skipped:** folders starting with `.` or `_`, names that cannot be a
+  hostname (a space or an underscore — rename it, or `site add` it), a folder
+  whose `<folder>.test.conf` already serves something else, and the names in
+  `[sites] ignore`.
+- **The hosts entries for one sync go in together**, so it asks for elevation
+  at most once. One folder failing does not stop the others.
+
+It is on by default and runs by itself in two places besides this command:
+`devcrate start` (whenever nginx is among what is started), and the dashboard,
+which notices a new folder within one scan. `[sites] auto = false` in
+`devcrate.toml` turns those two off; `site sync` still works.
 
 Reloading right after a change is graceful: nginx keeps the old workers alive
 until their connections finish, so a request made in the same instant can still
@@ -1301,6 +1349,10 @@ devcrate config show > C:\devcrate\devcrate.toml
 [nginx]
 dir = "nginx"
 ports = [80, 443]
+
+[sites]
+auto = true          # auto-vhost; false keeps `start` and the dashboard from running it
+ignore = ["scratch"] # folders under projects\ it leaves alone, any case
 
 [mariadb]
 dir = "mariadb"

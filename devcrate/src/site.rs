@@ -169,12 +169,54 @@ pub fn create(
     no_tls: bool,
     force: bool,
 ) -> Result<Created> {
+    create_with(
+        stack,
+        host,
+        &Request { project_path, want_php, no_hosts, no_tls, force, untouched: false },
+    )
+}
+
+/// What [`create_with`] is asked for beyond the hostname.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Request<'a> {
+    pub project_path: Option<&'a Path>,
+    pub want_php: Option<&'a str>,
+    pub no_hosts: bool,
+    pub no_tls: bool,
+    pub force: bool,
+    /// Leave the project folder exactly as it is: no `public\` made in it and
+    /// no placeholder `index.php`. Auto-vhost serves folders someone already
+    /// put work in, and writing into them is not its business.
+    pub untouched: bool,
+}
+
+/// The folder directly under `projects\` that `path` names, if it is one --
+/// including a junction there, which is not followed.
+fn folder_in_projects(stack: &Stack, path: &Path) -> Option<String> {
+    let path = match path.is_absolute() {
+        true => path.to_path_buf(),
+        false => std::env::current_dir().ok()?.join(path),
+    };
+    let projects = stack.root.join("projects").canonicalize().ok()?;
+    let parent = path.parent()?.canonicalize().ok()?;
+    (parent == projects && path.is_dir())
+        .then(|| path.file_name().map(|name| name.to_string_lossy().into_owned()))
+        .flatten()
+}
+
+pub fn create_with(stack: &Stack, host: &str, request: &Request) -> Result<Created> {
+    let Request { project_path, want_php, no_hosts, no_tls, force, untouched } = *request;
     let host = check_host(host)?;
 
     // Checked before anything is created: a path that does not resolve would
     // otherwise become a junction to nowhere under projects\, which then
     // blocks the next attempt with "already exists".
-    let (project_dir, in_tree) = if let Some(path) = project_path {
+    //
+    // A folder already directly under projects\ is served where it is, by
+    // its own name: no junction beside it. That is every auto-vhost, and it
+    // keeps `--path projects\<host>` from deleting the very folder it names
+    // to make room for a junction to it.
+    let (project_dir, folder, in_tree) = if let Some(path) = project_path {
         let abs = path.canonicalize().map_err(|_| {
             let cwd = std::env::current_dir().map(|d| d.display().to_string()).unwrap_or_default();
             anyhow!(
@@ -186,9 +228,12 @@ pub fn create(
         if !abs.is_dir() {
             return Err(anyhow!("{} is not a directory", path.display()));
         }
-        (abs, false)
+        match folder_in_projects(stack, path) {
+            Some(folder) => (abs, folder, true),
+            None => (abs, host.to_string(), false),
+        }
     } else {
-        (stack.root.join("projects").join(host), true)
+        (stack.root.join("projects").join(host), host.to_string(), true)
     };
 
     let php_hint = want_php
@@ -213,7 +258,7 @@ pub fn create(
         ));
     }
 
-    let target_projects_dir = stack.root.join("projects").join(host);
+    let target_projects_dir = stack.root.join("projects").join(&folder);
     if !in_tree {
         if target_projects_dir.exists() {
             let _ = std::fs::remove_file(&target_projects_dir);
@@ -224,19 +269,19 @@ pub fn create(
     }
 
     let (public, root_rel) = if project_dir.join("public").is_dir() {
-        (target_projects_dir.join("public"), format!("projects/{host}/public"))
+        (target_projects_dir.join("public"), format!("projects/{folder}/public"))
     } else {
-        (target_projects_dir.clone(), format!("projects/{host}"))
+        (target_projects_dir.clone(), format!("projects/{folder}"))
     };
 
     let public_existed = public.is_dir();
-    if !public_existed {
+    if !public_existed && !untouched {
         std::fs::create_dir_all(&public)
             .with_context(|| format!("creating {}", public.display()))?;
     }
 
     let index = public.join("index.php");
-    if !index.exists() {
+    if !index.exists() && !untouched {
         std::fs::write(&index, "<?php phpinfo();\n")
             .with_context(|| format!("writing {}", index.display()))?;
     }
@@ -462,6 +507,12 @@ fn repoint(text: &str, php_name: &str, php_id: &str, port: u16) -> (String, usiz
 pub struct Deleted {
     pub host: String,
     pub conf: String,
+    /// The project folder the conf served, as its `root` named it, less a
+    /// trailing `public` -- not necessarily `projects\<host>`.
+    pub folder: String,
+    /// The folder's name when auto-vhost is on and the folder is still under
+    /// `projects\`: the next sync will serve it again unless it is ignored.
+    pub auto_returns: Option<String>,
     pub reload: Reload,
     /// The host was taken out of the devcrate hosts block.
     pub hosts_removed: bool,
@@ -480,6 +531,25 @@ pub fn delete(stack: &Stack, host: &str) -> Result<Deleted> {
         return Err(anyhow!("{} does not exist", stack.rel(&conf)));
     }
 
+    // Read before the conf goes: it is the only record of which folder it
+    // served.
+    let site = Site::read(&conf);
+    let served = site.root.as_deref().map(|root| {
+        let root = root.trim_matches('"');
+        root.strip_suffix("/public").unwrap_or(root).replace('/', "\\")
+    });
+    let folder = served.clone().unwrap_or_else(|| format!("projects\\{host}"));
+    let auto_returns = served
+        .as_deref()
+        .and_then(|s| s.strip_prefix("projects\\"))
+        .filter(|name| {
+            stack.auto_sites
+                && !name.contains('\\')
+                && !stack.auto_sites_ignore.iter().any(|i| i.eq_ignore_ascii_case(name))
+                && stack.root.join("projects").join(name).is_dir()
+        })
+        .map(str::to_string);
+
     std::fs::remove_file(&conf).with_context(|| format!("removing {}", conf.display()))?;
 
     // Here rather than in `remove`, so the dashboard's delete does it too.
@@ -493,6 +563,8 @@ pub fn delete(stack: &Stack, host: &str) -> Result<Deleted> {
     Ok(Deleted {
         host: host.to_string(),
         conf: stack.rel(&conf),
+        folder,
+        auto_returns,
         reload: Reload::of(stack),
         hosts_removed,
         hosts_note,
@@ -512,7 +584,10 @@ pub fn remove(stack: &Stack, host: &str) -> Result<u8> {
     }
 
     println!();
-    println!("The project folder under projects\\{} was left alone.", gone.host);
+    println!("The project folder {} was left alone.", gone.folder);
+    if gone.auto_returns.is_some() {
+        println!("Auto-vhost will serve it again on the next sync; add its name to [sites] ignore in devcrate.toml to stop that.");
+    }
     Ok(exit::OK)
 }
 

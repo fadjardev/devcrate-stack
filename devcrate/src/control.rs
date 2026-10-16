@@ -521,6 +521,26 @@ fn start_one(stack: &Stack, service: &Service) -> Step<Started> {
 pub fn start(stack: &Stack, only: Option<&str>) -> Result<u8> {
     let targets = select(stack, only, STARTUP)?;
     seal_stdio();
+
+    // Auto-vhost first, so nginx comes up already serving any folder added
+    // to projects\ since the last start. Only when nginx is being started:
+    // `start mariadb` has no business writing vhosts.
+    if stack.auto_sites && targets.iter().any(|service| service.kind == ServiceKind::Nginx) {
+        match crate::autosite::sync(stack, crate::autosite::Options::FULL) {
+            Ok(synced) => {
+                let lines = crate::autosite::describe(&synced);
+                if !lines.is_empty() {
+                    println!("Auto-vhost ([sites] in devcrate.toml)");
+                    for line in lines {
+                        println!("  {line}");
+                    }
+                    println!();
+                }
+            }
+            Err(err) => println!("Auto-vhost skipped: {err:#}\n"),
+        }
+    }
+
     println!("Starting {} in {}", subject(&targets, only), stack.root.display());
     println!();
 
