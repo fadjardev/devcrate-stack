@@ -93,34 +93,44 @@ pub fn ensure_cert_for_host(stack: &Stack, host: &str) -> Result<Option<String>>
         return Ok(Some(cert_file_name));
     }
 
-    let Some(mkcert_bin) = find_mkcert(stack) else {
+    if find_mkcert(stack).is_none() {
         return Ok(None);
-    };
+    }
+    Ok(issue(stack, domain).ok())
+}
 
+/// Issue the certificate for a domain group -- `*.<domain>` and `<domain>` --
+/// replacing any pair already there. mkcert writes to temporary names, which
+/// are then renamed over the old files, so nginx never reads half a pair.
+/// Returns the certificate's file name: `_wildcard.<domain>.pem`.
+pub fn issue(stack: &Stack, domain: &str) -> Result<String> {
+    let certs_dir = stack.nginx_prefix.join("conf").join("certs");
+    std::fs::create_dir_all(&certs_dir).with_context(|| format!("creating {}", certs_dir.display()))?;
+    let mkcert_bin = find_mkcert(stack).ok_or_else(|| anyhow!("mkcert not found; `devcrate setup` installs it"))?;
     let _ = ensure_ca_installed(&mkcert_bin);
 
-    let wildcard_pattern = format!("*.{domain}");
+    let cert_file = format!("_wildcard.{domain}.pem");
+    let key_file = format!("_wildcard.{domain}-key.pem");
+    let (new_cert, new_key) = (format!("{cert_file}.new"), format!("{key_file}.new"));
+    let wildcard = format!("*.{domain}");
     let status = Command::new(&mkcert_bin)
         .current_dir(&certs_dir)
-        .args([
-            "-cert-file",
-            &cert_file_name,
-            "-key-file",
-            &key_file_name,
-            &wildcard_pattern,
-            domain,
-        ])
+        .args(["-cert-file", &new_cert, "-key-file", &new_key, &wildcard, domain])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .with_context(|| format!("running mkcert to issue {wildcard_pattern}"))?;
-
-    if status.success() && cert_path.is_file() {
-        Ok(Some(cert_file_name))
-    } else {
-        Ok(None)
+        .with_context(|| format!("running mkcert to issue {wildcard}"))?;
+    if !status.success() || !certs_dir.join(&new_cert).is_file() || !certs_dir.join(&new_key).is_file() {
+        let _ = std::fs::remove_file(certs_dir.join(&new_cert));
+        let _ = std::fs::remove_file(certs_dir.join(&new_key));
+        return Err(anyhow!("mkcert could not issue {wildcard} (exit code {:?})", status.code()));
     }
+    std::fs::rename(certs_dir.join(&new_key), certs_dir.join(&key_file))
+        .with_context(|| format!("putting {key_file} in place"))?;
+    std::fs::rename(certs_dir.join(&new_cert), certs_dir.join(&cert_file))
+        .with_context(|| format!("putting {cert_file} in place"))?;
+    Ok(cert_file)
 }
 
 /// The domain a host's certificate is issued for: the host itself when it is

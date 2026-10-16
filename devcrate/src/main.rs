@@ -7,6 +7,7 @@
 //! and Redis end to end. `uninstall` is the mirror of it, one runtime at a time.
 
 mod autosite;
+mod cert;
 mod bun;
 mod cli;
 mod config;
@@ -34,6 +35,7 @@ mod status;
 mod term;
 mod tui;
 mod uninstall;
+mod x509;
 
 use std::process::ExitCode;
 
@@ -194,6 +196,8 @@ fn run(cli: Cli) -> Result<u8> {
             args.data,
             args.force,
         ),
+        Command::Cert(cli::CertCommand::List) => cert::print_list(&stack),
+        Command::Cert(cli::CertCommand::Renew { hosts, all }) => cert::print_renew(&stack, &hosts, all),
         Command::Dev(cli::DevCommand::Start { site }) => devserver::print_start(&stack, &site),
         Command::Dev(cli::DevCommand::Stop { site }) => devserver::print_stop(&stack, &site),
         Command::Dev(cli::DevCommand::List) => devserver::print_list(&stack),

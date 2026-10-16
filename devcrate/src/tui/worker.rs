@@ -99,6 +99,8 @@ pub enum Job {
     Setup,
     /// `devcrate site sync`: serve the folders no vhost serves yet.
     SiteSync,
+    /// `devcrate cert renew <host>`.
+    CertRenew(String),
     /// `devcrate dev start` / `stop` for a site, whichever it is not.
     DevToggle(String),
     /// `devcrate autostart on` / `off`, whichever it is not.
@@ -137,6 +139,7 @@ impl Job {
             Job::New { kind, name, .. } => format!("Creating the {} project {name}", kind.label()),
             Job::AutostartToggle => "Switching autostart".to_string(),
             Job::DevToggle(host) => format!("Switching the dev server for {host}"),
+            Job::CertRenew(host) => format!("Issuing {host}'s certificate again"),
         }
     }
 
@@ -609,6 +612,15 @@ fn run(stack: &Stack, job: Job, tx: &Sender<Event>) -> JobResult {
                 Err(err) => failure(label, err),
             }
         }
+
+        Job::CertRenew(host) => match crate::cert::renew(stack, std::slice::from_ref(&host)) {
+            Ok(renewal) => {
+                let failed = !renewal.failed.is_empty()
+                    || matches!(renewal.reload, Some(crate::site::Reload::Failed(_)));
+                JobResult { label, lines: crate::cert::describe(&renewal), failed, sites_changed: true }
+            }
+            Err(err) => failure(label, err),
+        },
 
         Job::DevToggle(host) => {
             let running = crate::devserver::list(stack, &crate::probe::ProcessTable::scan())

@@ -103,7 +103,7 @@ pub enum Reload {
 }
 
 impl Reload {
-    fn of(stack: &Stack) -> Reload {
+    pub fn of(stack: &Stack) -> Reload {
         match control::reload_nginx(stack) {
             Ok(true) => Reload::Done,
             Ok(false) => Reload::NginxNotRunning,

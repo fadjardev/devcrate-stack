@@ -35,6 +35,8 @@ pub struct Config {
     pub mailpit: MailpitConfig,
     #[serde(default)]
     pub sites: SitesConfig,
+    #[serde(default)]
+    pub certs: CertsConfig,
     /// One table per installed PHP version. Empty means "discover them".
     #[serde(default)]
     pub php: Vec<PhpConfig>,
@@ -92,6 +94,15 @@ pub struct RedisConfig {
     /// by side, so it is a single directory like MariaDB's.
     pub dir: Option<PathBuf>,
     pub port: Option<u16>,
+}
+
+/// The vhosts' certificates (see [`crate::cert`]).
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CertsConfig {
+    /// `start` issues again any certificate that is expired, expiring, not
+    /// covering its host, or from another CA. On unless set to `false`.
+    pub auto_renew: Option<bool>,
 }
 
 /// Auto-vhost: a folder under `projects\` with no vhost serving it becomes
@@ -240,6 +251,8 @@ pub struct Stack {
     pub auto_sites: bool,
     /// `[sites] ignore`: folders under `projects\` auto-vhost never serves.
     pub auto_sites_ignore: Vec<String>,
+    /// `[certs] auto_renew`: renew certificates that need it on `start`.
+    pub auto_renew_certs: bool,
 }
 
 impl Stack {
@@ -387,6 +400,7 @@ impl Stack {
             services,
             auto_sites: config.sites.auto.unwrap_or(true),
             auto_sites_ignore: config.sites.ignore.clone(),
+            auto_renew_certs: config.certs.auto_renew.unwrap_or(true),
         })
     }
 
@@ -507,6 +521,7 @@ impl Stack {
 
         config.sites.auto = Some(self.auto_sites);
         config.sites.ignore = self.auto_sites_ignore.clone();
+        config.certs.auto_renew = Some(self.auto_renew_certs);
 
         config.php = self
             .php_services()

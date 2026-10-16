@@ -91,6 +91,10 @@ pub enum Command {
     /// Databases on the stack's MariaDB or PostgreSQL.
     Db(DbArgs),
 
+    /// The vhosts' TLS certificates: expiry, coverage, issuer; issue them again.
+    #[command(subcommand)]
+    Cert(CertCommand),
+
     /// A site's `npm run dev` (or `bun run dev`), run and stopped by devcrate.
     #[command(subcommand)]
     Dev(DevCommand),
@@ -219,6 +223,20 @@ pub struct SetupArgs {
     /// shortcuts, the Windows Terminal profile, the autostart task.
     #[arg(long, conflicts_with_all = ["no_start", "no_shortcuts"])]
     pub undo: bool,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CertCommand {
+    /// Every HTTPS vhost's certificate: when it expires, and whether it is fine.
+    List,
+    /// Issue certificates again with mkcert: the hosts named, every one with
+    /// --all, or with neither the ones that need it.
+    Renew {
+        /// Sites: shop or shop.test.
+        hosts: Vec<String>,
+        #[arg(long, conflicts_with = "hosts")]
+        all: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]

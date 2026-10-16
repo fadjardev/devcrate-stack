@@ -411,6 +411,12 @@ fn render_sites(frame: &mut Frame, app: &App, area: Rect) {
                     false => Span::styled("✗ exited", Style::new().fg(BAD)),
                 })
                 .unwrap_or_else(|| Span::styled("-", Style::new().fg(MUTED)));
+            let cert = app
+                .report
+                .as_ref()
+                .and_then(|report| report.certs.iter().find(|cert| cert.host == site.host))
+                .map(cert_cell)
+                .unwrap_or_else(|| Span::styled("-", Style::new().fg(MUTED)));
             Row::new(vec![
                 Cell::from(Line::from(vec![
                     Span::styled(if site.tls { "https://" } else { "http://" }, Style::new().fg(MUTED)),
@@ -418,6 +424,7 @@ fn render_sites(frame: &mut Frame, app: &App, area: Rect) {
                 ])),
                 Cell::from(Line::from(php)),
                 Cell::from(Line::from(dev)),
+                Cell::from(Line::from(cert)),
                 Cell::from(root).style(Style::new().fg(MUTED)),
             ])
         })
@@ -427,9 +434,15 @@ fn render_sites(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_stateful_widget(
         Table::new(
             rows,
-            [Constraint::Min(24), Constraint::Length(12), Constraint::Length(10), Constraint::Min(20)],
+            [
+                Constraint::Min(24),
+                Constraint::Length(12),
+                Constraint::Length(10),
+                Constraint::Length(10),
+                Constraint::Min(20),
+            ],
         )
-        .header(table_header(["VHOST", "PHP", "DEV", "ROOT"]))
+        .header(table_header(["VHOST", "PHP", "DEV", "CERT", "ROOT"]))
         .block(focused(&format!("Sites ({})", app.sites.len())))
         .column_spacing(2)
         .row_highlight_style(highlight())
@@ -438,6 +451,22 @@ fn render_sites(frame: &mut Frame, app: &App, area: Rect) {
         area,
         &mut state,
     );
+}
+
+/// A site's certificate in a few characters: how long it has, or what is wrong.
+fn cert_cell(cert: &crate::cert::SiteCert) -> Span<'static> {
+    use crate::cert::CertState;
+    let days = cert.days_left.unwrap_or(0);
+    match cert.state {
+        CertState::Ok if days >= 365 => Span::styled(format!("✓ {}y", days / 365), Style::new().fg(OK)),
+        CertState::Ok => Span::styled(format!("✓ {days}d"), Style::new().fg(OK)),
+        CertState::Expiring => Span::styled(format!("! {days}d"), Style::new().fg(WARN)),
+        CertState::Expired => Span::styled("✗ expired", Style::new().fg(BAD)),
+        CertState::NotCovering => Span::styled("✗ name", Style::new().fg(BAD)),
+        CertState::ForeignCa => Span::styled("✗ CA", Style::new().fg(BAD)),
+        CertState::Missing => Span::styled("✗ missing", Style::new().fg(BAD)),
+        CertState::Unreadable => Span::styled("✗ bad", Style::new().fg(BAD)),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -924,6 +953,7 @@ fn help_text() -> Text<'static> {
         row("n", "new vhost"),
         row("N", "new Laravel / WordPress project"),
         row("v", "the project's dev server (npm run dev) on / off"),
+        row("R", "issue the site's certificate again (mkcert)"),
         row("p", "change PHP version"),
         row("o / e / c", "open in the browser / Explorer / a terminal"),
         row("d", "delete the conf"),

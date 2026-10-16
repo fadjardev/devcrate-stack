@@ -238,6 +238,7 @@ mod tests {
             python_dir: root.join("python"),
             auto_sites: true,
             auto_sites_ignore: Vec::new(),
+            auto_renew_certs: true,
             services: vec![
                 Service {
                     id: "nginx".into(),
@@ -291,6 +292,7 @@ mod tests {
             ],
             sites: vec!["myapp.test".into()],
             dev: Vec::new(),
+            certs: Vec::new(),
         }
     }
 
@@ -586,9 +588,48 @@ mod tests {
         assert!(screen.contains("● :5173"), "{screen}");
         assert!(screen.contains("✗ exited"), "{screen}");
         assert!(screen.contains("v dev"), "the footer names v: {screen}");
+        assert!(screen.contains("CERT"), "{screen}");
 
         let job = app.on_key(KeyEvent::from(KeyCode::Char('v'))).expect("a job");
         assert!(matches!(job, worker::Job::DevToggle(ref host) if host == "myapp.test"));
+    }
+
+    /// The CERT column says how long each site's certificate has, or what is
+    /// wrong with it, and `R` asks for the selected site's to be issued again.
+    #[test]
+    fn certificates_show_in_the_sites_pane() {
+        use crate::cert::{CertState, SiteCert};
+        let mut app = App::new(stack());
+        let mut status = report(State::Up, State::Up);
+        let cert = |host: &str, state: CertState, days: i64| SiteCert {
+            host: host.into(),
+            file: format!("certs/_wildcard.{host}.pem"),
+            state,
+            days_left: Some(days),
+            expires: None,
+            names: Vec::new(),
+        };
+        status.certs = vec![
+            cert("myapp.test", CertState::Ok, 800),
+            cert("old.test", CertState::Expiring, 12),
+            cert("moved.test", CertState::ForeignCa, 700),
+        ];
+        app.on_status(status);
+        app.tab = app::Tab::Sites;
+        let site = |host: &str| crate::site::Site {
+            host: host.into(),
+            root: Some(format!("projects/{host}")),
+            fastcgi_port: Some(9085),
+            tls: true,
+        };
+        app.sites = vec![site("myapp.test"), site("old.test"), site("moved.test")];
+        let screen = draw(&app);
+        assert!(screen.contains("✓ 2y"), "{screen}");
+        assert!(screen.contains("! 12d"), "{screen}");
+        assert!(screen.contains("✗ CA"), "{screen}");
+
+        let job = app.on_key(KeyEvent::from(KeyCode::Char('R'))).expect("a job");
+        assert!(matches!(job, worker::Job::CertRenew(ref host) if host == "myapp.test"));
     }
 
     /// `o`, `e`, and `c` name what to open and leave the spawning to the loop,

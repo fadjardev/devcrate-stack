@@ -106,6 +106,9 @@ pub struct StatusReport {
     /// Dev servers devcrate started (`devcrate dev start`), running or exited.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub dev: Vec<crate::devserver::DevStatus>,
+    /// Every HTTPS vhost's certificate, judged (see [`crate::cert`]).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub certs: Vec<crate::cert::SiteCert>,
 }
 
 pub fn report(stack: &Stack) -> StatusReport {
@@ -132,6 +135,7 @@ pub fn report(stack: &Stack) -> StatusReport {
             .filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
             .collect(),
         dev: crate::devserver::list(stack, &processes),
+        certs: crate::cert::inspect(stack),
     }
 }
 
@@ -268,6 +272,18 @@ pub fn print_text(report: &StatusReport) {
             false => format!("exited -- see {}", dev.log),
         };
         println!("  dev server {}: {} ({}), {}", dev.host, dev.command, dev.pid, state.trim_end());
+    }
+    let troubled: Vec<&crate::cert::SiteCert> = report.certs.iter().filter(|c| c.needs_renewal()).collect();
+    for cert in &troubled {
+        let when = match (cert.state, cert.days_left) {
+            (crate::cert::CertState::Expiring, Some(days)) => format!(" in {days} days"),
+            _ => String::new(),
+        };
+        let line = format!("  certificate for {}: {}{when} ({})", cert.host, cert.state.label(), cert.file);
+        println!("{}", term::paint(&line, Color::Yellow));
+    }
+    if !troubled.is_empty() {
+        println!("  `devcrate cert renew` issues them again (`start` does it by itself)");
     }
 }
 

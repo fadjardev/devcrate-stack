@@ -149,6 +149,7 @@ dashboard never forces: replacing a DLL already there stays `php ext install
 | `N` | New Laravel or WordPress project: a form for the kind, the name, the PHP version, and the database |
 | `p` | Change the selected vhost's PHP version |
 | `v` | Start or stop the selected site's dev server (`devcrate dev`) |
+| `R` | Issue the selected site's certificate again (`devcrate cert renew`) |
 | `o` | Open the site in the default browser |
 | `e` | Open the project folder in Explorer |
 | `c` | Open a terminal in the project folder — Windows Terminal where installed, a cmd window otherwise |
@@ -169,6 +170,15 @@ cannot go to the screen, so it goes to `logs\new-<name>.log` in the stack root,
 which the Logs pane lists under `devcrate`; the footer names each step as it
 starts, and the result names what was not finished, with the command that
 finishes it.
+
+The **CERT** column shows the site's certificate from each scan, judged as
+`devcrate cert list` judges it: `✓ 2y` or `✓ 40d` while it is fine, `! 12d`
+within 30 days of expiring, and `✗ expired`, `✗ name` (it does not cover the
+host), `✗ CA` (another CA issued it), `✗ missing` or `✗ bad` otherwise; `-`
+for a site without HTTPS. `R` runs `devcrate cert renew` for the selected site
+— see [cli.md](cli.md#devcrate-cert). Starting the stack from the dashboard
+renews the ones that need it by itself, as `devcrate start` does, unless
+`[certs] auto_renew = false`.
 
 The **DEV** column shows the site's dev server from each scan: `● :5173` while
 it runs (the port it printed), `✗ exited` when it has gone without being
@@ -249,10 +259,6 @@ escape sequences into a file.
   and deleting a database's data are CLI-only (`--force`, `--data`), and the
   dashboard names the command when it refuses.
 - **Install from a local archive.** `--from` is a CLI affordance.
-- **Report certificate expiry.** The New Site form adds the hosts entry and
-  issues the certificate, as `site add` does (see
-  [cli.md](cli.md#what-this-deliberately-does-not-do)), but nothing shows when a
-  certificate runs out.
 - **Edit anything in a vhost except its PHP version.** The web root, the
   certificate, an added `location` block: still a manual edit. The dashboard, like
   the subcommands, never reformats or regenerates a conf you may have changed by

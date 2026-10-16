@@ -306,7 +306,7 @@ pub fn start(stack: &Stack, name: &str, progress: &mut dyn FnMut(&str)) -> Resul
     to_log(&mut dev, &log)?;
     #[cfg(windows)]
     dev.creation_flags(DETACHED);
-    keep_std_private();
+    crate::control::seal_stdio();
     let child = dev.spawn().with_context(|| format!("running {} run dev", runner.name()))?;
     let pid = child.id();
     // Not waited on: it outlives this process. Dropping the handle does not
@@ -338,29 +338,6 @@ pub fn start(stack: &Stack, name: &str, progress: &mut dyn FnMut(&str)) -> Resul
         }
     }
     Ok(Started { host, pid, command, log: stack.rel(&log), installed, url })
-}
-
-/// Mark devcrate's own stdout and stderr as not inheritable. Windows hands a
-/// child every inheritable handle, not just the ones it is given as its own
-/// output, so without this a dev server -- which outlives devcrate -- would hold
-/// the other end of `devcrate dev start x | tee log.txt` open, and the pipe
-/// would never close. Its output goes to its log file either way.
-fn keep_std_private() {
-    #[cfg(windows)]
-    {
-        use windows_sys::Win32::Foundation::{HANDLE_FLAG_INHERIT, SetHandleInformation};
-        use windows_sys::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE};
-        for which in [STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
-            // SAFETY: a standard handle of this process, or null/invalid, which
-            // SetHandleInformation rejects without effect.
-            unsafe {
-                let handle = GetStdHandle(which);
-                if !handle.is_null() {
-                    SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0);
-                }
-            }
-        }
-    }
 }
 
 fn to_log(command: &mut Command, log: &Path) -> Result<()> {

@@ -498,7 +498,7 @@ fn boot(kind: ServiceKind) -> Duration {
 /// Clearing the inherit flag on our own three standard handles is enough, and
 /// costs nothing -- no service here is meant to write to our console anyway.
 #[cfg(windows)]
-fn seal_stdio() {
+pub(crate) fn seal_stdio() {
     use std::io::{stderr, stdin, stdout};
     use std::os::windows::io::AsRawHandle;
 
@@ -516,13 +516,18 @@ fn seal_stdio() {
 }
 
 #[cfg(not(windows))]
-fn seal_stdio() {}
+pub(crate) fn seal_stdio() {}
 
 /// Start the whole stack, or the one service named, and report what happened to
 /// each. In startup order.
 pub fn run_start(stack: &Stack, only: Option<&str>) -> Result<Vec<Step<Started>>> {
     let targets = select(stack, only, STARTUP)?;
     seal_stdio();
+    // The dashboard shows each certificate's state in its Sites pane, so the
+    // renewal itself needs no lines here.
+    if stack.auto_renew_certs && targets.iter().any(|service| service.kind == ServiceKind::Nginx) {
+        let _ = crate::cert::renew_needed(stack);
+    }
     Ok(targets.iter().map(|service| start_one(stack, service)).collect())
 }
 
@@ -559,6 +564,23 @@ pub fn start(stack: &Stack, only: Option<&str>) -> Result<u8> {
                 }
             }
             Err(err) => println!("Auto-vhost skipped: {err:#}\n"),
+        }
+    }
+
+    // Then certificates, so nginx loads them already renewed.
+    if stack.auto_renew_certs && targets.iter().any(|service| service.kind == ServiceKind::Nginx) {
+        match crate::cert::renew_needed(stack) {
+            Ok(renewal) => {
+                let lines = crate::cert::describe(&renewal);
+                if !lines.is_empty() {
+                    println!("Certificates ([certs] in devcrate.toml)");
+                    for line in lines {
+                        println!("  {line}");
+                    }
+                    println!();
+                }
+            }
+            Err(err) => println!("Certificate renewal skipped: {err:#}\n"),
         }
     }
 

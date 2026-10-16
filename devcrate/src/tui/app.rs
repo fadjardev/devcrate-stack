@@ -658,6 +658,10 @@ impl App {
                 let host = self.selected_site()?.host.clone();
                 self.submit(Job::DevToggle(host))
             }
+            KeyCode::Char('R') => {
+                let host = self.selected_site()?.host.clone();
+                self.submit(Job::CertRenew(host))
+            }
             KeyCode::Char('o') => self.launch(Launch::Browser),
             KeyCode::Char('e') => self.launch(Launch::Folder),
             KeyCode::Char('c') => self.launch(Launch::Terminal),

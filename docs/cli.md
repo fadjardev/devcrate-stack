@@ -116,6 +116,7 @@ visible rather than mysterious.
 | `devcrate site set-php <host> <version>` | **works** — repoints an existing vhost |
 | `devcrate site remove <host>` | **works** — removes the conf, keeps the project |
 | `devcrate site sync [--dry-run]` | **works** — auto-vhost: serves each folder under `projects\` that no vhost serves yet as `<folder>.test` |
+| `devcrate cert list` / `cert renew [site...] [--all]` | **works** — each HTTPS vhost's certificate: expiry, whether it covers the host, whether this machine's mkcert CA issued it; issue it again (see below) |
 | `devcrate dev start\|stop <site>` / `dev list` | **works** — a site's `npm run dev` / `bun run dev`, supervised: tracked by PID, logged, stopped with the stack (see below) |
 | `devcrate new laravel\|wordpress <name>` | **works** — code, vhost, database, and `.env` / `wp-config.php` in one step (see below) |
 | `devcrate setup [--no-start] [--no-shortcuts]` | **works** — installs nginx, PHP, MariaDB, Composer, and mkcert where missing, trusts mkcert's CA, starts the stack, makes shortcuts to the dashboard (see below) |
@@ -699,6 +700,60 @@ Two things it deliberately will not do:
 The configuration is tested with `nginx -t` before the reload, as with
 `site add`. Changing the version does **not** start that version's FastCGI
 worker — the output says which one you need.
+
+### `devcrate cert`
+
+```
+devcrate cert list               REM every HTTPS vhost's certificate, judged
+devcrate cert renew              REM issue again the ones that need it
+devcrate cert renew shop         REM ...or the ones named
+devcrate cert renew --all        REM ...or every one in use
+```
+
+```
+  HOST                       CERTIFICATE                          EXPIRES     STATE
+  api.shop.test              certs/_wildcard.shop.test.pem        2028-09-09  ok (693 days)
+  blog.test                  certs/_wildcard.test.pem             2028-09-09  does not cover the host
+  moved.test                 certs/_wildcard.moved.test.pem       2029-01-15  issued by another CA
+```
+
+Each HTTPS vhost's conf names its certificate (`ssl_certificate`, relative
+to `nginx\conf`), and several vhosts can share one — `api.shop.test` and
+`www.shop.test` use the `shop.test` group's. So a certificate is judged per
+vhost, as one of:
+
+- **ok**, with the days it has left;
+- **expiring** — within 30 days;
+- **expired**;
+- **does not cover the host** — no name on it matches, the way a browser
+  matches: exactly, or a `*.` wildcard for exactly one more label. The old
+  `*.test` certificate is this for every host, since browsers refuse a wildcard
+  straight under a top-level domain;
+- **issued by another CA** — not by this machine's mkcert CA (read from
+  `mkcert -CAROOT`), as happens when a stack is copied to another machine or
+  mkcert's CA is made again. Browsers refuse it. When mkcert or its CA cannot
+  be found, no certificate is judged by its issuer, and `cert list` says so;
+- **missing** or **unreadable**.
+
+The certificates are read by devcrate itself — the expiry date, the
+subjectAltName DNS names, the issuer — not through `openssl` or `certutil`,
+whose output follows the machine's locale. Nothing checks a signature; that is
+the browser's job, and these answers are for reporting.
+
+**`cert renew`** issues the host's group certificate again with mkcert —
+`*.<group>` and `<group>`, the same names `site add` gives it — once per group
+however many hosts share it. mkcert writes to temporary names, which are then
+renamed over the old pair, so nginx never reads half of one. A vhost whose conf
+named a different certificate (`*.test`, say) has its `ssl_certificate` and
+`ssl_certificate_key` lines pointed at the new one, and nothing else in the
+conf changes. nginx is reloaded once at the end. With no site named and no
+`--all`, it renews exactly the ones `cert list` does not call ok.
+
+**`start` renews by itself.** Whenever nginx is among what is started, the
+certificates that need it are issued again first, so nginx loads them fresh,
+and the lines say which. `[certs] auto_renew = false` in `devcrate.toml`
+turns that off. `devcrate status` (and `status --json`, under `certs`) lists
+every certificate that is not ok.
 
 ### `devcrate dev`
 
@@ -1603,6 +1658,9 @@ ports = [80, 443]
 auto = true          # auto-vhost; false keeps `start` and the dashboard from running it
 ignore = ["scratch"] # folders under projects\ it leaves alone, any case
 
+[certs]
+auto_renew = true    # `start` issues again any certificate that needs it
+
 [mariadb]
 dir = "mariadb"
 port = 3306
@@ -1663,13 +1721,14 @@ ignored, so a typo is an error instead of a setting that silently does nothing.
   write). When writing needs elevation, a UAC prompt copies the new content
   into place instead; declining leaves the file untouched and the line printed
   for you.
-- **Never installs mkcert.** `site add` issues or reuses a certificate
-  (`myapp.test` + `*.myapp.test` for `myapp.test`, `mygroup.test` +
-  `*.mygroup.test` for `api.mygroup.test`) with an mkcert it
-  finds in the stack root, in `mkcert\`, or on `PATH`, running `mkcert -install`
-  first; `--no-tls` skips it. There is no `devcrate install mkcert`, nothing
-  reports a certificate's expiry, and `site remove` leaves the certificate in
-  place, since another site may share the wildcard.
+- **No `devcrate install mkcert`.** `devcrate setup` places mkcert in the
+  stack root when none is found, but it cannot be installed, updated, or
+  removed on its own. `site add` issues or reuses a certificate (`myapp.test` +
+  `*.myapp.test` for `myapp.test`, `mygroup.test` + `*.mygroup.test` for
+  `api.mygroup.test`) with an mkcert it finds in the stack root, in `mkcert\`,
+  or on `PATH`, running `mkcert -install` first; `--no-tls` skips it.
+  `site remove` leaves the certificate in place, since another site may share
+  it.
 - **No supervision from a subcommand.** `start` launches and walks away;
   `status` and `stop` find their targets by scanning, not by remembering what
   was launched. So a service that dies five minutes later is reported by
