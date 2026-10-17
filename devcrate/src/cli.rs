@@ -99,6 +99,10 @@ pub enum Command {
     #[command(subcommand)]
     Dev(DevCommand),
 
+    /// The stack's folders on your user PATH: php, composer, psql, mariadb, ...
+    /// from any terminal. With no subcommand, show which are on it.
+    Path(PathArgs),
+
     /// Start the stack when you log on to Windows. Off unless switched on.
     #[command(subcommand)]
     Autostart(AutostartCommand),
@@ -126,6 +130,26 @@ pub struct NewArgs {
     /// Do not issue a certificate for the host.
     #[arg(long)]
     pub no_tls: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct PathArgs {
+    #[command(subcommand)]
+    pub command: Option<PathCommand>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PathCommand {
+    /// Put folders on your user PATH (no Administrator); all installed ones by default.
+    Add {
+        /// devcrate, php, composer, mariadb, postgres, redis, python, node, bun.
+        names: Vec<String>,
+    },
+    /// Take folders off your user PATH; all of this stack's by default.
+    Remove {
+        /// devcrate, php, composer, mariadb, postgres, redis, python, node, bun.
+        names: Vec<String>,
+    },
 }
 
 #[derive(Debug, Args)]

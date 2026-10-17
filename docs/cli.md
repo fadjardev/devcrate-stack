@@ -121,7 +121,8 @@ visible rather than mysterious.
 | `devcrate dev start\|stop <site>` / `dev list` | **works** — a site's `npm run dev` / `bun run dev`, supervised: tracked by PID, logged, stopped with the stack (see below) |
 | `devcrate new laravel\|wordpress <name>` | **works** — code, vhost, database, and `.env` / `wp-config.php` in one step (see below) |
 | `devcrate setup [--no-start] [--no-shortcuts]` | **works** — installs nginx, PHP, MariaDB, Composer, and mkcert where missing, trusts mkcert's CA, starts the stack, makes shortcuts to the dashboard (see below) |
-| `devcrate setup --undo` | **works** — removes the shortcuts, the Windows Terminal profile, and the autostart task, nothing else |
+| `devcrate setup --undo` | **works** — removes the shortcuts, the Windows Terminal profile, the autostart task, and the `PATH` entries devcrate added, nothing else |
+| `devcrate path` / `path add\|remove [name...]` | **works** — the stack's folders (`php\current`, `composer`, `mariadb\bin`, `postgres\bin`, ...) on your user `PATH`, no Administrator; `install` adds a runtime's the first time (see below) |
 | `devcrate autostart on\|off\|status` | **works** — `devcrate start` at logon, through Task Scheduler, no Administrator; off by default |
 | `devcrate install php <version>` | **works** — downloads, verifies sha256, installs |
 | `devcrate install php` (no version) | **works** — lists the versions windows.php.net offers |
@@ -367,7 +368,7 @@ CLI PHP -> PHP 8.5 (php\php-8.5)
 ```
 
 What `phpuse.bat` does: repoint the `php\current` junction, which is what sits
-on `PATH`, so `php`, `composer`, and `laravel` resolve to the chosen build. The
+on `PATH` ([`devcrate path`](#devcrate-path)), so `php`, `composer`, and `laravel` resolve to the chosen build. The
 FastCGI workers are untouched — each vhost names its own port, so switching the
 CLI version never changes what a site is served with.
 
@@ -481,9 +482,9 @@ Python is a **toolchain, not a service** — it has no long-lived listener, so i
 is never started, stopped, or shown in the `status` service table (it appears
 there as a one-line `Python 3.8 (via python\current)` instead). `python use` is
 the exact analogue of `php use`: it repoints the `python\current` junction that
-sits on `PATH`, so `python` and `pip` resolve to the chosen build. Put
-`python\current` and its `Scripts\` on `PATH` once, the way `php\current` was
-added.
+sits on `PATH`, so `python` and `pip` resolve to the chosen build. The first
+`install python` puts `python\current` and its `Scripts\` on your user `PATH`
+([`devcrate path`](#devcrate-path)).
 
 Versions live in `python\python-<X.Y>` and are matched on their digits, so `3.8`,
 `38`, and `python-3.8` are one version. Install one with
@@ -1003,7 +1004,10 @@ and that `php.ini` kept as it is, rather than refused as already installed.
 mkcert's GitHub releases carry no checksum, so its download is length-checked
 over TLS, the same as nginx's, and the line says so.
 
-**Shortcuts — the one step that writes outside the stack root.** Last, after
+Each runtime setup installs fresh also goes on your user `PATH`, as any first
+install does ([`devcrate path`](#devcrate-path)).
+
+**Shortcuts, the other thing written outside the stack root.** Last, after
 the stack is up, `setup` makes a shortcut to the dashboard in the Start Menu
 and on the Desktop (wherever Windows says the Desktop is — often OneDrive), and,
 where Windows Terminal is installed, a Windows Terminal profile. The profile is
@@ -1062,6 +1066,74 @@ code: 1 means at least one service did not start.
 removes it, and the `\Devcrate\` task folder once nothing else is in it.
 `setup --undo` removes it too. In the dashboard, `A` on the Services pane
 switches it.
+
+### `devcrate path`
+
+```
+devcrate path                     REM which of the stack's folders are on PATH
+devcrate path add                 REM all the installed ones
+devcrate path add postgres php    REM just these
+devcrate path remove node         REM take one off again
+```
+
+```
+User PATH entries for C:\devcrate (HKCU\Environment):
+  on   C:\devcrate                         devcrate, phpuse, new-vhost, mkcert
+  on   C:\devcrate\php\current             php
+  off  C:\devcrate\composer                composer
+  off  C:\devcrate\mariadb\bin             mariadb, mariadb-dump
+  on   C:\devcrate\postgres\bin            psql, pg_dump, createdb
+  on   C:\devcrate\python\current          python  -- but C:\Python312 comes first
+   -   C:\devcrate\bun\current             bun  (not installed)
+```
+
+This makes the stack's command-line tools reachable from any terminal without
+`cd`-ing into the stack root. The folders are the stable ones: `php\current`,
+`python\current`, `node\current`, and `bun\current` are the junctions `use`
+repoints. Each goes on `PATH` once and keeps answering through every version
+switch. A name stands for its folders:
+
+- `devcrate`: the stack root (`devcrate.exe`, the `.bat` helpers, mkcert)
+- `php`, `composer`, `mariadb`, `postgres`, `bun`
+- `redis`: `redis-cli`
+- `python`: `python\current` and its `Scripts\`
+- `node`: `node\current` and `node\npm-global`, where `npm -g` puts commands
+
+nginx, RabbitMQ, Erlang, Mailpit, and Adminer have no folder here, and naming one
+is refused: they are run by `devcrate start`, not from a prompt.
+
+It writes your **user** `PATH` (`HKCU\Environment`). That needs no Administrator
+and touches no other account. The value is written in the registry directly and
+keeps its type: a `REG_EXPAND_SZ` stays one, so `%USERPROFILE%\...` entries keep
+expanding. .NET's `SetEnvironmentVariable` and `setx` both lose the type, and
+`setx` also cuts the value at 1024 characters. New entries go to the **front**
+of the user `PATH`, so `php` is the stack's PHP rather than another one listed
+earlier. Entries already there stay where they are, and the rest of the value is
+kept exactly as written. Programs are told the environment changed, so
+**terminals opened afterwards** see it; ones already open keep the `PATH` they
+started with.
+
+The system `PATH` is searched before any user entry, so a PHP or Python
+installed for all users can still win. The listing shows this as `-- but
+<folder> comes first`: it looks for the same executable along the `PATH` a new
+terminal would search. `add` with no names adds only folders that exist; naming
+one that is not installed skips it and says so. `remove` takes an entry off
+however it was spelled: any case, `/` or `\`, a trailing `\`, or a
+`%VARIABLE%`.
+
+**`install` adds them for you.** The first install of a runtime puts its folders
+and the stack root on your user `PATH`, from the command line and the dashboard
+alike, and the install's output lists what it added. An install that replaces or
+updates an existing one leaves `PATH` alone. A `current` junction that `use` has
+not created yet is added all the same, so the first `php use` reaches the
+command line. Changing `PATH` never fails an install: if the registry refuses,
+the install finishes and says to run `devcrate path add`. An entry taken off with
+`path remove` stays off until that runtime is next installed from nothing.
+
+What `install` and `path add` put there is recorded in the root's
+`devcrate-setup.json`, beside the shortcuts and the autostart task. So
+**`setup --undo`** takes it back off: only those entries, never ones you added
+yourself.
 
 ### `devcrate install`
 
@@ -1390,8 +1462,11 @@ the tangle [`nginx migrate`](#devcrate-nginx) exists to undo.
 
 Composer 2.10.2 installed in composer
   Composer version 2.10.2 2025-06-...
-  put it on PATH   add composer (once, like php\current)
   then             composer --version
+
+  on PATH   C:\devcrate
+  on PATH   C:\devcrate\composer
+  (your user PATH; open a new terminal to use it -- `devcrate path remove` takes it off)
 ```
 
 **The catalogue is `getcomposer.org/versions`, JSON** — machine-readable, unlike
@@ -1430,8 +1505,8 @@ that hold `COMPOSER_HOME` and `COMPOSER_CACHE_DIR`
 ([architecture.md](architecture.md)). Two shims are written next to it —
 `composer.bat` for cmd/PowerShell and an extension-less `composer` for Git Bash
 — each of which runs the phar with *bare* `php`, so Composer resolves through the
-same `php\current` on `PATH` that `php` itself does. Add `composer\` to `PATH`
-once, the way `php\current` was added.
+same `php\current` on `PATH` that `php` itself does. The first install puts
+`composer\` on your user `PATH` ([`devcrate path`](#devcrate-path)).
 
 **Installing over an existing Composer updates it**, rather than refusing the way
 a version does. A phar already there is a tool to replace, not a version to
@@ -1547,9 +1622,9 @@ install uncomments that line, then fetches the *branch-specific*
 `bootstrap.pypa.io/pip/3.8/get-pip.py` (the generic script targets the newest
 Python and fails on 3.8) and runs it. Bootstrapping pip is the one networked
 step, so it degrades to a message rather than a failure when there is none — the
-Python is installed and usable, and pip can be finished later. Put
-`python\current` **and its `Scripts\`** on `PATH` once, the way `php\current`
-was added.
+Python is installed and usable, and pip can be finished later. The first
+install puts `python\current` **and its `Scripts\`** on your user `PATH`;
+`devcrate python use` then decides which build they reach.
 
 > Python 3.8 is end-of-life (final Windows build 3.8.10, May 2021). It is
 > supported here for legacy projects locked to it; prefer a maintained branch

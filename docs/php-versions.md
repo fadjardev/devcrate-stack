@@ -56,8 +56,9 @@ On a fresh machine, run the switcher once — it creates the junction itself:
 C:\devcrate\phpuse.bat 8.5
 ```
 
-Then add both of these to your **user** PATH (not system), using your actual
-stack root, and open a new terminal:
+Then put both of these on your **user** PATH (not system), and open a new
+terminal. `devcrate path add devcrate php` does it, and `devcrate install php`
+already did on its first run:
 
 ```
 C:\devcrate\php\current

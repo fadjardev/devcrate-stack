@@ -1,6 +1,6 @@
 //! What devcrate writes outside the stack root, and taking it back.
 //!
-//! Three things, all per user and none needing Administrator:
+//! Four things, all per user and none needing Administrator:
 //!
 //! - **Shortcuts** to the dashboard in the Start Menu and on the Desktop,
 //!   made by `setup` unless `--no-shortcuts`.
@@ -11,6 +11,9 @@
 //! - **Autostart**: a Task Scheduler task, `\Devcrate\Start <root>`, that runs
 //!   `devcrate start` when this user logs on. Off unless `devcrate autostart
 //!   on`.
+//! - **User `PATH` entries** for the stack's folders, added by `install` the
+//!   first time it installs a runtime and by `devcrate path add` (see
+//!   [`crate::userpath`]).
 //!
 //! Every path and task written is recorded in the root's `devcrate-setup.json`,
 //! and `setup --undo` removes exactly what that receipt lists -- so two stack
@@ -48,6 +51,9 @@ pub struct Receipt {
     /// The autostart task's name under `\Devcrate\`, while it is on.
     #[serde(default)]
     pub task: Option<String>,
+    /// Folders put on the user `PATH`, as they were written there.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub path: Vec<String>,
 }
 
 impl Receipt {
@@ -61,7 +67,7 @@ impl Receipt {
 
     fn write(&self, stack: &Stack) -> Result<()> {
         let path = stack.root.join(RECEIPT);
-        if self.files.is_empty() && self.task.is_none() {
+        if self.files.is_empty() && self.task.is_none() && self.path.is_empty() {
             if path.exists() {
                 std::fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
             }
@@ -80,6 +86,18 @@ impl Receipt {
 
 fn same_path(a: &Path, b: &Path) -> bool {
     a.to_string_lossy().eq_ignore_ascii_case(&b.to_string_lossy())
+}
+
+/// Note folders put on, and taken off, the user `PATH`.
+pub fn record_path(stack: &Stack, added: &[String], removed: &[String]) -> Result<()> {
+    let mut receipt = Receipt::read(stack)?;
+    receipt.path.retain(|known| !removed.iter().any(|gone| same_path(Path::new(known), Path::new(gone))));
+    for dir in added {
+        if !receipt.path.iter().any(|known| same_path(Path::new(known), Path::new(dir))) {
+            receipt.path.push(dir.clone());
+        }
+    }
+    receipt.write(stack)
 }
 
 // ---------------------------------------------------------------------------
@@ -365,6 +383,8 @@ pub struct Undone {
     /// Listed in the receipt but already gone.
     pub missing: Vec<PathBuf>,
     pub task_removed: bool,
+    /// Taken off the user `PATH`.
+    pub path_removed: Vec<String>,
 }
 
 /// Remove everything the receipt lists, then the receipt.
@@ -387,6 +407,9 @@ pub fn undo(stack: &Stack) -> Result<Undone> {
     }
     if let Some(name) = &receipt.task {
         undone.task_removed = remove_task(name)?;
+    }
+    if !receipt.path.is_empty() {
+        undone.path_removed = crate::userpath::remove_dirs(stack, &receipt.path)?;
     }
     Receipt::default().write(stack)?;
     Ok(undone)
@@ -482,7 +505,8 @@ pub fn print_autostart(stack: &Stack, action: &str) -> Result<u8> {
 /// `devcrate setup --undo`.
 pub fn print_undo(stack: &Stack) -> Result<u8> {
     let undone = undo(stack)?;
-    if undone.removed.is_empty() && undone.missing.is_empty() && !undone.task_removed {
+    if undone.removed.is_empty() && undone.missing.is_empty() && !undone.task_removed && undone.path_removed.is_empty()
+    {
         println!("Nothing to undo: this stack has written nothing outside {}", stack.root.display());
         return Ok(exit::OK);
     }
@@ -494,6 +518,9 @@ pub fn print_undo(stack: &Stack) -> Result<u8> {
     }
     if undone.task_removed {
         println!("  removed  the autostart task {TASK_PATH}{}", task_name(&stack.root));
+    }
+    for dir in &undone.path_removed {
+        println!("  removed  {dir} from your user PATH");
     }
     println!("Nothing outside {} is devcrate's any more. The stack itself is untouched.", stack.root.display());
     Ok(exit::OK)

@@ -35,6 +35,7 @@ mod status;
 mod term;
 mod tui;
 mod uninstall;
+mod userpath;
 mod x509;
 
 use std::process::ExitCode;
@@ -167,6 +168,11 @@ fn run(cli: Cli) -> Result<u8> {
         Command::Restart(args) => control::restart(&stack, args.service.as_deref()),
         Command::Setup(args) if args.undo => integration::print_undo(&stack),
         Command::Setup(args) => setup::print(&stack, !args.no_start, !args.no_shortcuts),
+        Command::Path(args) => match args.command {
+            None => userpath::print_status(&stack),
+            Some(cli::PathCommand::Add { names }) => userpath::print_add(&stack, &names),
+            Some(cli::PathCommand::Remove { names }) => userpath::print_remove(&stack, &names),
+        },
         Command::Autostart(cli::AutostartCommand::On) => integration::print_autostart(&stack, "on"),
         Command::Autostart(cli::AutostartCommand::Off) => integration::print_autostart(&stack, "off"),
         Command::Autostart(cli::AutostartCommand::Status) => integration::print_autostart(&stack, "status"),

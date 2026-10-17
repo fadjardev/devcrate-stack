@@ -35,4 +35,10 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_NetworkManagement_IpHelper",
     # GetConsoleMode / SetConsoleMode: enabling ANSI on a Windows console.
     "Win32_System_Console",
+    # ExpandEnvironmentStringsW: comparing %VAR% entries on the user PATH.
+    "Win32_System_Environment",
+    # Reading and writing the user PATH in HKCU\Environment.
+    "Win32_System_Registry",
+    # WM_SETTINGCHANGE: telling new terminals the PATH changed.
+    "Win32_UI_WindowsAndMessaging",
 ] }

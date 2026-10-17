@@ -216,8 +216,8 @@ setx COMPOSER_HOME      "C:\devcrate\composer\home"
 setx COMPOSER_CACHE_DIR "C:\devcrate\composer\cache"
 ```
 
-Add `C:\devcrate\composer` to `PATH` (once, the way `php\current` was added) so
-`composer` resolves; the shim runs the phar with bare `php`, so it uses whatever
+Put `C:\devcrate\composer` on `PATH` (`devcrate path add composer`; `devcrate
+install composer` does it on its first run) so `composer` resolves; the shim runs the phar with bare `php`, so it uses whatever
 version `php\current` names. Restart open terminals afterward, and verify with
 `composer --version`.
 

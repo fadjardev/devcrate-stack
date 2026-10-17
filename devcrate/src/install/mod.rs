@@ -2069,7 +2069,16 @@ fn install_with(
     emit.end_progress();
 
     print_installed(&done, emit);
+    put_on_path(stack, &done, emit);
     Ok(InstallOutcome::Installed(Box::new(done)))
+}
+
+/// The first install of a runtime puts its folders on the user `PATH`; one
+/// that replaced an existing installation leaves `PATH` as the user has it.
+fn put_on_path(stack: &Stack, done: &Installed, emit: &mut dyn Emit) {
+    if !done.replaced {
+        crate::userpath::register_after_install(stack, done.runtime, &mut |text| emit.line(text));
+    }
 }
 
 /// Fetch the vendor's release list, download the wanted version into
@@ -2131,6 +2140,7 @@ fn install_by_download(
     emit.end_progress();
 
     print_installed(&done, emit);
+    put_on_path(stack, &done, emit);
     Ok(InstallOutcome::Installed(Box::new(done)))
 }
 
@@ -2958,7 +2968,6 @@ fn print_python_installed(done: &Installed, py: &PythonInstalled, emit: &mut dyn
     emit_line!(emit);
     emit_line!(emit, "  make it the CLI Python   devcrate python use {}", done.version);
     emit_line!(emit, "  then                     python --version");
-    emit_line!(emit, "  (put python\\current, and its Scripts\\, on PATH once -- like php\\current)");
 }
 
 fn print_node_installed(done: &Installed, node: &NodeInstalledDetails, emit: &mut dyn Emit) {
@@ -3480,7 +3489,6 @@ fn print_composer_installed(done: &Installed, composer: &ComposerInstalled, emit
     }
 
     emit_line!(emit);
-    emit_line!(emit, "  put it on PATH   add {} (once, like php\\current)", composer.dir);
     emit_line!(emit, "  then             composer --version");
 }
 
