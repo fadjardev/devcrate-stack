@@ -3149,11 +3149,12 @@ fn bun_from_archive(
     let source_sha256 = download::sha256_of(archive_path)
         .with_context(|| format!("hashing {}", archive_path.display()))?;
 
-    let version = opts
-        .version
-        .clone()
-        .or_else(|| bun::version_from_file_name(&file_name))
-        .unwrap_or_else(|| "1.2.2".to_string());
+    let Some(version) = opts.version.clone().or_else(|| bun::version_from_file_name(&file_name)) else {
+        bail!(
+            "{file_name} does not say which Bun version it is; name it with the archive, \
+             e.g. `devcrate install bun 1.4.3 --from {file_name}`"
+        );
+    };
 
     let bun_root = stack.root.join("bun");
     let dest = bun_root.join(format!("v{version}"));

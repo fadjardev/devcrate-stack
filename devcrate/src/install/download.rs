@@ -1859,6 +1859,7 @@ mod tests {
         assert_eq!(cat.releases.len(), 1);
         assert_eq!(cat.releases[0].version, "1.2.2");
         assert_eq!(cat.releases[0].url, "https://github.com/oven-sh/bun/releases/download/bun-v1.2.2/bun-windows-x64.zip");
+        assert_eq!(cat.releases[0].archive_name, "bun-v1.2.2-windows-x64.zip");
     }
 }
 
@@ -1962,7 +1963,10 @@ pub fn parse_bun_catalogue(json_text: &str) -> Result<BunCatalogue> {
         }
 
         let version = tag.trim_start_matches("bun-v").trim_start_matches('v').to_string();
-        let archive_name = "bun-windows-x64.zip".to_string();
+        // The asset is `bun-windows-x64.zip` for every release; it is cached
+        // under a name carrying the version, so two releases never share a
+        // file in `_downloads\` and the install can read the version back.
+        let archive_name = format!("bun-v{version}-windows-x64.zip");
         let url = format!("https://github.com/oven-sh/bun/releases/download/{tag}/bun-windows-x64.zip");
 
         releases.push(BunRelease {

@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **npm's cache and global packages stay inside the stack.** The Node installer wrote its `prefix` and `cache` to a `.npmrc` beside `node.exe`, which npm never reads, so the cache went to `%LOCALAPPDATA%\npm-cache` and global packages beside `node.exe`. It now writes `etc\npmrc`, the global config npm reads on Windows, pointing them at `node\npm-cache` and `node\npm-global`; `devcrate node use` writes it for a version installed before the fix.
+- **`install bun` puts each version in its own `bun\v<version>\`.** Bun names its Windows asset `bun-windows-x64.zip` for every release, and the version was read from that name, so every install landed in `bun\vwindows-x64\` and every release shared one file in `_downloads\`. The download is now cached as `bun-v<version>-windows-x64.zip`, and `install bun --from` an archive whose name carries no version asks for one instead of calling it 1.2.2.
 
 ## [0.3.0] - 2026-10-16
 
