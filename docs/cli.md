@@ -1013,7 +1013,11 @@ and on the Desktop (wherever Windows says the Desktop is — often OneDrive), an
 where Windows Terminal is installed, a Windows Terminal profile. The profile is
 a *fragment* in `%LOCALAPPDATA%\Microsoft\Windows Terminal\Fragments\Devcrate\`,
 the documented way for an app to add one; your own `settings.json` is not
-touched. All three run the stack root's `devcrate.exe` with `--root`. They are
+touched. The fragment also carries a colour scheme, `Devcrate`, whose
+background is the dashboard's, and the profile names JetBrains Mono as its font
+when a JetBrains Mono family is installed (the plain one, or a Nerd Font build
+such as `JetBrainsMono NFM`) — a profile naming a font that is not there opens
+with a warning, so none is named then. All three run the stack root's `devcrate.exe` with `--root`. They are
 named `Devcrate`, or `Devcrate (<folder>)` when the root folder is called
 something else, so two stack roots get two sets. A second `setup` rewrites
 them — which also repoints them at a root that has moved — and reports them as

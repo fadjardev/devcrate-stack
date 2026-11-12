@@ -144,6 +144,17 @@ fn exe(stack: &Stack) -> Result<PathBuf> {
 // Where things go
 // ---------------------------------------------------------------------------
 
+/// The JetBrains Mono families the Windows Terminal profile will use, in order
+/// of preference: the plain family, then the Nerd Font builds -- the `Mono`
+/// one first, whose icons are a single cell wide, which is what a table wants.
+const FONTS: [&str; 5] = [
+    "JetBrains Mono",
+    "JetBrainsMono NFM",
+    "JetBrainsMono Nerd Font Mono",
+    "JetBrainsMono NF",
+    "JetBrainsMono Nerd Font",
+];
+
 /// The per-user folders the shortcuts and the profile go into.
 #[derive(Debug, Clone)]
 pub struct Places {
@@ -152,23 +163,42 @@ pub struct Places {
     pub desktop: PathBuf,
     /// Windows Terminal's fragments folder, when Windows Terminal is installed.
     pub wt_fragments: Option<PathBuf>,
+    /// The JetBrains Mono family installed for this user, by the name Windows
+    /// knows it under, for the Windows Terminal profile. `None` when there is
+    /// none: the profile then names no font and Windows Terminal uses its own.
+    pub font: Option<String>,
 }
 
 impl Places {
     /// This user's, as Windows reports them -- the Desktop is often redirected
     /// into OneDrive, so it is asked for rather than assumed.
     pub fn of_user() -> Result<Places> {
-        let out = powershell(
-            "[Environment]::GetFolderPath('Programs')\n[Environment]::GetFolderPath('Desktop')\n",
-        )?;
+        // The font is looked for in a try of its own: a machine where the
+        // font list cannot be read still gets its shortcuts.
+        let wanted: Vec<String> = FONTS.iter().map(|name| ps_quote(name)).collect();
+        let out = powershell(&format!(
+            "[Environment]::GetFolderPath('Programs')\n[Environment]::GetFolderPath('Desktop')\n\
+             try {{\n\
+               Add-Type -AssemblyName System.Drawing\n\
+               $have = (New-Object System.Drawing.Text.InstalledFontCollection).Families | ForEach-Object {{ $_.Name }}\n\
+               $hit = @({wanted}) | Where-Object {{ $have -contains $_ }} | Select-Object -First 1\n\
+               \"font=$hit\"\n\
+             }} catch {{ 'font=' }}\n",
+            wanted = wanted.join(", "),
+        ))?;
         let mut lines = out.lines().map(str::trim).filter(|l| !l.is_empty());
         let programs = PathBuf::from(lines.next().ok_or_else(|| anyhow!("Windows named no Start Menu folder"))?);
         let desktop = PathBuf::from(lines.next().ok_or_else(|| anyhow!("Windows named no Desktop folder"))?);
+        let font = lines
+            .find_map(|line| line.strip_prefix("font="))
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_string);
         let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
         let wt_fragments = local
             .filter(|local| local.join("Microsoft").join("WindowsApps").join("wt.exe").exists())
             .map(|local| local.join("Microsoft").join("Windows Terminal").join("Fragments"));
-        Ok(Places { programs, desktop, wt_fragments })
+        Ok(Places { programs, desktop, wt_fragments, font })
     }
 }
 
@@ -211,7 +241,7 @@ pub fn write_shortcuts(stack: &Stack, places: &Places) -> Result<Vec<Made>> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
         }
-        std::fs::write(&path, wt_fragment(&stack.root, &exe))
+        std::fs::write(&path, wt_fragment(&stack.root, &exe, places.font.as_deref()))
             .with_context(|| format!("writing {}", path.display()))?;
         made.push(Made { path, existed });
     }
@@ -224,20 +254,62 @@ pub fn write_shortcuts(stack: &Stack, places: &Places) -> Result<Vec<Made>> {
     Ok(made)
 }
 
-/// A Windows Terminal fragment adding one profile that opens the dashboard.
-/// The GUID is derived from the root, so a rewrite updates the same profile
-/// rather than adding a second.
-pub fn wt_fragment(root: &Path, exe: &Path) -> String {
-    let json = serde_json::json!({
-        "profiles": [{
-            "guid": profile_guid(root),
-            "name": label(root),
-            "commandline": format!("\"{}\" --root \"{}\"", exe.display(), root.display()),
-            "startingDirectory": root.display().to_string(),
-        }]
+/// A Windows Terminal fragment adding one profile that opens the dashboard,
+/// and the colour scheme it uses. The GUID is derived from the root, so a
+/// rewrite updates the same profile rather than adding a second.
+///
+/// The profile is the one place a font can be chosen: a program in a terminal
+/// draws characters, and the terminal decides what they look like. So the
+/// dashboard's own profile asks for JetBrains Mono -- when `font` says one is
+/// installed, since a profile naming a missing font opens with a warning --
+/// and for a scheme whose background is the dashboard's, so the window's
+/// padding does not show as a frame of another colour around it.
+pub fn wt_fragment(root: &Path, exe: &Path, font: Option<&str>) -> String {
+    let mut profile = serde_json::json!({
+        "guid": profile_guid(root),
+        "name": label(root),
+        "commandline": format!("\"{}\" --root \"{}\"", exe.display(), root.display()),
+        "startingDirectory": root.display().to_string(),
+        "colorScheme": SCHEME,
+        "padding": "12",
     });
-    serde_json::to_string_pretty(&json).unwrap_or_default() + "\n"
+    if let Some(face) = font {
+        profile["font"] = serde_json::json!({ "face": face, "size": 11 });
+    }
+    let json = serde_json::json!({
+        "profiles": [profile],
+        "schemes": [{
+            "name": SCHEME,
+            "background": "#020617",
+            "foreground": "#E2E8F0",
+            "cursorColor": "#818CF8",
+            "selectionBackground": "#1E1B4B",
+            "black": "#0F172A",
+            "red": "#FB7185",
+            "green": "#34D399",
+            "yellow": "#FBBF24",
+            "blue": "#60A5FA",
+            "purple": "#818CF8",
+            "cyan": "#38BDF8",
+            "white": "#E2E8F0",
+            "brightBlack": "#94A3B8",
+            "brightRed": "#FB7185",
+            "brightGreen": "#34D399",
+            "brightYellow": "#FBBF24",
+            "brightBlue": "#60A5FA",
+            "brightPurple": "#818CF8",
+            "brightCyan": "#38BDF8",
+            "brightWhite": "#F8FAFC",
+        }],
+    });
+    serde_json::to_string_pretty(&json).unwrap_or_default() + "
+"
 }
+
+/// The colour scheme the profile names: the dashboard's palette (see
+/// `tui::theme`), for the window around it and for the subcommands' sixteen
+/// colours when they are run in that profile.
+const SCHEME: &str = "Devcrate";
 
 fn profile_guid(root: &Path) -> String {
     let digest = Sha256::digest(root.to_string_lossy().to_ascii_lowercase().as_bytes());
@@ -553,8 +625,8 @@ mod tests {
 
     #[test]
     fn the_terminal_profile_is_stable_per_root() {
-        let a = wt_fragment(Path::new(r"E:\dev"), Path::new(r"E:\dev\devcrate.exe"));
-        let b = wt_fragment(Path::new(r"E:\DEV"), Path::new(r"E:\dev\devcrate.exe"));
+        let a = wt_fragment(Path::new(r"E:\dev"), Path::new(r"E:\dev\devcrate.exe"), None);
+        let b = wt_fragment(Path::new(r"E:\DEV"), Path::new(r"E:\dev\devcrate.exe"), Some("JetBrainsMono NFM"));
         let json: serde_json::Value = serde_json::from_str(&a).unwrap();
         let profile = &json["profiles"][0];
         assert_eq!(profile["name"], "Devcrate (dev)");
@@ -564,6 +636,13 @@ mod tests {
         assert_eq!(&guid[15..16], "5", "a version-5 GUID: {guid}");
         let other: serde_json::Value = serde_json::from_str(&b).unwrap();
         assert_eq!(other["profiles"][0]["guid"], profile["guid"], "same root, any case, same profile");
+
+        // The font is named only when one was found; the scheme always is,
+        // and the fragment carries the scheme it names.
+        assert!(profile.get("font").is_none(), "no font found, none asked for");
+        assert_eq!(other["profiles"][0]["font"]["face"], "JetBrainsMono NFM");
+        assert_eq!(profile["colorScheme"], json["schemes"][0]["name"]);
+        assert_eq!(json["schemes"][0]["background"], "#020617");
     }
 
     /// Real shortcuts, into scratch folders standing in for the Start Menu and
@@ -581,6 +660,7 @@ mod tests {
             programs: base.join("Programs"),
             desktop: base.join("Desktop"),
             wt_fragments: Some(base.join("Fragments")),
+            font: None,
         };
         std::fs::create_dir_all(&places.programs).unwrap();
         std::fs::create_dir_all(&places.desktop).unwrap();

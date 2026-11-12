@@ -10,22 +10,65 @@ devcrate
 ```
 
 ```
-╭──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ ◆ devcrate    1 Services   2 Sites   3 Logs     ● 3/4 up  ✗ 1 crashed  │  CLI PHP php-8.5  │  C:\devcrate │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭ Services (4) ────────────────────────────────────────────────────────────────────────────────────────────╮
-│  SERVICE     STATE         PORTS           UPTIME     PIDS        PATH                                   │
-│                                                                                                          │
-│▌ nginx       ● up          80 443          1h 06m     9184 +2     nginx\current\nginx.exe                │
-│  PHP 7.4     ● up          9074            1h 06m     4212 +4     php\php-7.4\php-cgi.exe                │
-│  PHP 8.2     ✗ crashed     (9082)          -          -           php\php-8.2\php-cgi.exe                │
-│  MariaDB     ● up          3306            1h 06m     7768        mariadb\bin\mariadbd.exe               │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- ● ready
- s start   x stop   t restart   S X T whole stack   i install   u CLI PHP   ? help   q quit
+ ◆ devcrate  v0.3.0                                                                              C:\devcrate
+  1 Services  2 Sites  3 Logs                                    ● 3/4 up  ✗ 1 crashed  ·  CLI PHP php-8.5
+─━━━━━━━━━━━━──────────────────────────────────────────────────────────────────────────────────────────────
+╭ STACK ──────────────────╮╭ SITES ──────────────────╮╭ CERTIFICATES ───────────╮╭ COMMAND LINE ──────────╮
+│ 3/4 up  ✗ 1 crashed     ││ 13 vhosts               ││ ✓ all 13 good           ││ php-8.5                │
+│ ━━━━━━━━━━━━━━━━━━━━━━  ││ 11 PHP · 2 proxied      ││ first to expire: 812d   ││ python-3.8             │
+╰─────────────────────────╯╰─────────────────────────╯╰─────────────────────────╯╰────────────────────────╯
+╭ Services 4 ────────────────────────────────────────────────────────────────────────────────────────────╮
+│  SERVICE     STATE         PORTS           UPTIME     PIDS        PATH                                 │
+│▌ nginx       ● up          80 443          1h 06m     9184 +2     nginx\current
+ginx.exe              │
+│  PHP 7.4     ● up          9074            1h 06m     4212 +4     php\php-7.4\php-cgi.exe              │
+│  PHP 8.2     ✗ crashed     (9082)          -          -           php\php-8.2\php-cgi.exe              │
+│  MariaDB     ● up          3306            1h 06m     7768        mariadbin\mariadbd.exe             │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ◆ ready
+ s start  x stop  t restart  S X T all  i install  U uninstall  u CLI PHP  e PHP ext  ? help  q quit
 ```
 
 Press `?` at any time for the key list.
+
+## How it is laid out
+
+Top to bottom: three rows of header — the name and the stack root, the tabs
+with the stack at a glance, and a rule that is heavy under the tab that has the
+keyboard — then the pane, then two rows of footer: what is happening or what
+last happened, and the keys.
+
+Two things appear only where the screen has room for them, and take nothing
+away where it has not:
+
+- **The overview cards**, on a terminal at least 28 rows tall: how much of the
+  stack is up, how many vhosts and how many of them proxy, whether the
+  certificates are good, and what `php` and `python` resolve to.
+- **A panel about the selected row**, beside the Services and Sites tables on a
+  terminal at least 118 columns wide: a service's ports one per line (and who
+  holds one that is not ours), its PIDs and path; a site's URL, what serves it,
+  its certificate's state and expiry, and its dev server. It ends with the keys
+  that act on the state the row is in.
+
+The footer's hints drop from the end when they do not fit, rather than the line
+being cut off; `? help` and `q quit` are the last to go. An action that reports
+a percentage shows it as a bar.
+
+The look follows ratatui's own example apps (`demo2`, `table`, `popup`). Panes
+are panels of their own background set one column in from the edge, with no
+lines around them; the active tab is drawn in the panel's colour so it joins the
+pane it names. Tables are striped, the selected row is a tinted bar with an
+indigo edge, and a thumb-only scrollbar appears when rows do not fit. Overview
+cards have a heavy left edge in the colour of what they report. Keys in the
+footer and the forms sit in small blocks of their own.
+
+The colours come from the Tailwind palette ratatui ships
+(`style::palette::tailwind`), set in one place, `tui/theme.rs`: slate for the
+neutrals, indigo where the keyboard is (the active tab, a pane's title, a
+popup's frame), sky for something to read (a URL, a PHP version), and emerald,
+amber, and rose for good, careful, and wrong — each beside a word or an icon that
+says the same thing. The whole screen is painted, so it looks the same on a light
+terminal theme as on a dark one.
 
 ## Why it exists
 
@@ -81,7 +124,7 @@ a rescan rather than waiting for the next one.
 | --- | --- |
 | `s` `x` `t` | Start / stop / restart the **selected** service |
 | `S` `X` `T` | ...the **whole stack**, in dependency order |
-| `i` | Open the **Install Service / Runtime** picker — see [Installing and removing](#installing-and-removing) |
+| `i` | Open the **Install a service or runtime** picker — see [Installing and removing](#installing-and-removing) |
 | `U` | Open the **Uninstall** picker: everything installed, removed after a confirmation |
 | `u` | Repoint `php\current` — the CLI PHP version |
 | `A` | Autostart on / off: `devcrate start` at logon (`devcrate autostart`) |
@@ -221,7 +264,7 @@ want.
 | --- | --- |
 | `f` | Follow on / off |
 | `PgUp` `PgDn` | Scroll |
-| `Home` `End` | Top of the buffer / back to following |
+| `Home` `End` | The first page of the buffer / back to following |
 
 Only the last 256 kB of a file is read, and at most 2000 lines are kept — an
 nginx access log that has been growing for a month opens instantly. Scrolling up
@@ -256,6 +299,22 @@ with no echo.
 If stdout is not a terminal — piped, redirected, or in CI — the dashboard refuses
 to start and points at `devcrate status --json` instead, rather than writing
 escape sequences into a file.
+
+**The font is the terminal's, not the dashboard's.** A program in a terminal
+draws characters; the terminal decides what they look like. So the one place
+devcrate can ask for a font is the Windows Terminal profile `devcrate setup`
+writes (see [cli.md](cli.md#devcrate-setup)): that profile names JetBrains Mono
+when a JetBrains Mono family is installed — the plain one or a Nerd Font build
+— and a colour scheme whose background is the dashboard's. Opened any other way
+(a shortcut into a console window, another terminal's own profile), the
+dashboard uses whatever font that terminal is set to. Nothing it draws needs an
+icon font: every glyph is box drawing, a block element, or a plain geometric
+shape.
+
+It needs a terminal with 24-bit colour, which Windows Terminal, the Windows 10
+console, and the VS Code terminal all have. With `NO_COLOR` set to anything
+non-empty, the dashboard draws in the terminal's own colours instead, and the
+selected row, the active tab, and keys are shown in reverse video.
 
 ## What it deliberately does not do
 

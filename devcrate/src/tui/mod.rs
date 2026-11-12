@@ -11,6 +11,7 @@
 
 mod app;
 mod logs;
+mod theme;
 mod view;
 mod worker;
 
@@ -919,6 +920,104 @@ mod tests {
         app.on_restacked(restacked);
         assert!(app.php_versions().iter().any(|(id, _)| id == "php-8.4"));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn draw_at(app: &App, width: u16, height: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| view::render(frame, app)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .filter_map(|x| buffer.cell((x, y)).map(|cell| cell.symbol().to_string()))
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// A screen with room to spare gets the overview cards and a panel about
+    /// the selected row; a small one gets neither, and loses nothing it had.
+    #[test]
+    fn a_large_screen_adds_the_overview_and_the_detail_panel() {
+        let mut app = App::new(stack());
+        app.on_status(report(State::Up, State::Stopped));
+        app.service_row = 1;
+
+        let large = draw_at(&app, 140, 34);
+        for want in ["STACK", "1/2 up", "CERTIFICATES", "COMMAND LINE", "php-8.5", "Selected", "9085 closed", "s starts it."] {
+            assert!(large.contains(want), "{want} missing:\n{large}");
+        }
+
+        let small = draw(&app);
+        assert!(!small.contains("STACK") && !small.contains("Selected"), "{small}");
+        assert!(small.contains("SERVICE") && small.contains("PHP 8.5"), "{small}");
+
+        app.tab = app::Tab::Sites;
+        app.sites = vec![crate::site::Site {
+            host: "myapp.test".into(),
+            root: Some("projects/myapp/public".into()),
+            fastcgi_port: Some(9085),
+            proxy_port: None,
+            tls: true,
+        }];
+        let sites = draw_at(&app, 140, 34);
+        for want in ["1 vhost", "https://myapp.test/", "serves", "PHP 8.5", "not running"] {
+            assert!(sites.contains(want), "{want} missing:\n{sites}");
+        }
+    }
+
+    /// The footer drops hints that do not fit rather than cutting the line
+    /// off, and help and quit are the last to go.
+    #[test]
+    fn a_narrow_footer_keeps_help_and_quit() {
+        let mut app = App::new(stack());
+        app.on_status(report(State::Up, State::Up));
+        let narrow = draw_at(&app, 60, 22);
+        let footer = narrow.lines().last().unwrap();
+        assert!(footer.contains("s start") && footer.contains("? help") && footer.contains("q quit"), "{footer}");
+        assert!(!footer.contains("uninstall"), "{footer}");
+
+        let wide = draw_at(&app, 130, 22);
+        assert!(wide.lines().last().unwrap().contains("A autostart"), "{wide}");
+    }
+
+    /// A result longer than the screen keeps its ending -- where the failure
+    /// is -- and says how much came before; a line with a break of its own is
+    /// two lines, not one with a stray character in it.
+    #[test]
+    fn a_long_result_keeps_its_ending_in_view() {
+        let mut app = App::new(stack());
+        app.on_status(report(State::Up, State::Up));
+        let mut lines: Vec<String> = (0..40).map(|i| format!("line {i:02}")).collect();
+        lines.push("NOT DONE migrate: exited with code 1\n         finish with: php artisan migrate".into());
+        app.on_done(worker::JobResult { label: "Creating the Laravel project shop".into(), lines, failed: true, sites_changed: false });
+        let screen = draw(&app);
+        for want in ["earlier line(s) not shown", "NOT DONE migrate", "finish with: php artisan migrate", "any key closes"] {
+            assert!(screen.contains(want), "{want} missing:\n{screen}");
+        }
+        assert!(!screen.contains("│ line 00"), "the start gives way: {screen}");
+    }
+
+    /// Home shows the top of the log, not an empty pane above it.
+    #[test]
+    fn home_shows_the_first_page_of_a_log() {
+        let mut app = App::new(stack());
+        app.tab = app::Tab::Logs;
+        let path = PathBuf::from("C:\\devcrate\\nginx\\logs\\error.log");
+        app.logs = vec![logs::LogFile { label: "nginx  error".into(), path: path.clone(), size: 1 }];
+        app.on_log(worker::LogView {
+            path,
+            lines: (0..200).map(|i| format!("entry {i:03}")).collect(),
+            bytes: 1,
+            truncated: false,
+        });
+        assert!(draw(&app).contains("entry 199"), "it follows the end");
+        app.on_key(KeyEvent::from(KeyCode::Home));
+        let top = draw(&app);
+        assert!(top.contains("entry 000") && !top.contains("(empty)"), "{top}");
     }
 
     /// Every pane's footer fits a 100-column terminal, `q quit` included.
