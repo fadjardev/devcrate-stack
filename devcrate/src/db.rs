@@ -27,6 +27,7 @@ use anyhow::{Context, Result, anyhow, bail};
 
 use crate::config::{ServiceKind, Stack};
 use crate::exit;
+use crate::refusal::refuse;
 
 /// Which server a command talks to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -307,7 +308,7 @@ pub fn import(stack: &Stack, engine: Engine, name: &str, file: &Path) -> Result<
 pub fn export(stack: &Stack, engine: Engine, name: &str, file: &Path, force: bool) -> Result<u64> {
     let name = check_name(name)?;
     if file.exists() && !force {
-        bail!("{} already exists; pass --force to overwrite it", file.display());
+        refuse!("{} already exists; pass --force to overwrite it", file.display());
     }
     let client = Client::open(stack, engine)?;
     if !client.exists(name)? {
@@ -373,7 +374,7 @@ pub fn run(stack: &Stack, engine: Engine, action: Action) -> Result<u8> {
         },
         Action::Drop { name, force } => {
             if !force {
-                bail!("dropping {name} deletes its data; pass --force to do it");
+                refuse!("dropping {name} deletes its data; pass --force to do it");
             }
             drop(stack, engine, name)?;
             println!("dropped  {label} database {name}");

@@ -525,7 +525,7 @@ fn run(stack: &Stack, job: Job, tx: &Sender<Event>) -> JobResult {
                 },
                 // `--force` cannot be passed from here, so name the command
                 // that can, rather than an instruction the user cannot follow.
-                Err(err) if format!("{err:#}").contains("pass --force") => JobResult {
+                Err(err) if crate::refusal::needs_force(&err) => JobResult {
                     label,
                     lines: vec![format!(
                         "{err:#} -- already installed. To replace it, run \
@@ -560,7 +560,7 @@ fn run(stack: &Stack, job: Job, tx: &Sender<Event>) -> JobResult {
                     }
                     JobResult { label, lines, failed: false, sites_changed: false }
                 }
-                Err(err) if format!("{err:#}").contains("--force") => JobResult {
+                Err(err) if crate::refusal::needs_force(&err) => JobResult {
                     label,
                     lines: vec![format!(
                         "{err:#} -- the dashboard never forces; run `devcrate uninstall {runtime}{} --force` from a terminal.",
@@ -849,4 +849,44 @@ impl HasFailure for control::Stopped {
 /// redraw once per scan.
 pub fn drain(rx: &Receiver<Event>) -> Vec<Event> {
     rx.try_iter().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::junction;
+
+    /// A refusal that `--force` would override is passed on with the terminal
+    /// command that can, since the dashboard never forces. It is known by its
+    /// type: any other failure is reported as itself.
+    #[test]
+    fn a_force_refusal_names_the_command_that_can() {
+        let root = std::env::temp_dir().join(format!("devcrate-worker-force-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let version_dir = root.join("php").join("php-8.5");
+        std::fs::create_dir_all(&version_dir).unwrap();
+        std::fs::write(version_dir.join("php-cgi.exe"), b"stub").unwrap();
+        junction::create(&root.join("php").join("current"), &version_dir).unwrap();
+        let stack = Stack::open(crate::root::StackRoot { path: root.clone(), source: crate::root::RootSource::Flag })
+            .unwrap();
+        let (tx, _rx) = channel();
+        let uninstall = |version: &str| Job::Uninstall {
+            runtime: "php".into(),
+            version: Some(version.into()),
+            label: format!("PHP {version}"),
+        };
+
+        let refused = run(&stack, uninstall("8.5"), &tx);
+        let missing = run(&stack, uninstall("7.4"), &tx);
+        let _ = std::fs::remove_dir_all(&root);
+
+        let text = refused.lines.join("\n");
+        assert!(refused.failed);
+        assert!(text.contains("the dashboard never forces"), "{text}");
+        assert!(text.contains("`devcrate uninstall php 8.5 --force`"), "{text}");
+
+        let text = missing.lines.join("\n");
+        assert!(missing.failed);
+        assert!(!text.contains("never forces"), "not a force refusal: {text}");
+    }
 }

@@ -46,6 +46,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use serde::Serialize;
 
 use crate::config::{self, Stack};
+use crate::refusal::refuse;
 use crate::{exit, junction};
 
 /// `println!`, but into an [`Emit`] instead of stdout. The CLI's [`TerminalEmit`]
@@ -395,7 +396,7 @@ fn mariadb_from_archive(
     let dest = stack.root.join("mariadb");
 
     if dest.exists() && !opts.force {
-        bail!("{} already exists; pass --force to replace it", stack.rel(&dest));
+        refuse!("{} already exists; pass --force to replace it", stack.rel(&dest));
     }
 
     let staging = stack.root.join(staging_name("mariadb"));
@@ -472,7 +473,7 @@ fn rabbitmq_from_archive(
     let dest = stack.root.join("rabbitmq");
 
     if dest.exists() && !opts.force {
-        bail!("{} already exists; pass --force to replace it", stack.rel(&dest));
+        refuse!("{} already exists; pass --force to replace it", stack.rel(&dest));
     }
 
     let staging = stack.root.join(staging_name("rabbitmq"));
@@ -554,7 +555,7 @@ fn redis_from_archive(
         .unwrap_or(6379);
 
     if dest.exists() && !opts.force {
-        bail!("{} already exists; pass --force to replace it", stack.rel(&dest));
+        refuse!("{} already exists; pass --force to replace it", stack.rel(&dest));
     }
 
     let staging = stack.root.join(staging_name("redis"));
@@ -632,7 +633,7 @@ fn mailpit_from_archive(
     let ui_port = service.and_then(|s| s.ports.get(1).copied()).unwrap_or(mailpit::UI_PORT);
 
     if dest.exists() && !opts.force {
-        bail!("{} already exists; pass --force to replace it", stack.rel(&dest));
+        refuse!("{} already exists; pass --force to replace it", stack.rel(&dest));
     }
 
     let staging = stack.root.join(staging_name("mailpit"));
@@ -726,7 +727,7 @@ fn erlang_from_archive(
     let dest = stack.root.join("erlang");
 
     if dest.exists() && !opts.force {
-        bail!("{} already exists; pass --force to replace it", stack.rel(&dest));
+        refuse!("{} already exists; pass --force to replace it", stack.rel(&dest));
     }
 
     let staging = stack.root.join(staging_name("erlang"));
@@ -829,7 +830,7 @@ fn php_from_archive(
     let config_only = php::is_config_only(&dest);
 
     if dest.exists() && !opts.force && !config_only {
-        bail!(
+        refuse!(
             "{} already exists; pass --force to replace it",
             stack.rel(&dest)
         );
@@ -979,7 +980,7 @@ fn nginx_from_archive(
     let dest = prefix.join(&tag);
 
     if dest.exists() && !opts.force {
-        bail!("{} already exists; pass --force to replace it", stack.rel(&dest));
+        refuse!("{} already exists; pass --force to replace it", stack.rel(&dest));
     }
     // Replacing the build a running nginx is executing from would fail at the
     // rename anyway; saying which command fixes it beats an access-denied.
@@ -1174,7 +1175,7 @@ fn postgres_from_archive(
     // in postgres\data is preserved either way -- --force replaces the binaries,
     // not the database.
     if dest.exists() && !opts.force {
-        bail!(
+        refuse!(
             "{} already exists; pass --force to replace the binaries.\n\
              An existing cluster in {}\\data is kept, not overwritten.",
             stack.rel(&dest),
@@ -1376,7 +1377,7 @@ fn python_from_archive(
     let dest = stack.python_dir.join(&tag);
 
     if dest.exists() && !opts.force {
-        bail!("{} already exists; pass --force to replace it", stack.rel(&dest));
+        refuse!("{} already exists; pass --force to replace it", stack.rel(&dest));
     }
 
     std::fs::create_dir_all(&stack.python_dir)
@@ -2181,7 +2182,7 @@ fn install_by_download(
     // so an existing phar is never the thing that stops one.
     let config_only = runtime == Runtime::Php && php::is_config_only(&dest);
     if dest.exists() && !force && !replace_freely && !config_only {
-        bail!("{} already exists; pass --force to replace it", stack.rel(&dest));
+        refuse!("{} already exists; pass --force to replace it", stack.rel(&dest));
     }
 
     let downloads = stack.root.join(DOWNLOADS_DIR);
@@ -3139,7 +3140,7 @@ fn node_from_archive(
     let dest = node_root.join(format!("v{version}"));
 
     if dest.exists() && !opts.force {
-        bail!("{} already exists; pass --force to replace it", stack.rel(&dest));
+        refuse!("{} already exists; pass --force to replace it", stack.rel(&dest));
     }
 
     let staging = stack.root.join(staging_name("node"));
@@ -3218,7 +3219,7 @@ fn bun_from_archive(
     let dest = bun_root.join(format!("v{version}"));
 
     if dest.exists() && !opts.force {
-        bail!("{} already exists; pass --force to replace it", stack.rel(&dest));
+        refuse!("{} already exists; pass --force to replace it", stack.rel(&dest));
     }
 
     let staging = stack.root.join(staging_name("bun"));

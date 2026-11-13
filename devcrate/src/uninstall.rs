@@ -33,6 +33,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use crate::config::{Service, ServiceKind, Stack};
 use crate::install::Runtime;
 use crate::probe::ProcessTable;
+use crate::refusal::refuse;
 use crate::{bun, exit, junction, nginx, node, php, python, site};
 
 /// What a completed removal has to say for itself. The printing lives in
@@ -264,7 +265,7 @@ fn uninstall_php(stack: &Stack, wanted: &str, force: bool) -> Result<Uninstalled
         .map(|s| s.host)
         .collect();
     if !using.is_empty() && !force {
-        bail!(
+        refuse!(
             "{id} is still used by vhost(s): {}.\n\
              Point them at another version first (`devcrate site set-php <host> <version>`), \
              or pass --force to remove it anyway.",
@@ -274,7 +275,7 @@ fn uninstall_php(stack: &Stack, wanted: &str, force: bool) -> Result<Uninstalled
 
     let was_current = stack.current_php().as_deref() == Some(dir.as_path());
     if was_current && !force {
-        bail!(
+        refuse!(
             "php\\current points at {id}; removing it leaves `php` unresolved. \
              Switch first (`devcrate php use <version>`), or pass --force."
         );
@@ -314,7 +315,7 @@ fn uninstall_nginx(stack: &Stack, wanted: &str, force: bool) -> Result<Uninstall
 
     let was_current = stack.current_nginx().as_deref() == Some(dir.as_path());
     if was_current && !force {
-        bail!(
+        refuse!(
             "nginx\\current points at {version}; removing it leaves nothing for \
              `devcrate start nginx` to run. Switch first (`devcrate nginx use <version>`), \
              or pass --force."
@@ -351,7 +352,7 @@ fn uninstall_node(stack: &Stack, wanted: &str, force: bool) -> Result<Uninstalle
         );
     }
     if target.active && !force {
-        bail!(
+        refuse!(
             "node\\current points at v{}; removing it leaves `node` unresolved. \
              Switch first (`devcrate node use <version>`), or pass --force.",
             target.version
@@ -389,7 +390,7 @@ fn uninstall_bun(stack: &Stack, wanted: &str, force: bool) -> Result<Uninstalled
         );
     }
     if target.active && !force {
-        bail!(
+        refuse!(
             "bun\\current points at v{}; removing it leaves `bun` unresolved. \
              Switch first (`devcrate bun use <version>`), or pass --force.",
             target.version
@@ -425,7 +426,7 @@ fn uninstall_python(stack: &Stack, wanted: &str, force: bool) -> Result<Uninstal
 
     let was_current = stack.current_python().as_deref() == Some(dir.as_path());
     if was_current && !force {
-        bail!(
+        refuse!(
             "python\\current points at {version}; removing it leaves `python` unresolved. \
              Switch first (`devcrate python use <version>`), or pass --force."
         );
@@ -539,7 +540,7 @@ fn uninstall_database_dir(
     let has_data = data.is_dir();
 
     if has_data && remove_data && !force {
-        bail!(
+        refuse!(
             "--data also deletes {}, which cannot be undone. Pass --force to confirm.",
             stack.rel(&data)
         );
@@ -599,7 +600,7 @@ fn uninstall_erlang(stack: &Stack, force: bool) -> Result<Uninstalled> {
 
     let rabbitmq_installed = rabbit.is_some_and(|r| r.install_marker.is_file());
     if rabbitmq_installed && !force {
-        bail!(
+        refuse!(
             "Erlang/OTP is RabbitMQ's dependency, and RabbitMQ is still installed. \
              Remove RabbitMQ first (`devcrate uninstall rabbitmq`), or pass --force."
         );

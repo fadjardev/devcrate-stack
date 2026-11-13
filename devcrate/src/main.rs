@@ -29,6 +29,7 @@ mod php;
 mod php_ext;
 mod probe;
 mod python;
+mod refusal;
 mod root;
 mod setup;
 mod site;

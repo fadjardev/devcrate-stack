@@ -12,6 +12,7 @@ use std::path::Path;
 use anyhow::{Context, Result, anyhow};
 
 use crate::config::Stack;
+use crate::refusal::refuse;
 use crate::{control, exit, php};
 
 #[derive(Debug, Clone)]
@@ -300,10 +301,10 @@ pub fn create_with(stack: &Stack, host: &str, request: &Request) -> Result<Creat
 
     let conf = stack.sites_dir().join(format!("{host}.conf"));
     if conf.exists() && !force {
-        return Err(anyhow!(
+        refuse!(
             "{} already exists; pass --force to overwrite it",
             stack.rel(&conf)
-        ));
+        );
     }
 
     let target_projects_dir = stack.root.join("projects").join(&folder);
