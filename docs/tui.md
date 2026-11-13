@@ -199,7 +199,10 @@ it says to pick a PHP one). The list is every DLL in the version's extension
 directory and every extension its `php.ini` switches on, marked `on` or `off`;
 `Enter` or `Space` flips the one selected, through the same `php ext enable` /
 `disable` — the marked block, the `php -m` check, and the restart of that
-version's worker if it was running. An extension the file itself switches on is
+version's worker if it was running. The picker stays open: once the change is
+done it is read again with the cursor where it was, and the result goes to the
+footer, so switching on three extensions is three keys. A change that fails
+is shown in full instead. An extension the file itself switches on is
 marked with its line, and flipping it is refused with that line named: only
 devcrate's block is edited. When the version has no Xdebug DLL, the first row
 is `get xdebug`, which is `php ext install xdebug` — the download matched to

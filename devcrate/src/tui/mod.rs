@@ -422,6 +422,71 @@ mod tests {
         assert_eq!(note, "Starting the stack: nginx listening in 0.3s");
     }
 
+    /// The extension picker stays open across a change: it is read again
+    /// afterwards, the cursor stays on the same extension, and the result goes
+    /// to the note line. It used to close after every change. A failed change
+    /// is shown in full.
+    #[test]
+    fn the_extension_picker_stays_open_across_changes() {
+        let root = std::env::temp_dir().join(format!("devcrate-ext-picker-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let php = root.join("php").join("php-8.5");
+        std::fs::create_dir_all(php.join("ext")).unwrap();
+        std::fs::write(php.join("php-cgi.exe"), "").unwrap();
+        std::fs::write(php.join("php.ini"), "[PHP]\nextension_dir = \"ext\"\n").unwrap();
+        for dll in ["php_intl.dll", "php_zip.dll"] {
+            std::fs::write(php.join("ext").join(dll), "").unwrap();
+        }
+        std::fs::create_dir_all(root.join("nginx").join("conf")).unwrap();
+        std::fs::write(root.join("nginx").join("conf").join("nginx.conf"), "").unwrap();
+        let stack = Stack::open(crate::root::StackRoot { path: root.clone(), source: RootSource::Flag }).unwrap();
+        let mut app = App::new(Arc::new(stack));
+
+        let listing = crate::php_ext::list(&app.stack, Some("php-8.5")).unwrap();
+        let rows = app::ext_rows(listing.extensions);
+        let zip = rows
+            .iter()
+            .position(|row| matches!(row, app::ExtRow::Ext(ext) if ext.name == "zip"))
+            .expect("zip is listed");
+        app.modal = Some(app::Modal::ExtPicker { php: "php-8.5".into(), php_name: "PHP 8.5".into(), index: zip, rows });
+
+        let job = app.on_key(KeyEvent::from(KeyCode::Enter)).expect("a change is submitted");
+        assert!(matches!(&job, Job::PhpExt { ext, on: true, .. } if ext == "zip"));
+        assert!(matches!(app.modal, Some(app::Modal::ExtPicker { .. })), "open while it runs");
+
+        // The worker would switch it on (and prove it loads with php.exe,
+        // which this stack does not have); leave the file as it would.
+        let ini = php.join("php.ini");
+        let text = std::fs::read_to_string(&ini).unwrap();
+        std::fs::write(&ini, format!("{text}extension=zip\n")).unwrap();
+        app.on_done(JobResult {
+            label: "Enabling zip on php-8.5".into(),
+            lines: vec!["zip switched on in PHP 8.5".into(), "PHP 8.5 restarted".into()],
+            failed: false,
+            sites_changed: false,
+        });
+        let Some(app::Modal::ExtPicker { index, rows, .. }) = &app.modal else {
+            panic!("the picker closed: {:?}", app.modal.as_ref().map(|_| "another modal"));
+        };
+        assert!(
+            matches!(&rows[*index], app::ExtRow::Ext(ext) if ext.name == "zip" && ext.enabled.is_some()),
+            "read again, cursor on the same extension"
+        );
+        assert!(app.note.as_ref().unwrap().text.contains("zip switched on"));
+
+        // A failure is shown in full instead.
+        app.on_key(KeyEvent::from(KeyCode::Enter)).expect("submitted");
+        app.on_done(JobResult {
+            label: "Disabling zip on php-8.5".into(),
+            lines: vec!["FAILED: php.ini is locked".into(), "nothing changed".into()],
+            failed: true,
+            sites_changed: false,
+        });
+        assert!(matches!(app.modal, Some(app::Modal::Output { failed: true, .. })));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// A key that starts something must not be accepted twice while the first
     /// one is still running -- two `devcrate start`s racing is exactly the
     /// double-MariaDB situation the restart guard exists to avoid.

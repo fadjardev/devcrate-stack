@@ -286,6 +286,9 @@ pub struct App {
     /// worker restarted for an extension, an install of that runtime. One of
     /// these going down while it runs is the job, not a crash; any other is.
     in_flight: HashSet<String>,
+    /// The running job was submitted from the extension picker, which stays
+    /// open for it and is read again when it is done.
+    ext_job: bool,
     /// Set when the selected log file changes, for the caller to pick up.
     pub log_target_dirty: bool,
     /// Set by `r`, cleared by the caller once the scanner has been nudged.
@@ -332,6 +335,7 @@ impl App {
             watches: HashMap::new(),
             deliberate: HashSet::new(),
             in_flight: HashSet::new(),
+            ext_job: false,
             log_target_dirty: true,
             rescan_wanted: false,
             launch_wanted: None,
@@ -504,6 +508,14 @@ impl App {
             failed: result.failed,
             at: Instant::now(),
         });
+        // A change made from the extension picker that worked: show the
+        // picker again as it now is, cursor where it was, with the result on
+        // the note line rather than in a box over it. One that failed is
+        // shown in full like anything else.
+        let from_picker = std::mem::take(&mut self.ext_job);
+        if from_picker && !result.failed && self.refresh_ext_picker() {
+            return;
+        }
         // More than one line is worth reading in full -- a stack start has six.
         if result.lines.len() > 1 {
             self.modal = Some(Modal::Output {
@@ -645,6 +657,28 @@ impl App {
             }
             _ => None,
         }
+    }
+
+    /// Read the open extension picker's rows again, keeping the cursor on the
+    /// same extension. False when no picker is open. A listing that cannot be
+    /// read keeps the rows it had.
+    fn refresh_ext_picker(&mut self) -> bool {
+        let Some(Modal::ExtPicker { php, index, rows, .. }) = &mut self.modal else {
+            return false;
+        };
+        if let Ok(listing) = crate::php_ext::list(&self.stack, Some(php)) {
+            let name = |row: &ExtRow| match row {
+                ExtRow::Install(ext) => ext.to_string(),
+                ExtRow::Ext(ext) => ext.name.clone(),
+            };
+            let current = rows.get(*index).map(name);
+            *rows = ext_rows(listing.extensions);
+            *index = current
+                .and_then(|current| rows.iter().position(|row| name(row) == current))
+                .unwrap_or(*index)
+                .min(rows.len().saturating_sub(1));
+        }
+        true
     }
 
     /// `e` on a PHP row: that version's extensions. Anything else says why
@@ -1017,7 +1051,14 @@ impl App {
         }
         self.in_flight = self.may_take_down(&job).into_iter().collect();
         self.busy = Some(job.label());
-        self.modal = None;
+        // The extension picker stays open for the change it asked for, so
+        // switching on three extensions is three keys, not three trips back
+        // through `e`. Everything else closes whatever asked for it.
+        self.ext_job = matches!(job, Job::PhpExt { .. } | Job::PhpExtInstall { .. })
+            && matches!(self.modal, Some(Modal::ExtPicker { .. }));
+        if !self.ext_job {
+            self.modal = None;
+        }
         Some(job)
     }
 
