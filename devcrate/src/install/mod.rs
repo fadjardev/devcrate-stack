@@ -221,9 +221,15 @@ pub struct PhpInstalled {
     pub fastcgi_port: Option<u16>,
     pub enabled_extensions: Vec<String>,
     pub missing_extensions: Vec<String>,
-    /// The folder held only the stack's own `php.ini`, which was kept rather
-    /// than generated over.
+    /// The `php.ini` already there was kept rather than generated over: the
+    /// stack's own, in a folder that held nothing else, or the one a `--force`
+    /// reinstall replaced -- devcrate block, `php ext` choices, hand edits and
+    /// all.
     pub kept_ini: bool,
+    /// Files in the replaced installation's extension directory that the new
+    /// build does not ship -- PECL DLLs from `php ext install`, in practice --
+    /// copied across so the kept `php.ini` still finds them.
+    pub carried_extensions: Vec<String>,
     /// Whether the Visual C++ runtime was found. `None` when the check could
     /// not run at all.
     pub vcredist: Option<bool>,
@@ -851,11 +857,31 @@ fn php_from_archive(
         }
     };
 
+    // A --force reinstall is how a patch release is taken, so what the old
+    // folder was configured with comes along: its php.ini (the devcrate block,
+    // `php ext` choices, hand edits) and the extension DLLs the new zip does
+    // not ship. Both builds are the same X.Y, so a PECL DLL still loads. The
+    // DLLs are copied into staging, not moved, so a failure costs nothing.
+    let carried_extensions = match dest.exists() && !config_only {
+        true => match carry_extensions(&dest, &staging) {
+            Ok(carried) => carried,
+            Err(err) => {
+                let _ = std::fs::remove_dir_all(&staging);
+                return Err(err.context(format!(
+                    "carrying the extensions in {} across; nothing was changed",
+                    stack.rel(&dest)
+                )));
+            }
+        },
+        false => Vec::new(),
+    };
+    let kept_ini = dest.join("php.ini").is_file();
+
     progress(Progress::Installing);
-    let keep: &[&str] = if config_only { &["php.ini"] } else { &[] };
+    let keep: &[&str] = if kept_ini { &["php.ini"] } else { &[] };
     let (replaced, _) = swap_keeping(stack, &stack.php_dir, &staging, &dest, &tag, keep)?;
     let replaced = replaced && !config_only;
-    let (enabled_extensions, missing_extensions) = match config_only {
+    let (enabled_extensions, missing_extensions) = match kept_ini {
         true => (
             crate::php_ext::enabled_in(&std::fs::read_to_string(dest.join("php.ini")).unwrap_or_default()),
             Vec::new(),
@@ -887,10 +913,42 @@ fn php_from_archive(
             fastcgi_port: config::port_from_tag(&tag),
             enabled_extensions,
             missing_extensions,
-            kept_ini: config_only,
+            kept_ini,
+            carried_extensions,
             vcredist: vcredist_present(),
         }),
     })
+}
+
+/// Copy into `staging` each file of `old`'s extension directory that the new
+/// build lacks, returning their names. The directory is the one `old`'s
+/// `php.ini` names (`ext` when it names none); one outside `old` is not part of
+/// the installation, survives the swap on its own, and is left alone. Files
+/// the new build ships are never overwritten: those are its own, newer copies.
+fn carry_extensions(old: &Path, staging: &Path) -> Result<Vec<String>> {
+    let text = std::fs::read_to_string(old.join("php.ini")).unwrap_or_default();
+    let old_ext = crate::php_ext::ext_dir(old, &text);
+    let Ok(relative) = old_ext.strip_prefix(old) else { return Ok(Vec::new()) };
+    let Ok(entries) = std::fs::read_dir(&old_ext) else { return Ok(Vec::new()) };
+    let new_ext = staging.join(relative);
+
+    let mut carried = Vec::new();
+    for entry in entries {
+        let entry = entry.with_context(|| format!("reading {}", old_ext.display()))?;
+        if !entry.file_type().is_ok_and(|kind| kind.is_file()) {
+            continue;
+        }
+        let target = new_ext.join(entry.file_name());
+        if target.exists() {
+            continue;
+        }
+        std::fs::create_dir_all(&new_ext).with_context(|| format!("creating {}", new_ext.display()))?;
+        std::fs::copy(entry.path(), &target)
+            .with_context(|| format!("copying {} to {}", entry.path().display(), target.display()))?;
+        carried.push(entry.file_name().to_string_lossy().into_owned());
+    }
+    carried.sort();
+    Ok(carried)
 }
 
 /// Install nginx into the prefix, as one more versioned build beside any
@@ -3270,9 +3328,16 @@ fn print_erlang_installed(done: &Installed, erlang: &ErlangInstalled, emit: &mut
 fn print_php_installed(done: &Installed, php: &PhpInstalled, emit: &mut dyn Emit) {
     emit_line!(emit, 
         "  php.ini {}, {} extensions enabled",
-        if php.kept_ini { "is the stack's own, kept" } else { "generated from php.ini-development" },
+        match (php.kept_ini, done.replaced) {
+            (true, true) => "kept from the replaced installation",
+            (true, false) => "is the stack's own, kept",
+            (false, _) => "generated from php.ini-development",
+        },
         php.enabled_extensions.len()
     );
+    if !php.carried_extensions.is_empty() {
+        emit_line!(emit, "  carried across from the replaced ext\\: {}", php.carried_extensions.join(", "));
+    }
     if done.replaced {
         emit_line!(emit, "  replaced the previous {} installation", done.version);
     }
@@ -3496,6 +3561,69 @@ fn print_composer_installed(done: &Installed, composer: &ComposerInstalled, emit
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A stand-in PHP distribution: enough for `assemble_php` to accept it.
+    fn fake_php_zip(path: &Path, bundled: &[&str]) {
+        use std::io::Write;
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
+        let options = zip::write::SimpleFileOptions::default();
+        let mut file = |name: &str, body: &str| {
+            zip.start_file(name, options).unwrap();
+            zip.write_all(body.as_bytes()).unwrap();
+        };
+        file("php.exe", "");
+        file("php-cgi.exe", "");
+        file("php8ts.dll", "");
+        file("php.ini-development", "[PHP]\n;extension_dir = \"ext\"\n;extension=mbstring\n");
+        for dll in bundled {
+            file(&format!("ext/{dll}"), "new");
+        }
+        zip.finish().unwrap();
+    }
+
+    /// `install php --force` is how a patch release is taken: it keeps the
+    /// php.ini it replaces and the PECL DLLs the new zip does not ship, and
+    /// takes the new build's own copy of every DLL it does ship. It used to
+    /// throw both away with the retired folder.
+    #[test]
+    fn a_forced_php_reinstall_keeps_php_ini_and_pecl_dlls() {
+        let root = std::env::temp_dir().join(format!("devcrate-php-force-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("php")).unwrap();
+        std::fs::create_dir_all(root.join("nginx").join("conf")).unwrap();
+        std::fs::write(root.join("nginx").join("conf").join("nginx.conf"), "").unwrap();
+        let stack = Stack::open(crate::root::StackRoot {
+            path: root.clone(),
+            source: crate::root::RootSource::Flag,
+        })
+        .unwrap();
+        let zip = root.join("php-8.5.1-Win32-vs17-x64.zip");
+        fake_php_zip(&zip, &["php_mbstring.dll"]);
+        let opts = Options { version: None, force: false };
+        from_archive(&stack, Runtime::Php, &zip, &opts, &mut |_| {}).unwrap();
+
+        let dest = root.join("php").join("php-8.5");
+        let ini = dest.join("php.ini");
+        let edited = format!("{}\nextension=xdebug\n; hand edit\n", std::fs::read_to_string(&ini).unwrap());
+        std::fs::write(&ini, &edited).unwrap();
+        std::fs::write(dest.join("ext").join("php_xdebug.dll"), "pecl").unwrap();
+        std::fs::write(dest.join("ext").join("php_mbstring.dll"), "old").unwrap();
+
+        let zip = root.join("php-8.5.2-Win32-vs17-x64.zip");
+        fake_php_zip(&zip, &["php_mbstring.dll"]);
+        let done = from_archive(&stack, Runtime::Php, &zip, &Options { version: None, force: true }, &mut |_| {}).unwrap();
+
+        let Details::Php(php) = &done.details else { panic!("not a PHP install") };
+        assert!(done.replaced);
+        assert!(php.kept_ini);
+        assert_eq!(php.carried_extensions, ["php_xdebug.dll"]);
+        assert_eq!(std::fs::read_to_string(&ini).unwrap(), edited, "php.ini kept as it was");
+        assert_eq!(std::fs::read_to_string(dest.join("ext").join("php_xdebug.dll")).unwrap(), "pecl");
+        assert_eq!(std::fs::read_to_string(dest.join("ext").join("php_mbstring.dll")).unwrap(), "new");
+        assert!(!root.join("php").join(retired_name("php-8.5")).exists(), "the retired folder is gone");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     /// The staging directory must not be discoverable as an installed version.
     /// `config::resolve_php` matches directories whose name starts with `php`,

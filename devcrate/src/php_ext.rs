@@ -174,7 +174,7 @@ fn target<'a>(stack: &'a Stack, wanted: Option<&str>) -> Result<Target<'a>> {
 
 /// The extension directory: `extension_dir` from the file, relative to the
 /// version's folder (where the workers are started), `ext` by default.
-fn ext_dir(dir: &Path, text: &str) -> PathBuf {
+pub(crate) fn ext_dir(dir: &Path, text: &str) -> PathBuf {
     let set = text.lines().rev().find_map(|line| {
         let (key, value) = line.trim().split_once('=')?;
         (key.trim().eq_ignore_ascii_case("extension_dir"))

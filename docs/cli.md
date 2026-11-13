@@ -1658,8 +1658,21 @@ scanning `php\` for directories starting with `php` and the prefix for ones
 starting with `nginx`, so a directory called `php-8.4` or `nginx-1.31.3` appears
 in `status`, the version lists, and the dashboard the instant it exists. Any
 failure clears the staging directory. Replacing a version with `--force` moves
-the old one aside rather than deleting it, and puts it back if the rename fails,
-so a failed install cannot leave the version missing altogether.
+the old one aside while the new one is renamed into place, and puts it back if
+that rename fails, so a failed install cannot leave the version missing
+altogether. Once the new one is in place, the old folder is deleted — only what
+the install carries across survives it.
+
+**A forced PHP reinstall keeps its configuration.** `install php 8.5 --force` is
+how a patch release is taken, so the `php.ini` it replaces is kept as it was —
+the devcrate block, `php ext` choices, and hand edits included — and the install
+says "php.ini kept from the replaced installation". Every file in the old
+extension directory that the new build does not ship (in practice the PECL DLLs
+from `php ext install`, such as `php_xdebug.dll`) is copied across too, and named
+on a "carried across" line; the DLLs the new build does ship are its own, newer
+copies. Both builds are the same X.Y, so a carried DLL still loads. Anything else
+added by hand to the version folder — a DLL beside `php.exe`, a `cacert.pem` —
+is not carried across.
 
 **A PHP version folder holding only `php.ini` is not an installation.** That is
 what a clone of the repository carries: the stack's own `php.ini`, no binaries.
