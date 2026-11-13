@@ -12,17 +12,66 @@ use std::process::Command;
 use anyhow::{Context, Result, anyhow};
 
 /// Point `link` at `target`, replacing an existing junction there.
+///
+/// The new junction is made beside `link` first and only then swapped in, so a
+/// `mklink` that fails leaves the old one -- `php\current`, say -- where it
+/// was, rather than leaving nothing. The swap itself is two renames of
+/// directory entries, with the old junction put back if the second one fails.
 pub fn create(link: &Path, target: &Path) -> Result<()> {
-    remove(link)?;
+    let fresh = beside(link, "devcrate-new");
+    remove(&fresh)?;
+    mklink(&fresh, target)?;
 
-    let output = Command::new("cmd")
-        .args(["/c", "mklink", "/J"])
-        .arg(link)
-        .arg(target)
-        .output()
-        .context("running mklink")?;
+    // A real directory where the junction goes keeps the old rule: an empty
+    // one is removed, anything in it refuses (see `remove`).
+    let is_junction = std::fs::read_link(link).is_ok();
+    if !is_junction && let Err(err) = remove(link) {
+        let _ = remove(&fresh);
+        return Err(err);
+    }
 
-    if output.status.success() {
+    let aside = beside(link, "devcrate-old");
+    if is_junction {
+        remove(&aside)?;
+        if let Err(err) = std::fs::rename(link, &aside) {
+            let _ = remove(&fresh);
+            return Err(err).with_context(|| format!("moving the existing {} aside", link.display()));
+        }
+    }
+    if let Err(err) = std::fs::rename(&fresh, link) {
+        if is_junction {
+            let _ = std::fs::rename(&aside, link);
+        }
+        let _ = remove(&fresh);
+        return Err(err).with_context(|| format!("putting the new {} in place", link.display()));
+    }
+    if is_junction {
+        let _ = remove(&aside);
+    }
+    Ok(())
+}
+
+/// `<link>.<suffix>`, in the same directory, so a rename is a rename.
+fn beside(link: &Path, suffix: &str) -> PathBuf {
+    let name = link.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    link.with_file_name(format!("{name}.{suffix}"))
+}
+
+/// `mklink /J link target`, through cmd since mklink is one of its built-ins.
+///
+/// The command line is written out by hand: Rust quotes an argument only when
+/// it has a space, so a path like `C:\R&D\php` reached cmd bare and the `&`
+/// split it into two commands. Quoted, and with `/s` so cmd strips just the
+/// outer pair, `&`, `^`, `(` and `)` stay part of the path. `/d` skips any
+/// AutoRun command. A path cannot hold `"`, so no quoting can be broken out of;
+/// `%NAME%` naming a set variable is still expanded, as cmd always does.
+fn mklink(link: &Path, target: &Path) -> Result<()> {
+    use std::os::windows::process::CommandExt;
+
+    let line = format!("/d /s /c \"mklink /J \"{}\" \"{}\"\"", link.display(), target.display());
+    let output = Command::new("cmd").raw_arg(&line).output().context("running mklink")?;
+
+    if output.status.success() && std::fs::read_link(link).is_ok() {
         return Ok(());
     }
     // mklink reports failure on stderr, except when it does not.
@@ -91,5 +140,40 @@ mod tests {
         remove(&link).unwrap();
         assert_eq!(target(&link), None);
         assert!(version.join("nginx.exe").is_file());
+    }
+
+    /// Paths with characters cmd treats as syntax are linked as they are: an
+    /// `&` used to split the mklink line in two.
+    #[test]
+    fn a_path_with_cmd_syntax_in_it_is_linked_as_is() {
+        let base = tree("junction-amp", &["R&D^/php-8.5/php.exe"]);
+        let version = crate::root::clean(&base.join("R&D^").join("php-8.5")).unwrap();
+        let link = base.join("R&D^").join("current");
+
+        create(&link, &version).unwrap();
+        assert_eq!(target(&link).as_deref(), Some(version.as_path()));
+        assert!(link.join("php.exe").is_file());
+    }
+
+    /// Repointing an existing junction swaps it in one step, and a mklink that
+    /// fails leaves the old one in place instead of nothing.
+    #[test]
+    fn a_failed_repoint_keeps_the_old_junction() {
+        let base = tree("junction-keep", &["php-8.2/php.exe", "php-8.5/php.exe"]);
+        let old = crate::root::clean(&base.join("php-8.2")).unwrap();
+        let new = crate::root::clean(&base.join("php-8.5")).unwrap();
+        let link = base.join("current");
+
+        create(&link, &old).unwrap();
+        create(&link, &new).unwrap();
+        assert_eq!(target(&link).as_deref(), Some(new.as_path()), "repointed");
+        assert!(!beside(&link, "devcrate-new").exists() && !beside(&link, "devcrate-old").exists());
+
+        // A junction cannot point at a network share, so mklink refuses this
+        // at once ("Local volumes are required"), without looking it up.
+        let refused = create(&link, Path::new(r"\\nohost-devcrate\share")).unwrap_err();
+        assert!(format!("{refused:#}").contains("could not link"), "{refused:#}");
+        assert_eq!(target(&link).as_deref(), Some(new.as_path()), "the old junction survives");
+        assert!(!beside(&link, "devcrate-new").exists(), "no half-made link left");
     }
 }
