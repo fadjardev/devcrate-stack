@@ -7,6 +7,18 @@ Nginx serves per-project `.test` vhosts over HTTPS, each pinned to a specific PH
 version via FastCGI, with MariaDB and RabbitMQ alongside — a lightweight alternative
 to XAMPP / Laragon / FlyEnv.
 
+![The devcrate dashboard: service table with nginx, three PHP versions, MariaDB, PostgreSQL, RabbitMQ, and Redis, beside a detail panel for the selected row](docs/img/dashboard-services.svg)
+
+<details>
+<summary>The Sites pane</summary>
+
+![The devcrate dashboard's Sites pane: each .test vhost with the PHP version or proxy port it uses, its certificate, and its web root](docs/img/dashboard-sites.svg)
+
+</details>
+
+`devcrate` with no arguments opens this dashboard — see [the dashboard](docs/tui.md)
+for its panes and keys.
+
 > Path examples in this repo use `C:\devcrate` as the stack root — substitute
 > wherever you cloned it (`D:\tools\devcrate`, `E:\dev`, …).
 

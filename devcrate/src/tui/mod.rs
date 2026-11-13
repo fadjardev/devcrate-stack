@@ -1036,4 +1036,189 @@ mod tests {
             assert!(footer.contains("q quit"), "{}: {footer}", tab.title());
         }
     }
+
+    /// Draws the dashboard for the README: `cargo test screenshots -- --ignored`
+    /// writes `docs/img/dashboard-*.svg`. The view code is the real one; the
+    /// stack is a demo -- a fixed set of services and sites -- so the picture
+    /// shows no one's projects and does not change with whatever is running.
+    #[test]
+    #[ignore = "writes docs/img; run on purpose"]
+    fn screenshots() {
+        let root = PathBuf::from("C:\\devcrate");
+        let svc = |id: &str, name: &str, kind: ServiceKind, ports: Vec<u16>| Service {
+            id: id.into(),
+            name: name.into(),
+            kind,
+            install_marker: root.join(id),
+            process_prefix: root.join(id),
+            exclude_names: Vec::new(),
+            ports,
+        };
+        let mut stack = Arc::try_unwrap(stack()).unwrap();
+        stack.services = vec![
+            svc("nginx", "nginx", ServiceKind::Nginx, vec![80, 443]),
+            svc("php-7.4", "PHP 7.4", ServiceKind::Php, vec![9074]),
+            svc("php-8.2", "PHP 8.2", ServiceKind::Php, vec![9082]),
+            svc("php-8.5", "PHP 8.5", ServiceKind::Php, vec![9085]),
+            svc("mariadb", "MariaDB", ServiceKind::MariaDb, vec![3306]),
+            svc("postgres", "PostgreSQL", ServiceKind::Postgres, vec![5432]),
+            svc("rabbitmq", "RabbitMQ", ServiceKind::RabbitMq, vec![5672, 15672]),
+            svc("redis", "Redis", ServiceKind::Redis, vec![6379]),
+        ];
+        let status = |service: &Service, state: State, uptime: u64, pid: u32| ServiceStatus {
+            id: service.id.clone(),
+            name: service.name.clone(),
+            kind: "x".into(),
+            state,
+            installed: true,
+            path: format!("{}.exe", service.id),
+            ports: service
+                .ports
+                .iter()
+                .map(|&port| PortStatus { port, listening: state == State::Up, holder: None })
+                .collect(),
+            uptime_secs: (state == State::Up).then_some(uptime),
+            pids: if state == State::Up { vec![pid] } else { Vec::new() },
+        };
+        let states = [
+            (State::Up, 9_240, 4812),
+            (State::Up, 9_238, 5120),
+            (State::Up, 9_238, 5164),
+            (State::Up, 9_237, 5208),
+            (State::Up, 9_236, 6020),
+            (State::Stopped, 0, 0),
+            (State::Up, 9_200, 7344),
+            (State::Stopped, 0, 0),
+        ];
+        let hosts = ["blog.test", "shop.test", "legacy.test", "spa.test"];
+        let report = StatusReport {
+            root: "C:\\devcrate".into(),
+            root_source: "own location".into(),
+            config: Some("C:\\devcrate\\devcrate.toml".into()),
+            cli_php: Some("php-8.5".into()),
+            cli_python: Some("python-3.13".into()),
+            services: stack
+                .services
+                .iter()
+                .zip(states)
+                .map(|(service, (state, up, pid))| status(service, state, up, pid))
+                .collect(),
+            sites: hosts.iter().map(|h| h.to_string()).collect(),
+            dev: Vec::new(),
+            certs: hosts
+                .iter()
+                .map(|host| crate::cert::SiteCert {
+                    host: host.to_string(),
+                    file: "certs/_wildcard.test.pem".into(),
+                    state: crate::cert::CertState::Ok,
+                    days_left: Some(812),
+                    expires: Some("2029-02-03".into()),
+                    names: vec!["*.test".into()],
+                })
+                .collect(),
+        };
+        let site = |host: &str, root: &str, fastcgi: Option<u16>, proxy: Option<u16>| crate::site::Site {
+            host: host.into(),
+            root: Some(root.into()),
+            fastcgi_port: fastcgi,
+            proxy_port: proxy,
+            tls: true,
+        };
+
+        let mut app = App::new(Arc::new(stack));
+        app.on_status(report);
+        app.sites = vec![
+            site("blog.test", "projects/blog/public", Some(9085), None),
+            site("shop.test", "projects/shop/public", Some(9082), None),
+            site("legacy.test", "projects/legacy", Some(9074), None),
+            site("spa.test", "projects/spa/dist", None, Some(5173)),
+        ];
+        let out = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("docs").join("img");
+        std::fs::create_dir_all(&out).unwrap();
+
+        app.service_row = 3;
+        std::fs::write(out.join("dashboard-services.svg"), svg(&app, 140, 34)).unwrap();
+        app.tab = app::Tab::Sites;
+        app.site_row = 1;
+        std::fs::write(out.join("dashboard-sites.svg"), svg(&app, 140, 34)).unwrap();
+    }
+
+    /// One frame as an SVG: a rectangle per run of background, a `<text>` per
+    /// run of style, each stretched to exactly its cells so box-drawing lines
+    /// up whatever monospace font the viewer has.
+    fn svg(app: &App, width: u16, height: u16) -> String {
+        use ratatui::buffer::Cell;
+        use ratatui::style::{Color, Modifier};
+
+        let t = theme::theme();
+        let hex = |color: Color, fallback: Color| match (color, fallback) {
+            (Color::Rgb(r, g, b), _) | (Color::Reset, Color::Rgb(r, g, b)) => format!("#{r:02x}{g:02x}{b:02x}"),
+            (other, _) => panic!("the screenshot knows RGB only, not {other:?}"),
+        };
+        let style = |c: &Cell| {
+            let (mut fg, mut bg) = (hex(c.fg, t.text), hex(c.bg, t.bg));
+            if c.modifier.contains(Modifier::REVERSED) {
+                std::mem::swap(&mut fg, &mut bg);
+            }
+            (fg, bg, c.modifier.contains(Modifier::BOLD))
+        };
+        let escape = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| view::render(frame, app)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let (cw, lh) = (8.4_f32, 18.0_f32);
+        let (mut rects, mut texts) = (String::new(), String::new());
+        for y in 0..height {
+            let cells: Vec<(String, (String, String, bool))> = (0..width)
+                .map(|x| {
+                    let cell = buffer.cell((x, y)).unwrap();
+                    (cell.symbol().to_string(), style(cell))
+                })
+                .collect();
+            let top = y as f32 * lh;
+            let mut x = 0;
+            while x < cells.len() {
+                let (start, bg) = (x, cells[x].1 .1.clone());
+                while x < cells.len() && cells[x].1 .1 == bg {
+                    x += 1;
+                }
+                rects.push_str(&format!(
+                    "<rect x=\"{:.1}\" y=\"{top:.1}\" width=\"{:.1}\" height=\"{lh:.1}\" fill=\"{bg}\"/>\n",
+                    start as f32 * cw,
+                    (x - start) as f32 * cw + 0.3,
+                ));
+            }
+            // A word at a time: a run's spaces would be stretched along with it.
+            let blank = |s: &str| s.trim().is_empty();
+            let mut x = 0;
+            while x < cells.len() {
+                if blank(&cells[x].0) {
+                    x += 1;
+                    continue;
+                }
+                let (start, (fg, _, bold)) = (x, cells[x].1.clone());
+                let mut text = String::new();
+                while x < cells.len() && !blank(&cells[x].0) && cells[x].1 .0 == fg && cells[x].1 .2 == bold {
+                    text.push_str(&cells[x].0);
+                    x += 1;
+                }
+                texts.push_str(&format!(
+                    "<text x=\"{:.1}\" y=\"{:.1}\" fill=\"{fg}\"{} textLength=\"{:.1}\" lengthAdjust=\"spacingAndGlyphs\">{}</text>\n",
+                    start as f32 * cw,
+                    top + 13.5,
+                    if bold { " font-weight=\"bold\"" } else { "" },
+                    (x - start) as f32 * cw,
+                    escape(&text),
+                ));
+            }
+        }
+        let (w, h) = (width as f32 * cw, height as f32 * lh);
+        format!(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w:.0}\" height=\"{h:.0}\" viewBox=\"0 0 {w:.1} {h:.1}\">\n\
+             <rect width=\"100%\" height=\"100%\" fill=\"{}\"/>\n{rects}\
+             <g font-family=\"Cascadia Mono, Consolas, DejaVu Sans Mono, Menlo, monospace\" font-size=\"14\" xml:space=\"preserve\">\n{texts}</g>\n</svg>\n",
+            hex(t.bg, t.bg),
+        )
+    }
 }

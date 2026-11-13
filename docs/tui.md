@@ -31,6 +31,16 @@ ginx.exe              │
 
 Press `?` at any time for the key list.
 
+The pictures in the README, [`img/dashboard-services.svg`](img/dashboard-services.svg)
+and [`img/dashboard-sites.svg`](img/dashboard-sites.svg), are drawn by the
+dashboard's own view code from a fixed demo stack, not captured from a
+terminal. Regenerate them after changing the layout or the theme:
+
+```bat
+cd devcrate
+cargo test screenshots -- --ignored
+```
+
 ## How it is laid out
 
 Top to bottom: three rows of header — the name and the stack root, the tabs
