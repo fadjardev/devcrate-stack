@@ -792,12 +792,6 @@ fn check_host(host: &str) -> Result<&str> {
     Ok(host)
 }
 
-/// `api.mygroup.test` -> `mygroup.test`, the domain a wildcard has to cover.
-#[allow(dead_code)]
-pub fn parent_domain(host: &str) -> &str {
-    crate::mkcert::parent_domain(host)
-}
-
 /// Default to whatever the CLI resolves to, so `site add myapp.test` picks the
 /// version already in use rather than guessing.
 pub fn default_php(stack: &Stack) -> Result<&crate::config::Service> {
@@ -863,7 +857,8 @@ pub fn proxy_conf_text(host: &str, port: u16, root_rel: Option<&str>, cert_name:
     )
 }
 
-#[allow(dead_code)]
+/// A generated conf in its usual shape, for the tests that read one back.
+#[cfg(test)]
 fn conf_text(host: &str, php_name: &str, php_id: &str, port: u16) -> String {
     conf_text_custom(
         host,
@@ -1102,10 +1097,7 @@ mod tests {
 
         let missing = root.join("no-such-folder");
         let request = Request { project_path: Some(&missing), no_hosts: true, no_tls: true, ..Default::default() };
-        let err = create_with(&stack, "db.test", &request)
-            .err()
-            .expect("refused")
-            .to_string();
+        let err = create_with(&stack, "db.test", &request).expect_err("refused").to_string();
         assert!(err.contains("does not exist"), "{err}");
         assert!(!root.join("projects").join("db.test").exists(), "no junction left behind");
 
@@ -1190,7 +1182,7 @@ mod tests {
             proxy: Some(3000),
             ..Default::default()
         };
-        let err = create_with(&stack, "shop.test", &request).err().expect("refused").to_string();
+        let err = create_with(&stack, "shop.test", &request).expect_err("refused").to_string();
         assert!(err.contains("already exists as a real folder"), "{err}");
         assert_eq!(std::fs::read_to_string(occupied.join("important.txt")).unwrap(), "keep me");
         assert!(!stack.sites_dir().join("shop.test.conf").exists(), "no conf written");
@@ -1272,12 +1264,6 @@ mod tests {
         assert!(check_host("a\\b").is_err());
         assert!(check_host("has space.test").is_err());
         assert!(check_host("").is_err());
-    }
-
-    #[test]
-    fn wildcard_advice_targets_the_parent_domain() {
-        assert_eq!(parent_domain("api.mygroup.test"), "mygroup.test");
-        assert_eq!(parent_domain("myapp.test"), "myapp.test");
     }
 
     /// The whole point of editing rather than regenerating: everything the

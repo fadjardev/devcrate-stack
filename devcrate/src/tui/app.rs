@@ -178,9 +178,6 @@ pub enum PhpPurpose {
     Cli,
     /// Repoint a vhost's `fastcgi_pass`.
     Site(String),
-    /// Choose the version for a vhost about to be created.
-    #[allow(dead_code)]
-    NewSite(String),
 }
 
 /// The first-run screen, shown instead of the tabs when the first scan finds
@@ -911,16 +908,6 @@ impl App {
                         PhpPurpose::Site(host) => {
                             self.submit(Job::SiteSetPhp { host, version: chosen })
                         }
-                        PhpPurpose::NewSite(host) => {
-                            self.submit(Job::SiteAdd {
-                                host,
-                                path: None,
-                                php: Some(chosen),
-                                no_hosts: false,
-                                no_tls: false,
-                                proxy: None,
-                            })
-                        }
                     };
                 }
                 _ => {}
@@ -932,9 +919,7 @@ impl App {
                     *index = (*index + 1).min(self.install_options.len().saturating_sub(1));
                 }
                 KeyCode::Enter => {
-                    let Some(offering) = self.install_options.get(*index) else {
-                        return None;
-                    };
+                    let offering = self.install_options.get(*index)?;
                     let job = Job::Install {
                         runtime: offering.runtime.to_string(),
                         version: Some(offering.version.clone()),
@@ -951,9 +936,7 @@ impl App {
                     *index = (*index + 1).min(items.len().saturating_sub(1));
                 }
                 KeyCode::Enter => {
-                    let Some(item) = items.get(*index).cloned() else {
-                        return None;
-                    };
+                    let item = items.get(*index).cloned()?;
                     let mut question = format!("Remove {}?\n\n", item.label);
                     question.push_str(match item.version {
                         Some(_) => "Its folder is deleted. The version `current` points at is refused \

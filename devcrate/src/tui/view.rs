@@ -1221,7 +1221,6 @@ fn render_modal(frame: &mut Frame, app: &App, modal: &Modal) {
             let title = match purpose {
                 PhpPurpose::Cli => "Which PHP should the command line run?".to_string(),
                 PhpPurpose::Site(host) => format!("Serve {host} with"),
-                PhpPurpose::NewSite(host) => format!("Create {host} with"),
             };
             let items: Vec<ListItem> = versions
                 .iter()

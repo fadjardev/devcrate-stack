@@ -16,7 +16,7 @@ not started. `in progress` - being built. `done` - shipped, see
 | 2 | Built-in runtime downloader / installer with version selection | done — PHP, nginx, Composer, MariaDB, RabbitMQ, Erlang/OTP, Node.js, Bun, PostgreSQL, Python, and Redis all done end to end, plus `uninstall`. Every list is the vendor's own, MariaDB's from its REST API and RabbitMQ's, Erlang's, and Redis's from GitHub releases (sha256-verified since 2026-10-16), and each is saved in `_downloads\catalogues\` to be listed offline |
 | 3 | Runs from any terminal, scriptable as well as interactive | done — see [cli.md](cli.md) |
 | 4 | Open an existing project: vhost + hosts entry + mkcert TLS, in one step | done — automated hosts block editing with UAC elevation, mkcert TLS issuance, smart web root & composer PHP constraint detection. Certificate expiry and reissue since 2026-10-16: `devcrate cert list\|renew`, the CERT column and `R` in the Sites pane, and renewal by `start`. **Not built:** mkcert as a managed install |
-| 5 | Node.js and Bun as managed runtimes | done — Node.js & Bun installer, version switcher, npm isolation (working since 2026-10-16: the `.npmrc` the installer wrote before then was read by nothing), and smart .nvmrc / package.json detection. Dev servers under supervision and the HMR proxy were carried into item 9 |
+| 5 | Node.js and Bun as managed runtimes | done — Node.js & Bun installer, version switcher, and npm isolation (working since 2026-10-16: the `.npmrc` the installer wrote before then was read by nothing). Per-project version detection from `.nvmrc` / `package.json` is **not delivered**: a detector was written but never called, and was removed on 2026-11-13. Dev servers under supervision and the HMR proxy were carried into item 9 |
 | 6 | One-command setup on a fresh machine, with shortcuts into the dashboard | done in v0.3.0 — `devcrate setup`: nginx, PHP, MariaDB, Composer, and mkcert where missing, the CA trusted, the stack started; re-running changes nothing. The dashboard opens on a first-run screen when nothing is installed, `s` running the same setup. A release zip (`scripts/package.sh`, see [releasing.md](releasing.md#5-package)) holds `devcrate.exe` and the stack's configuration, to be extracted and run. `setup` makes Start Menu / Desktop shortcuts and a Windows Terminal profile (`--no-shortcuts` skips them), `devcrate autostart on\|off\|status` runs `devcrate start` at logon through Task Scheduler, off by default, and `setup --undo` removes all three from a receipt in the root. v0.3.0 is the first release to carry the zip. **Not verified:** a run on a clean machine with its ports free, and autostart at a real logon (its task was run from Task Scheduler) |
 | 7 | A database browser and per-project databases | done — `devcrate install adminer` (served as a site) and `devcrate db list\|create\|drop\|import\|export` for MariaDB and PostgreSQL. **Not built:** creating the `db.test` site as part of the install |
 | 8 | A local mail catcher (Mailpit) | done — `devcrate install mailpit`: a loopback-only service (SMTP 1025, inbox 8025), sha256-verified, with each `php.ini` pointed at it in a marked block that uninstall removes |
@@ -375,7 +375,10 @@ system-wide, everything inside the stack root.
 
 - **Per-project version** - read `.nvmrc` or `package.json`'s `engines.node`
   when opening a project (item 4) and offer to switch or install the version it
-  asks for.
+  asks for. (Not delivered. A detector existed until 2026-11-13, but nothing
+  called it, and it took a constraint's first number as an exact version, the
+  mistake fixed for PHP in `composer_php`. Building this means reading the
+  constraint properly, as that module does.)
 - **Run dev servers under supervision** - `npm run dev` / `bun run dev` started
   from the TUI, appearing on the dashboard next to the PHP services with its
   output in the log viewer, so a Vite dev server is stopped along with the rest
