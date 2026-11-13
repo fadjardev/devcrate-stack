@@ -585,7 +585,9 @@ devcrate site remove myapp.test
 relative path is taken from the current directory, not the stack root, and a
 path that does not exist is refused before anything is created. A folder that
 is already directly under `projects\` is served where it is, under its own
-name — `root projects/<folder>` — with no junction beside it.
+name — `root projects/<folder>` — with no junction beside it. If
+`projects\<host>` is already a real folder or file, `--path` is refused, with
+`--force` too, rather than replacing it; only a junction there is repointed.
 
 ```
   created  projects\myapp.test\public
@@ -1851,9 +1853,12 @@ ignored, so a typo is an error instead of a setting that silently does nothing.
   `--no-hosts` skips it. A write goes to a temp file beside the hosts file and
   is renamed over it, so an interrupted write never leaves it half-written
   (if the rename is refused while writing is allowed, it falls back to a plain
-  write). When writing needs elevation, a UAC prompt copies the new content
-  into place instead; declining leaves the file untouched and the line printed
-  for you.
+  write). When writing needs elevation, a UAC prompt makes `hosts.bak` (if it
+  is not there yet) and copies the new content into place instead; the file is
+  read back afterwards, and only a copy that landed is reported as updated.
+  Declining leaves the file untouched and the line printed for you. A hosts
+  file that exists but cannot be read — locked, or not UTF-8 text — is left
+  alone and reported, never treated as empty.
 - **No `devcrate install mkcert`.** `devcrate setup` places mkcert in the
   stack root when none is found, but it cannot be installed, updated, or
   removed on its own. `site add` issues or reuses a certificate (`myapp.test` +

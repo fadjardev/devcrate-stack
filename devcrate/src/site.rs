@@ -269,9 +269,19 @@ pub fn create_with(stack: &Stack, host: &str, request: &Request) -> Result<Creat
 
     let target_projects_dir = stack.root.join("projects").join(&folder);
     if !in_tree {
-        if target_projects_dir.exists() {
-            let _ = std::fs::remove_file(&target_projects_dir);
-            let _ = std::fs::remove_dir_all(&target_projects_dir);
+        // Only a junction may be replaced: it is ours, and removing it leaves
+        // the folder it pointed at alone. A real folder or file under that
+        // name is somebody's project -- refused, even with --force, rather
+        // than deleted to make room.
+        if let Ok(meta) = std::fs::symlink_metadata(&target_projects_dir)
+            && !meta.file_type().is_symlink()
+        {
+            return Err(anyhow!(
+                "{} already exists as a real {} -- serving --path from there would \
+                 replace it. Move it aside, or drop --path to serve it where it is.",
+                stack.rel(&target_projects_dir),
+                if meta.is_dir() { "folder" } else { "file" }
+            ));
         }
         crate::junction::create(&target_projects_dir, &project_dir)
             .with_context(|| format!("creating junction for {}", target_projects_dir.display()))?;
@@ -1004,6 +1014,56 @@ mod tests {
         assert!(err.contains("does not exist"), "{err}");
         assert!(!root.join("projects").join("db.test").exists(), "no junction left behind");
 
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A real folder already named `projects\<host>` is refused, not replaced
+    /// by the junction `--path` needs -- it used to be deleted with everything
+    /// in it. A junction there is ours, and is repointed.
+    #[test]
+    fn a_real_project_folder_is_never_replaced_by_a_junction() {
+        let root = std::env::temp_dir().join(format!("devcrate-site-occupied-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let occupied = root.join("projects").join("shop.test");
+        std::fs::create_dir_all(&occupied).unwrap();
+        std::fs::write(occupied.join("important.txt"), "keep me").unwrap();
+        std::fs::create_dir_all(root.join("elsewhere").join("shop")).unwrap();
+        std::fs::create_dir_all(root.join("elsewhere").join("api")).unwrap();
+        std::fs::create_dir_all(root.join("nginx").join("conf").join("sites")).unwrap();
+        std::fs::write(root.join("nginx").join("conf").join("nginx.conf"), "").unwrap();
+        let stack = Stack::open(crate::root::StackRoot {
+            path: root.clone(),
+            source: crate::root::RootSource::Flag,
+        })
+        .unwrap();
+
+        let elsewhere = root.join("elsewhere").join("shop");
+        let request = Request {
+            project_path: Some(&elsewhere),
+            no_hosts: true,
+            no_tls: true,
+            force: true,
+            proxy: Some(3000),
+            ..Default::default()
+        };
+        let err = create_with(&stack, "shop.test", &request).err().expect("refused").to_string();
+        assert!(err.contains("already exists as a real folder"), "{err}");
+        assert_eq!(std::fs::read_to_string(occupied.join("important.txt")).unwrap(), "keep me");
+        assert!(!stack.sites_dir().join("shop.test.conf").exists(), "no conf written");
+
+        // A junction under the name is repointed, and what it pointed at stays.
+        let api = root.join("projects").join("api.test");
+        crate::junction::create(&api, &root.join("elsewhere").join("shop")).unwrap();
+        let target = root.join("elsewhere").join("api");
+        let request = Request { project_path: Some(&target), ..request };
+        create_with(&stack, "api.test", &request).unwrap();
+        assert_eq!(
+            crate::junction::target(&api).unwrap(),
+            crate::root::clean(&target).unwrap()
+        );
+        assert!(root.join("elsewhere").join("shop").is_dir());
+
+        let _ = crate::junction::remove(&api);
         let _ = std::fs::remove_dir_all(&root);
     }
 

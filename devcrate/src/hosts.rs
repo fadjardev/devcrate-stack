@@ -8,11 +8,16 @@
 //! # --- devcrate end ---
 //! ```
 //!
+//! The file is only ever edited from what was actually read: one that exists
+//! but cannot be read (locked, not UTF-8) is an error, never an empty file to
+//! write a fresh block into -- that would replace every other line in it.
+//!
 //! A backup `hosts.bak` is created before the first edit. A write goes to a
 //! temp file beside the hosts file and is renamed over it, so an interrupted
 //! write never leaves it truncated. If that is denied (UAC protection), an
-//! elevation prompt (via PowerShell `Start-Process -Verb RunAs`) copies the
-//! new content into place instead.
+//! elevation prompt (via PowerShell `Start-Process -Verb RunAs`) makes the
+//! backup and copies the new content into place instead, and the file is read
+//! back afterwards: only a copy that landed is reported as `Updated`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -44,6 +49,9 @@ pub fn hosts_path() -> PathBuf {
 }
 
 /// Backup hosts file to `hosts.bak` if not already backed up.
+///
+/// Without Administrator the copy is refused like the write is; the elevated
+/// fallback in [`write_hosts_content`] makes it then.
 pub fn backup_hosts() -> Result<()> {
     let target = hosts_path();
     if !target.is_file() {
@@ -51,9 +59,25 @@ pub fn backup_hosts() -> Result<()> {
     }
     let backup = target.with_file_name("hosts.bak");
     if !backup.exists() {
-        let _ = fs::copy(&target, &backup);
+        fs::copy(&target, &backup)
+            .with_context(|| format!("backing up {} to {}", target.display(), backup.display()))?;
     }
     Ok(())
+}
+
+/// The hosts file's content, or an empty string when there is no file at all.
+///
+/// Anything else that stops it being read is an error: editing an empty
+/// stand-in for a file that is really there would write it back with only the
+/// devcrate block in it.
+fn read_hosts(path: &Path) -> Result<String> {
+    match fs::read_to_string(path) {
+        Ok(content) => Ok(content),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(err) => Err(err).with_context(|| {
+            format!("reading {} (left untouched: it could not be read as UTF-8 text)", path.display())
+        }),
+    }
 }
 
 /// Parse hosts content and update the devcrate block.
@@ -149,6 +173,9 @@ pub fn read_devcrate_entries(content: &str) -> Vec<String> {
 /// Write new hosts content, using UAC elevation fallback if permission denied.
 pub fn write_hosts_content(new_content: &str) -> Result<HostsResult> {
     let target = hosts_path();
+    let backup = target.with_file_name("hosts.bak");
+    // A refused backup is made by the elevated copy below, which a refused
+    // backup almost always means is next.
     let _ = backup_hosts();
 
     // Atomic where it can be: a reader -- or an interruption -- sees the old
@@ -166,10 +193,13 @@ pub fn write_hosts_content(new_content: &str) -> Result<HostsResult> {
             fs::write(&temp_file, new_content)
                 .with_context(|| format!("writing temp file {}", temp_file.display()))?;
 
+            // The backup first, and the new content only if it was made: the
+            // elevated side is the one place it can be when not Administrator.
             let powershell_cmd = format!(
-                "Start-Process cmd -Verb RunAs -ArgumentList '/c copy /y \"{}\" \"{}\"' -Wait",
-                temp_file.display(),
-                target.display()
+                "Start-Process cmd -Verb RunAs -Wait -ArgumentList '/c (if not exist \"{bak}\" copy /y \"{hosts}\" \"{bak}\") && copy /y \"{tmp}\" \"{hosts}\"'",
+                bak = backup.display(),
+                hosts = target.display(),
+                tmp = temp_file.display(),
             );
 
             // Silenced: this also runs from the dashboard, where anything
@@ -183,14 +213,17 @@ pub fn write_hosts_content(new_content: &str) -> Result<HostsResult> {
 
             let _ = fs::remove_file(&temp_file);
 
-            if let Ok(st) = status
-                && st.success()
-            {
-                Ok(HostsResult::Updated)
-            } else {
-                Ok(HostsResult::FallbackManual(
+            // PowerShell's exit code says the prompt was shown, not that the
+            // copy behind it worked -- so the file itself is the answer.
+            let landed = fs::read_to_string(&target).is_ok_and(|now| now == new_content);
+            match status {
+                _ if landed => Ok(HostsResult::Updated),
+                Ok(st) if st.success() => Ok(HostsResult::FallbackManual(
+                    "Elevated copy did not change the hosts file".to_string(),
+                )),
+                _ => Ok(HostsResult::FallbackManual(
                     "Elevation declined or failed".to_string(),
-                ))
+                )),
             }
         }
     }
@@ -218,8 +251,7 @@ pub fn add_entry(host: &str) -> Result<HostsResult> {
 /// Add every one of `hosts` in a single write -- so a batch costs at most one
 /// elevation prompt, not one per host.
 pub fn add_entries(hosts: &[&str]) -> Result<HostsResult> {
-    let target = hosts_path();
-    let content = fs::read_to_string(&target).unwrap_or_default();
+    let content = read_hosts(&hosts_path())?;
     let mut entries = read_devcrate_entries(&content);
 
     let before = entries.len();
@@ -243,8 +275,7 @@ pub fn add_entries(hosts: &[&str]) -> Result<HostsResult> {
 
 /// Remove a host mapping from the devcrate block.
 pub fn remove_entry(host: &str) -> Result<HostsResult> {
-    let target = hosts_path();
-    let content = fs::read_to_string(&target).unwrap_or_default();
+    let content = read_hosts(&hosts_path())?;
     let mut entries = read_devcrate_entries(&content);
 
     let initial_len = entries.len();
@@ -282,6 +313,29 @@ mod tests {
         assert!(changed2);
         assert!(!removed.contains(BEGIN_MARKER));
         assert_eq!(removed.trim(), "127.0.0.1 localhost");
+    }
+
+    /// A hosts file that is there but cannot be read is an error, not an empty
+    /// file -- editing that would write it back with only the devcrate block.
+    #[test]
+    fn an_unreadable_hosts_file_is_an_error_not_an_empty_one() {
+        let dir = std::env::temp_dir()
+            .join(format!("devcrate-hosts-read-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        assert_eq!(read_hosts(&dir.join("absent")).unwrap(), "", "no file is an empty one");
+
+        let utf16 = dir.join("utf16");
+        fs::write(&utf16, [0xFF, 0xFE, b'1', 0, b'2', 0, b'7', 0, 0xD8, 0]).unwrap();
+        let err = read_hosts(&utf16).unwrap_err();
+        assert!(format!("{err:#}").contains("left untouched"), "{err:#}");
+
+        let plain = dir.join("plain");
+        fs::write(&plain, "127.0.0.1 localhost\r\n").unwrap();
+        assert_eq!(read_hosts(&plain).unwrap(), "127.0.0.1 localhost\r\n");
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     /// The replace lands the whole new content and leaves no temp file behind.

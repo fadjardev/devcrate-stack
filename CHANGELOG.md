@@ -28,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`site add <host> --path <elsewhere>` no longer deletes a real `projects\<host>` folder.** It used to remove it, with everything in it, to make room for the junction `--path` needs, and exit 0. Now a real folder or file under that name is refused, with `--force` too; only a junction there is repointed.
+- **A hosts file that cannot be read is no longer overwritten.** One that was locked or not UTF-8 was taken as empty, and written back with only the devcrate block in it. It is now left alone and the reason reported. Without Administrator, the UAC prompt now makes `hosts.bak` too (it was never made then), and an elevated copy is reported as updated only if the hosts file really changed.
 - **The dashboard honours `NO_COLOR`.** With it set, it draws in the terminal's own colours and marks the selected row, the active tab, and keys in reverse video, instead of painting its 24-bit palette regardless.
 - **A long result in the dashboard no longer loses its ending.** The output box was capped at 20 lines with no way to scroll, so the step that failed — the last line — was the one cut off. It now keeps the ending and says how many earlier lines are not shown. A result line with a line break of its own (`NOT DONE ...`, then the command that finishes it) is drawn as two lines.
 - **`Home` in the Logs pane shows the first page** instead of an empty pane above it.
