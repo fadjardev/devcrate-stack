@@ -75,7 +75,9 @@ pub fn parent_domain(host: &str) -> &str {
 }
 
 /// Issue or reuse the certificate for the host's domain group.
-/// Returns the name of the cert file used (e.g., `_wildcard.mygroup.test.pem`).
+/// Returns the name of the cert file used (e.g., `_wildcard.mygroup.test.pem`),
+/// `None` when mkcert is not there to issue one, and an error when it is there
+/// and fails -- so the caller can say which.
 pub fn ensure_cert_for_host(stack: &Stack, host: &str) -> Result<Option<String>> {
     let certs_dir = stack.nginx_prefix.join("conf").join("certs");
     if !certs_dir.is_dir() {
@@ -96,7 +98,7 @@ pub fn ensure_cert_for_host(stack: &Stack, host: &str) -> Result<Option<String>>
     if find_mkcert(stack).is_none() {
         return Ok(None);
     }
-    Ok(issue(stack, domain).ok())
+    issue(stack, domain).map(Some)
 }
 
 /// Issue the certificate for a domain group -- `*.<domain>` and `<domain>` --

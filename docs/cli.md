@@ -1898,7 +1898,13 @@ ignored, so a typo is an error instead of a setting that silently does nothing.
   `api.mygroup.test`) with an mkcert it finds in the stack root, in `mkcert\`,
   or on `PATH`, running `mkcert -install` first; `--no-tls` skips it.
   `site remove` leaves the certificate in place, since another site may share
-  it.
+  it. With `--no-tls`, without mkcert, or when mkcert fails, the vhost is
+  written as plain HTTP: `listen 80` only, no redirect, no certificate named.
+  The output says `http://<host>` and why (`SSL cert: none, served over plain
+  HTTP (...)`). A conf naming a certificate that does not exist would stop
+  *every* site loading, because nginx loads `sites\` as one document.
+  `site set-proxy` and `set-php` keep a plain site plain. To give it HTTPS
+  later, run `devcrate setup` for mkcert, then `site add <host> --force`.
 - **No supervision from a subcommand.** `start` launches and walks away;
   `status` and `stop` find their targets by scanning, not by remembering what
   was launched. So a service that dies five minutes later is reported by

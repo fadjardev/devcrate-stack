@@ -147,7 +147,10 @@ pub struct Created {
     pub public: String,
     pub public_existed: bool,
     pub reload: Reload,
-    pub cert_name: String,
+    /// The certificate in `certs\`, or `None` when the site is served over
+    /// plain HTTP -- and then `cert_note` says why.
+    pub cert_name: Option<String>,
+    pub cert_note: Option<String>,
     pub hosts_updated: bool,
     pub hosts_note: Option<String>,
 }
@@ -341,11 +344,17 @@ pub fn create_with(stack: &Stack, host: &str, request: &Request) -> Result<Creat
             .with_context(|| format!("writing {}", index.display()))?;
     }
 
-    let cert_name = if !no_tls {
-        crate::mkcert::ensure_cert_for_host(stack, host)?
-            .unwrap_or_else(|| "_wildcard.test.pem".to_string())
-    } else {
-        "_wildcard.test.pem".to_string()
+    // No certificate means a plain-HTTP conf. It used to name
+    // `_wildcard.test.pem` regardless -- a file nothing makes any more -- and
+    // nginx loads every conf in sites\ as one document, so that one missing
+    // file stopped every site from loading.
+    let (cert_name, cert_note) = match no_tls {
+        true => (None, Some("--no-tls".to_string())),
+        false => match crate::mkcert::ensure_cert_for_host(stack, host) {
+            Ok(Some(name)) => (Some(name), None),
+            Ok(None) => (None, Some("mkcert not found; `devcrate setup` installs it".to_string())),
+            Err(err) => (None, Some(format!("{err:#}"))),
+        },
     };
 
     let (hosts_updated, hosts_note) = if !no_hosts {
@@ -363,10 +372,15 @@ pub fn create_with(stack: &Stack, host: &str, request: &Request) -> Result<Creat
     std::fs::create_dir_all(&sites_dir)
         .with_context(|| format!("creating {}", sites_dir.display()))?;
     let text = match &service {
-        Some(service) => conf_text_custom(host, &service.name, &service.id, port, &root_rel, &cert_name),
+        Some(service) => conf_text_custom(host, &service.name, &service.id, port, &root_rel, cert_name.as_deref()),
         // A proxy keeps a root only when there is a folder for it to name --
         // the dashboard opens it, and a dev server runs in it.
-        None => proxy_conf_text(host, port, target_projects_dir.is_dir().then_some(root_rel.as_str()), &cert_name),
+        None => proxy_conf_text(
+            host,
+            port,
+            target_projects_dir.is_dir().then_some(root_rel.as_str()),
+            cert_name.as_deref(),
+        ),
     };
     std::fs::write(&conf, text).with_context(|| format!("writing {}", conf.display()))?;
 
@@ -384,6 +398,7 @@ pub fn create_with(stack: &Stack, host: &str, request: &Request) -> Result<Creat
         public_existed,
         reload: Reload::of(stack),
         cert_name,
+        cert_note,
         hosts_updated,
         hosts_note,
     })
@@ -413,11 +428,12 @@ pub fn add(stack: &Stack, host: &str, request: &Request) -> Result<u8> {
     println!("  {}", made.reload.note());
 
     println!();
+    let scheme = made.scheme();
     match proxy {
-        Some(_) => println!("https://{} -> {}", made.host, made.php_name),
-        None => println!("https://{} -> {} (fastcgi {})", made.host, made.php_name, made.port),
+        Some(_) => println!("{scheme}://{} -> {}", made.host, made.php_name),
+        None => println!("{scheme}://{} -> {} (fastcgi {})", made.host, made.php_name, made.port),
     }
-    println!("  SSL cert: {}", made.cert_name);
+    println!("  {}", made.cert_line());
     Ok(exit::OK)
 }
 
@@ -527,12 +543,12 @@ fn rewrite_conf(stack: &Stack, conf: &Path, text: &str) -> Result<(String, Reloa
     Ok((stack.rel(&backup), reload))
 }
 
-/// The certificate file a conf names, by its name in `certs\`.
-fn cert_name_of(text: &str) -> String {
+/// The certificate file a conf names, by its name in `certs\` -- `None` for a
+/// plain-HTTP conf, which a conversion keeps plain.
+fn cert_name_of(text: &str) -> Option<String> {
     crate::cert::ssl_files(text)
         .0
         .and_then(|cert| Path::new(&cert).file_name().map(|n| n.to_string_lossy().into_owned()))
-        .unwrap_or_else(|| "_wildcard.test.pem".to_string())
 }
 
 /// `devcrate site set-proxy`: make a vhost forward to `127.0.0.1:<port>`. Its
@@ -549,7 +565,7 @@ pub fn set_proxy(stack: &Stack, host: &str, port: u16) -> Result<Option<Converte
     }
     let text = std::fs::read_to_string(&conf).with_context(|| format!("reading {}", conf.display()))?;
     let root = site.root.as_deref().map(|r| r.trim_matches('"'));
-    let new = proxy_conf_text(host, port, root, &cert_name_of(&text));
+    let new = proxy_conf_text(host, port, root, cert_name_of(&text).as_deref());
     let (backup, reload) = rewrite_conf(stack, &conf, &new)?;
     Ok(Some(Converted { host: host.to_string(), conf: stack.rel(&conf), backup, reload }))
 }
@@ -571,7 +587,7 @@ fn proxy_to_php(
         )
     })?;
     let text = std::fs::read_to_string(conf).with_context(|| format!("reading {}", conf.display()))?;
-    let new = conf_text_custom(host, &service.name, &service.id, port, root, &cert_name_of(&text));
+    let new = conf_text_custom(host, &service.name, &service.id, port, root, cert_name_of(&text).as_deref());
     let (backup, reload) = rewrite_conf(stack, conf, &new)?;
     Ok(Repointed {
         host: host.to_string(),
@@ -807,19 +823,19 @@ pub fn default_php(stack: &Stack) -> Result<&crate::config::Service> {
 /// Upgrade header into `Connection: upgrade` is named after the host, so two
 /// proxy vhosts never declare the same variable; site confs are included
 /// inside nginx.conf's `http` block, where `map` belongs.
-pub fn proxy_conf_text(host: &str, port: u16, root_rel: Option<&str>, cert_name: &str) -> String {
-    let key_name = cert_name.replace(".pem", "-key.pem");
+pub fn proxy_conf_text(host: &str, port: u16, root_rel: Option<&str>, cert_name: Option<&str>) -> String {
     let upgrade: String =
         host.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' }).collect();
     let root = match root_rel {
         Some(root) => format!("    root   {root};\n\n"),
         None => String::new(),
     };
+    let (cert, server, proto) = served(host, cert_name);
     format!(
         "# Auto-generated by devcrate site add --proxy\n\
          # Domain  : {host}\n\
          # Proxy   : http://localhost:{port}\n\
-         # Cert    : {cert_name}\n\
+         # Cert    : {cert}\n\
          # Paths: root/logs are prefix-relative, certs are conf-relative.\n\
          \n\
          map $http_upgrade $devcrate_upgrade_{upgrade} {{\n\
@@ -827,20 +843,8 @@ pub fn proxy_conf_text(host: &str, port: u16, root_rel: Option<&str>, cert_name:
          \x20   ''       close;\n\
          }}\n\
          \n\
-         server {{\n\
-         \x20   listen       80;\n\
-         \x20   server_name  {host};\n\
-         \x20   return 301   https://$host$request_uri;\n\
-         }}\n\
-         \n\
-         server {{\n\
-         \x20   listen       443 ssl;\n\
-         \x20   server_name  {host};\n\
-         \n\
+         {server}\
          {root}\
-         \x20   ssl_certificate      certs/{cert_name};\n\
-         \x20   ssl_certificate_key  certs/{key_name};\n\
-         \n\
          \x20   access_log  logs/{host}.access.log  main;\n\
          \x20   error_log   logs/{host}.error.log   warn;\n\
          \n\
@@ -850,7 +854,7 @@ pub fn proxy_conf_text(host: &str, port: u16, root_rel: Option<&str>, cert_name:
          \x20       proxy_set_header    Host               $host;\n\
          \x20       proxy_set_header    X-Real-IP          $remote_addr;\n\
          \x20       proxy_set_header    X-Forwarded-For    $proxy_add_x_forwarded_for;\n\
-         \x20       proxy_set_header    X-Forwarded-Proto  https;\n\
+         \x20       proxy_set_header    X-Forwarded-Proto  {proto};\n\
          \x20       proxy_set_header    Upgrade            $http_upgrade;\n\
          \x20       proxy_set_header    Connection         $devcrate_upgrade_{upgrade};\n\
          \x20       proxy_read_timeout  1h;\n\
@@ -867,8 +871,70 @@ fn conf_text(host: &str, php_name: &str, php_id: &str, port: u16) -> String {
         php_id,
         port,
         &format!("projects/{host}/public"),
-        "_wildcard.test.pem",
+        Some("_wildcard.test.pem"),
     )
+}
+
+/// The parts of a generated conf that depend on whether it has a certificate:
+/// the `# Cert` comment, everything from the first `server {` to the line
+/// before `root` (with the opening of the block that serves the site), and
+/// the scheme it is reached by.
+///
+/// With one, port 80 redirects to an HTTPS server naming the pair. Without one
+/// the site is served on port 80 itself: naming a certificate that does not
+/// exist would not just break this site -- nginx loads every conf in `sites\`
+/// as one document, so it would stop every site loading.
+fn served(host: &str, cert_name: Option<&str>) -> (String, String, &'static str) {
+    match cert_name {
+        Some(cert) => {
+            let key = cert.replace(".pem", "-key.pem");
+            (
+                cert.to_string(),
+                format!(
+                    "server {{\n\
+                     \x20   listen       80;\n\
+                     \x20   server_name  {host};\n\
+                     \x20   return 301   https://$host$request_uri;\n\
+                     }}\n\
+                     \n\
+                     server {{\n\
+                     \x20   listen       443 ssl;\n\
+                     \x20   server_name  {host};\n\
+                     \n\
+                     \x20   ssl_certificate      certs/{cert};\n\
+                     \x20   ssl_certificate_key  certs/{key};\n\
+                     \n"
+                ),
+                "https",
+            )
+        }
+        None => (
+            "none -- plain HTTP".to_string(),
+            format!(
+                "server {{\n\
+                 \x20   listen       80;\n\
+                 \x20   server_name  {host};\n\
+                 \n"
+            ),
+            "http",
+        ),
+    }
+}
+
+impl Created {
+    /// `https` when the site has a certificate, `http` when it is plain.
+    pub fn scheme(&self) -> &'static str {
+        if self.cert_name.is_some() { "https" } else { "http" }
+    }
+
+    /// The certificate line of the report.
+    pub fn cert_line(&self) -> String {
+        match (&self.cert_name, &self.cert_note) {
+            (Some(name), _) => format!("SSL cert: {name}"),
+            (None, Some(why)) => format!("SSL cert: none, served over plain HTTP ({why})"),
+            (None, None) => "SSL cert: none, served over plain HTTP".to_string(),
+        }
+    }
 }
 
 fn conf_text_custom(
@@ -877,31 +943,24 @@ fn conf_text_custom(
     php_id: &str,
     port: u16,
     root_rel: &str,
-    cert_name: &str,
+    cert_name: Option<&str>,
 ) -> String {
-    let key_name = cert_name.replace(".pem", "-key.pem");
+    let (cert, server, _) = served(host, cert_name);
+    // PHP's $_SERVER['HTTPS'], which frameworks read to build their URLs.
+    let https = match cert_name {
+        Some(_) => "\x20       fastcgi_param   HTTPS            on;\n",
+        None => "",
+    };
     format!(
         "# Auto-generated by devcrate site add\n\
          # Domain  : {host}\n\
          # PHP     : {php_id} ({php_name}) -> 127.0.0.1:{port}\n\
-         # Cert    : {cert_name}\n\
+         # Cert    : {cert}\n\
          # Paths: root/logs are prefix-relative, certs are conf-relative.\n\
          \n\
-         server {{\n\
-         \x20   listen       80;\n\
-         \x20   server_name  {host};\n\
-         \x20   return 301   https://$host$request_uri;\n\
-         }}\n\
-         \n\
-         server {{\n\
-         \x20   listen       443 ssl;\n\
-         \x20   server_name  {host};\n\
-         \n\
+         {server}\
          \x20   root   {root_rel};\n\
          \x20   index  index.php index.html;\n\
-         \n\
-         \x20   ssl_certificate      certs/{cert_name};\n\
-         \x20   ssl_certificate_key  certs/{key_name};\n\
          \n\
          \x20   access_log  logs/{host}.access.log  main;\n\
          \x20   error_log   logs/{host}.error.log   warn;\n\
@@ -916,7 +975,7 @@ fn conf_text_custom(
          \x20       fastcgi_index   index.php;\n\
          \x20       include         fastcgi_params;\n\
          \x20       fastcgi_param   SCRIPT_FILENAME  $document_root$fastcgi_script_name;\n\
-         \x20       fastcgi_param   HTTPS            on;\n\
+         {https}\
          \x20   }}\n\
          \n\
          \x20   location ~ /\\. {{\n\
@@ -932,14 +991,14 @@ mod tests {
 
     #[test]
     fn a_proxy_conf_forwards_upgrades_under_its_own_map() {
-        let conf = proxy_conf_text("api.shop.test", 3000, Some("projects/shop"), "_wildcard.shop.test.pem");
+        let conf = proxy_conf_text("api.shop.test", 3000, Some("projects/shop"), Some("_wildcard.shop.test.pem"));
         assert!(conf.contains("map $http_upgrade $devcrate_upgrade_api_shop_test {"), "{conf}");
         assert!(conf.contains("proxy_pass          http://localhost:3000;"));
         assert!(conf.contains("proxy_set_header    Connection         $devcrate_upgrade_api_shop_test;"));
         assert!(conf.contains("proxy_set_header    X-Forwarded-Proto  https;"));
         assert!(conf.contains("    root   projects/shop;\n"));
         assert!(conf.contains("ssl_certificate_key  certs/_wildcard.shop.test-key.pem;"));
-        assert!(!proxy_conf_text("api.shop.test", 3000, None, "x.pem").contains("root "), "no folder, no root");
+        assert!(!proxy_conf_text("api.shop.test", 3000, None, Some("x.pem")).contains("root "), "no folder, no root");
 
         let path = std::env::temp_dir().join(format!("devcrate-proxy-{}.conf", std::process::id()));
         std::fs::write(&path, &conf).unwrap();
@@ -964,7 +1023,7 @@ mod tests {
         let conf = stack.sites_dir().join("shop.test.conf");
         std::fs::write(
             &conf,
-            conf_text_custom("shop.test", "PHP 8.5", "php-8.5", 9085, "projects/shop/public", "_wildcard.shop.test.pem"),
+            conf_text_custom("shop.test", "PHP 8.5", "php-8.5", 9085, "projects/shop/public", Some("_wildcard.shop.test.pem")),
         )
         .unwrap();
 
@@ -1049,6 +1108,55 @@ mod tests {
             .to_string();
         assert!(err.contains("does not exist"), "{err}");
         assert!(!root.join("projects").join("db.test").exists(), "no junction left behind");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// With no certificate -- `--no-tls` here -- the conf serves plain HTTP on
+    /// port 80 and names no certificate. It used to name `_wildcard.test.pem`,
+    /// which nothing makes, and so stopped every site in nginx from loading.
+    /// Converting it to a proxy and back keeps it plain.
+    #[test]
+    fn without_a_certificate_the_conf_is_plain_http() {
+        let root = std::env::temp_dir().join(format!("devcrate-site-plain-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let php = root.join("php").join("php-8.5");
+        std::fs::create_dir_all(&php).unwrap();
+        std::fs::write(php.join("php-cgi.exe"), "").unwrap();
+        std::fs::create_dir_all(root.join("projects").join("shop.test")).unwrap();
+        std::fs::create_dir_all(root.join("nginx").join("conf").join("sites")).unwrap();
+        std::fs::write(root.join("nginx").join("conf").join("nginx.conf"), "").unwrap();
+        let stack = Stack::open(StackRoot { path: root.clone(), source: RootSource::Flag }).unwrap();
+
+        let request = Request { want_php: Some("8.5"), no_hosts: true, no_tls: true, ..Default::default() };
+        let made = create_with(&stack, "shop.test", &request).unwrap();
+        assert_eq!(made.cert_name, None);
+        assert_eq!(made.scheme(), "http");
+        assert!(made.cert_line().contains("plain HTTP (--no-tls)"), "{}", made.cert_line());
+
+        let conf = stack.sites_dir().join("shop.test.conf");
+        let plain = |conf: &Path| {
+            let text = std::fs::read_to_string(conf).unwrap();
+            for absent in ["443", "ssl_certificate", "return 301", "HTTPS            on", "https"] {
+                assert!(!text.contains(absent), "{absent:?} in:\n{text}");
+            }
+            assert!(text.contains("    listen       80;\n"), "{text}");
+            assert!(!Site::read(conf).tls);
+            text
+        };
+        assert!(plain(&conf).contains("fastcgi_pass    127.0.0.1:9085;"));
+        assert_eq!(Site::read(&conf).url(), "http://shop.test/");
+
+        set_proxy(&stack, "shop.test", 5173).unwrap().expect("converted");
+        assert!(plain(&conf).contains("X-Forwarded-Proto  http;"));
+        repoint_site(&stack, "shop.test", "8.5").unwrap();
+        plain(&conf);
+
+        // With a certificate, the same site is HTTPS behind a redirect.
+        let tls = conf_text_custom("shop.test", "PHP 8.5", "php-8.5", 9085, "projects/shop.test", Some("_wildcard.shop.test.pem"));
+        assert!(tls.contains("return 301   https://$host$request_uri;"));
+        assert!(tls.contains("ssl_certificate_key  certs/_wildcard.shop.test-key.pem;"));
+        assert!(tls.contains("fastcgi_param   HTTPS            on;"));
 
         let _ = std::fs::remove_dir_all(&root);
     }

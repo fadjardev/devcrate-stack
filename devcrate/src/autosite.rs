@@ -186,11 +186,15 @@ pub fn describe(synced: &Synced) -> Vec<String> {
     let mut lines = Vec::new();
     for created in &synced.created {
         lines.push(format!(
-            "new      https://{} -> {} ({})",
+            "new      {}://{} -> {} ({})",
+            created.scheme(),
             created.host,
             created.public,
             created.php_name
         ));
+        if created.cert_name.is_none() {
+            lines.push(format!("         {}", created.cert_line()));
+        }
     }
     for (folder, why) in &synced.failed {
         lines.push(format!("FAILED   {folder}: {why}"));
@@ -346,7 +350,11 @@ mod tests {
         inside.sort();
         assert_eq!(inside, ["index.html"], "no public\\ and no index.php written");
         assert!(!root.join("projects").join("shop.test").exists(), "no junction beside it");
-        assert!(describe(&synced)[0].starts_with("new      https://shop.test -> projects\\Shop"));
+        // No TLS asked for, so plain HTTP, and the report says why.
+        let lines = describe(&synced);
+        assert!(lines[0].starts_with("new      http://shop.test -> projects\\Shop"), "{lines:?}");
+        assert!(lines[1].contains("plain HTTP (--no-tls)"), "{lines:?}");
+        assert!(!conf.contains("443"), "{conf}");
 
         let again = sync(&stack, Options { hosts: false, tls: false }).unwrap();
         assert!(again.created.is_empty() && again.plan.new.is_empty());

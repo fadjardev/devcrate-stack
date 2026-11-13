@@ -407,15 +407,21 @@ fn run(stack: &Stack, job: Job, tx: &Sender<Event>) -> JobResult {
                     let mut lines = vec![
                         format!("wrote {}", made.conf),
                         match proxy {
-                            Some(_) => format!("https://{} -> {}", made.host, made.php_name),
-                            None => format!("https://{} -> {} (fastcgi {})", made.host, made.php_name, made.port),
+                            Some(_) => format!("{}://{} -> {}", made.scheme(), made.host, made.php_name),
+                            None => format!(
+                                "{}://{} -> {} (fastcgi {})",
+                                made.scheme(),
+                                made.host,
+                                made.php_name,
+                                made.port
+                            ),
                         },
                         made.reload.note(),
                     ];
                     if made.hosts_updated {
                         lines.push("hosts updated C:\\Windows\\System32\\drivers\\etc\\hosts".to_string());
                     }
-                    lines.push(format!("SSL cert: {}", made.cert_name));
+                    lines.push(made.cert_line());
                     JobResult { label, lines, failed: false, sites_changed: true }
                 }
                 Err(err) => failure(label, err),
