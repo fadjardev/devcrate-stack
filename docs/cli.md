@@ -617,8 +617,15 @@ The conf is the one `new-vhost.bat` writes, with the same prefix-relative
 Differences from `new-vhost.bat`:
 
 - **The PHP version comes from what is installed**, not from a port map
-  hard-coded in the script. `--php` takes any of `8.5` / `85` / `php-8.5`, and
-  omitting it uses whatever `php\current` points at.
+  hard-coded in the script. `--php` takes any of `8.5` / `85` / `php-8.5`.
+  Without it, a project whose `composer.json` has a `require.php` constraint
+  gets an installed version that satisfies it: the one `php\current` points at
+  if it does, otherwise the newest that does. `"^8.2"` with only 8.5 installed
+  is served by 8.5. The usual Composer spellings are understood (`^`, `~`,
+  `>=`, `<`, `!=`, `8.2.*`, `8.1 - 8.3`, `||`, AND by space or comma). When no
+  installed version satisfies it, the site is refused with the constraint, the
+  installed versions, and the newest PHP that would satisfy it. A constraint
+  devcrate cannot read, or no constraint at all, means `php\current`.
 - **It will not silently overwrite.** An existing conf for that host is an
   error until you pass `--force`.
 - **The configuration is tested before the reload.** nginx loads every file in

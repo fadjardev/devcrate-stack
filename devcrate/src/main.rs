@@ -10,6 +10,7 @@ mod autosite;
 mod cert;
 mod bun;
 mod cli;
+mod composer_php;
 mod config;
 mod control;
 mod create;

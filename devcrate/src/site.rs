@@ -152,26 +152,59 @@ pub struct Created {
     pub hosts_note: Option<String>,
 }
 
-/// Detect PHP version constraint from composer.json.
-pub fn detect_composer_php(project_dir: &Path) -> Option<String> {
-    let composer_file = project_dir.join("composer.json");
-    let text = std::fs::read_to_string(&composer_file).ok()?;
-    let json: serde_json::Value = serde_json::from_str(&text).ok()?;
-    let req = json.get("require")?.get("php")?.as_str()?;
+/// PHP releases, oldest first: what an install can be suggested from when no
+/// installed version satisfies a project.
+const PHP_LINES: &[(u32, u32)] =
+    &[(5, 6), (7, 0), (7, 1), (7, 2), (7, 3), (7, 4), (8, 0), (8, 1), (8, 2), (8, 3), (8, 4), (8, 5)];
 
-    let mut version = String::new();
-    for c in req.chars() {
-        if c.is_ascii_digit() || c == '.' {
-            version.push(c);
-        } else if !version.is_empty() {
-            break;
-        }
+/// The X.Y of a PHP service, from its folder name.
+fn php_version(service: &crate::config::Service) -> Option<(u32, u32)> {
+    let version = crate::config::version_from_tag(&service.id);
+    let (major, minor) = version.split_once('.')?;
+    Some((major.parse().ok()?, minor.parse().ok()?))
+}
+
+/// The installed PHP that `project_dir`'s `composer.json` accepts: the one the
+/// command line uses if it qualifies, otherwise the newest that does. `None`
+/// when there is no constraint or it cannot be read, so the default applies;
+/// an error when it can be read and no installed version satisfies it.
+fn composer_php<'a>(stack: &'a Stack, project_dir: &Path) -> Result<Option<&'a crate::config::Service>> {
+    use crate::composer_php::allows;
+    let Some(constraint) = crate::composer_php::constraint(project_dir) else { return Ok(None) };
+    if allows(&constraint, 8, 0).is_none() {
+        return Ok(None);
     }
-    if !version.is_empty() {
-        Some(version)
-    } else {
-        None
+    let fits = |service: &crate::config::Service| {
+        service.is_installed()
+            && php_version(service).and_then(|(major, minor)| allows(&constraint, major, minor)) == Some(true)
+    };
+
+    if let Ok(current) = default_php(stack)
+        && fits(current)
+    {
+        return Ok(Some(current));
     }
+    if let Some(best) = stack.php_services().filter(|s| fits(s)).max_by_key(|s| php_version(s)) {
+        return Ok(Some(best));
+    }
+
+    let installed: Vec<String> = stack
+        .php_services()
+        .filter(|s| s.is_installed())
+        .filter_map(php_version)
+        .map(|(major, minor)| format!("{major}.{minor}"))
+        .collect();
+    let suggestion = PHP_LINES
+        .iter()
+        .rev()
+        .find(|(major, minor)| allows(&constraint, *major, *minor) == Some(true))
+        .map(|(major, minor)| format!(" `devcrate install php {major}.{minor}` adds one;"))
+        .unwrap_or_default();
+    Err(anyhow!(
+        "composer.json requires PHP {constraint:?}, which no installed version satisfies \
+         (installed: {}).{suggestion} --php picks one regardless.",
+        if installed.is_empty() { "none".to_string() } else { installed.join(", ") }
+    ))
 }
 
 /// What [`create_with`] is asked for beyond the hostname.
@@ -242,10 +275,13 @@ pub fn create_with(stack: &Stack, host: &str, request: &Request) -> Result<Creat
     let service = match proxy {
         Some(_) => None,
         None => {
-            let php_hint = want_php.map(|s| s.to_string()).or_else(|| detect_composer_php(&project_dir));
-            Some(match php_hint {
-                Some(wanted) => php::find(stack, &wanted)?,
-                None => default_php(stack)?,
+            // --php wins; then what composer.json accepts; then the default.
+            Some(match want_php {
+                Some(wanted) => php::find(stack, wanted)?,
+                None => match composer_php(stack, &project_dir)? {
+                    Some(service) => service,
+                    None => default_php(stack)?,
+                },
             })
         }
     };
@@ -1176,13 +1212,44 @@ mod tests {
         assert_eq!(edited, remote);
     }
 
+    /// `"php": "^8.2"` on a stack with 7.4 and 8.5 is served by 8.5 -- it was
+    /// refused with "PHP 8.2 is not installed". A constraint nothing installed
+    /// meets is refused, naming what would; one that cannot be read falls back
+    /// to the default.
     #[test]
-    fn test_detect_composer_php() {
-        let dir = std::env::temp_dir().join("devcrate-site-composer");
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("composer.json"), r#"{"require": {"php": "^8.2"}}"#).unwrap();
+    fn composer_constraints_pick_an_installed_php_that_satisfies_them() {
+        let root = std::env::temp_dir().join(format!("devcrate-site-composer-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for version in ["php-7.4", "php-8.5"] {
+            let dir = root.join("php").join(version);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("php-cgi.exe"), "").unwrap();
+        }
+        std::fs::create_dir_all(root.join("php").join("php-8.2")).unwrap();
+        std::fs::write(root.join("php").join("php-8.2").join("php.ini"), "").unwrap(); // not installed
+        std::fs::create_dir_all(root.join("nginx").join("conf")).unwrap();
+        std::fs::write(root.join("nginx").join("conf").join("nginx.conf"), "").unwrap();
+        let project = root.join("projects").join("shop");
+        std::fs::create_dir_all(&project).unwrap();
+        let stack = Stack::open(crate::root::StackRoot {
+            path: root.clone(),
+            source: crate::root::RootSource::Flag,
+        })
+        .unwrap();
+        let pick = |constraint: &str| {
+            std::fs::write(project.join("composer.json"), format!(r#"{{"require": {{"php": "{constraint}"}}}}"#))
+                .unwrap();
+            composer_php(&stack, &project).map(|s| s.map(|s| s.id.clone()))
+        };
 
-        assert_eq!(detect_composer_php(&dir).as_deref(), Some("8.2"));
-        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(pick("^8.2").unwrap().as_deref(), Some("php-8.5"));
+        assert_eq!(pick("^7.4 || ^8.0").unwrap().as_deref(), Some("php-8.5"), "the newest that fits");
+        assert_eq!(pick("~7.4.0").unwrap().as_deref(), Some("php-7.4"));
+        assert_eq!(pick("not a constraint").unwrap(), None, "unreadable: the default applies");
+        let err = pick(">=8.1 <8.3").unwrap_err().to_string();
+        assert!(err.contains("installed: 7.4, 8.5"), "{err}");
+        assert!(err.contains("devcrate install php 8.2"), "{err}");
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
