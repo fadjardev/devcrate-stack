@@ -71,6 +71,8 @@ pub enum Event {
     AutoSkip(String),
     /// The install picker's entries, read from the vendors' catalogues.
     Offerings(Vec<crate::install::Offering>),
+    /// The folder dialog closed: the folder chosen, or `None` if cancelled.
+    Folder(Option<String>),
 }
 
 /// Work the UI can ask for. One at a time, in the order requested.

@@ -99,6 +99,7 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, stack: Arc<Stac
                 Event::SetupStep(line) => app.on_setup_step(line),
                 Event::Restacked(stack) => app.on_restacked(stack),
                 Event::AutoSkip(folder) => app.on_auto_skip(folder),
+                Event::Folder(picked) => app.on_folder(picked),
                 Event::Unserved(folders) => {
                     if let Some(job) = app.on_unserved(folders)
                         && actor.send(job).is_err()
@@ -126,6 +127,13 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<Stdout>>, stack: Arc<Stac
                 Err(err) => (format!("{err:#}"), true),
             };
             app.on_launched(text, failed);
+        }
+        if app.folder_wanted {
+            app.folder_wanted = false;
+            let tx = tx.clone();
+            std::thread::spawn(move || {
+                let _ = tx.send(Event::Folder(app::pick_project_folder()));
+            });
         }
         if app.log_target_dirty {
             app.log_target_dirty = false;
@@ -1190,6 +1198,46 @@ mod tests {
         let screen = draw(&app);
         assert!(!screen.contains("entry 000"), "the first PgDn moves:
 {screen}");
+    }
+
+    /// Browse asks the event loop for the folder dialog instead of opening it
+    /// on the UI thread, which would freeze the dashboard until it closed. The
+    /// form stays usable meanwhile, and the answer fills it when it comes.
+    #[test]
+    fn the_folder_dialog_does_not_block_the_form() {
+        let mut app = App::new(stack());
+        app.tab = app::Tab::Sites;
+        let mut form = app::NewSiteForm::new();
+        form.active_field = 2;
+        app.modal = Some(app::Modal::NewSite(form));
+
+        app.on_key(KeyEvent::from(KeyCode::Enter));
+        assert!(app.folder_wanted && app.picking_folder, "asked, not opened here");
+        assert!(draw(&app).contains("Choosing a folder"));
+
+        // The loop takes the request; a second Browse while it is open asks nothing.
+        app.folder_wanted = false;
+        app.on_key(KeyEvent::from(KeyCode::Char(' ')));
+        assert!(!app.folder_wanted, "one dialog at a time");
+
+        // Typing still reaches the form while the dialog is up.
+        app.on_key(KeyEvent::from(KeyCode::Up));
+        app.on_key(KeyEvent::from(KeyCode::Char('x')));
+        let Some(app::Modal::NewSite(form)) = &app.modal else { panic!("the form is still open") };
+        assert_eq!(form.path, "x");
+
+        app.on_folder(Some("D:\\work\\shop".into()));
+        let Some(app::Modal::NewSite(form)) = &app.modal else { panic!("the form is still open") };
+        assert_eq!(form.path, "D:\\work\\shop");
+        assert_eq!(form.host, "shop.test");
+        assert!(!app.picking_folder);
+        assert!(draw(&app).contains("Browse for a folder"));
+
+        // An answer after the form is gone is dropped.
+        app.modal = None;
+        app.picking_folder = true;
+        app.on_folder(Some("D:\\work\\blog".into()));
+        assert!(app.modal.is_none() && !app.picking_folder);
     }
 
     /// Every pane's footer fits a 100-column terminal, `q quit` included.

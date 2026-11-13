@@ -1,8 +1,10 @@
 //! Dashboard state, and what each keystroke does to it.
 //!
-//! The app owns no threads and does no I/O beyond reading the vhost confs. It
-//! turns keys into [`Job`]s for the actor and folds incoming [`Event`]s into
-//! something drawable.
+//! The app owns no threads and does no I/O beyond reading small files: the
+//! vhost confs, and a PHP version's php.ini and `ext` folder for the extension
+//! picker. Nothing that waits -- a process, a dialog -- runs here. It turns keys
+//! into [`Job`]s for the actor and folds incoming [`Event`]s into something
+//! drawable.
 
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
@@ -153,6 +155,8 @@ impl NewProjectForm {
     }
 }
 
+/// The folder dialog. It waits until it is closed, so the event loop runs it
+/// on a thread of its own and hands the answer back as an event.
 pub fn pick_project_folder() -> Option<String> {
     #[cfg(windows)]
     {
@@ -303,6 +307,12 @@ pub struct App {
     /// Not a job: opening a browser takes milliseconds and should work while
     /// an install is still running.
     pub launch_wanted: Option<(Launch, Site)>,
+    /// Set by Browse in the New Site form, taken by the caller, which opens the
+    /// folder dialog on a thread: the dialog waits for its user, and the
+    /// dashboard keeps drawing meanwhile.
+    pub folder_wanted: bool,
+    /// The folder dialog is open. Browse does nothing more until it answers.
+    pub picking_folder: bool,
     /// What the install picker offers: the fallback list until the vendors'
     /// catalogues have been read, then those.
     pub install_options: Vec<Offering>,
@@ -346,6 +356,8 @@ impl App {
             log_target_dirty: true,
             rescan_wanted: false,
             launch_wanted: None,
+            folder_wanted: false,
+            picking_folder: false,
             install_options: crate::install::fallback_offerings(),
             offerings_requested: false,
             offerings_loaded: false,
@@ -666,6 +678,22 @@ impl App {
         }
     }
 
+    /// The folder dialog's answer. It fills the New Site form if that is still
+    /// open -- the form stays usable while the dialog is up, so it may have been
+    /// submitted or closed meanwhile, and then the answer has nowhere to go.
+    pub fn on_folder(&mut self, picked: Option<String>) {
+        self.picking_folder = false;
+        let (Some(picked), Some(Modal::NewSite(form))) = (picked, &mut self.modal) else {
+            return;
+        };
+        if form.host.trim().is_empty()
+            && let Some(name) = std::path::Path::new(&picked).file_name()
+        {
+            form.host = format!("{}.test", name.to_string_lossy());
+        }
+        form.path = picked;
+    }
+
     /// Read the open extension picker's rows again, keeping the cursor on the
     /// same extension. False when no picker is open. A listing that cannot be
     /// read keeps the rows it had.
@@ -841,6 +869,7 @@ impl App {
             return None;
         }
         if let Some(Modal::NewSite(form)) = &mut self.modal {
+            let mut browse = false;
             match key.code {
                 KeyCode::Esc => self.modal = None,
                 KeyCode::Tab | KeyCode::Down => form.active_field = (form.active_field + 1) % 8,
@@ -848,25 +877,11 @@ impl App {
                     form.active_field = if form.active_field == 0 { 7 } else { form.active_field - 1 };
                 }
                 KeyCode::Char('b') if !matches!(form.active_field, 0 | 1 | 4) => {
-                    if let Some(picked) = pick_project_folder() {
-                        form.path = picked.clone();
-                        if form.host.trim().is_empty()
-                            && let Some(name) = std::path::Path::new(&picked).file_name()
-                        {
-                            form.host = format!("{}.test", name.to_string_lossy());
-                        }
-                    }
+                    browse = true;
                 }
                 KeyCode::Enter => {
                     if form.active_field == 2 {
-                        if let Some(picked) = pick_project_folder() {
-                            form.path = picked.clone();
-                            if form.host.trim().is_empty()
-                                && let Some(name) = std::path::Path::new(&picked).file_name()
-                            {
-                                form.host = format!("{}.test", name.to_string_lossy());
-                            }
-                        }
+                        browse = true;
                     } else if form.active_field == 7 || (!form.host.trim().is_empty() && matches!(form.active_field, 0 | 1 | 4)) {
                         let host = form.host.trim().to_string();
                         if !host.is_empty() {
@@ -900,16 +915,7 @@ impl App {
                     _ => {}
                 },
                 KeyCode::Right | KeyCode::Char(' ') => match form.active_field {
-                    2 => {
-                        if let Some(picked) = pick_project_folder() {
-                            form.path = picked.clone();
-                            if form.host.trim().is_empty()
-                                && let Some(name) = std::path::Path::new(&picked).file_name()
-                            {
-                                form.host = format!("{}.test", name.to_string_lossy());
-                            }
-                        }
-                    }
+                    2 => browse = true,
                     3 => {
                         if form.php_index < versions.len() {
                             form.php_index += 1;
@@ -927,6 +933,10 @@ impl App {
                     _ => {}
                 },
                 _ => {}
+            }
+            if browse && !self.picking_folder {
+                self.picking_folder = true;
+                self.folder_wanted = true;
             }
             return None;
         }

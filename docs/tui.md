@@ -214,7 +214,7 @@ dashboard never forces: replacing a DLL already there stays `php ext install
 
 | Key | Action |
 | --- | --- |
-| `n` | New vhost: a form for the hostname, project path (typed or picked with **Browse**), PHP version (or auto-detect), a proxy port (digits; set, the site forwards to `localhost:<port>` instead of PHP), and whether to add the hosts entry and issue a certificate |
+| `n` | New vhost: a form for the hostname, project path (typed or picked with **Browse**, whose folder dialog leaves the dashboard drawing and the form usable while it is open), PHP version (or auto-detect), a proxy port (digits; set, the site forwards to `localhost:<port>` instead of PHP), and whether to add the hosts entry and issue a certificate |
 | `N` | New Laravel or WordPress project: a form for the kind, the name, the PHP version, and the database |
 | `p` | Change the selected vhost's PHP version |
 | `v` | Start or stop the selected site's dev server (`devcrate dev`) |

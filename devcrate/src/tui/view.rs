@@ -1105,7 +1105,10 @@ fn render_modal(frame: &mut Frame, app: &App, modal: &Modal) {
                     },
                     cursor(form.active_field == 1),
                 ]),
-                Line::from(vec![Span::raw(" ".repeat(19)), button(form.active_field == 2, " Browse for a folder... ")]),
+                Line::from(vec![Span::raw(" ".repeat(19)), button(
+                    form.active_field == 2,
+                    if app.picking_folder { " Choosing a folder... " } else { " Browse for a folder... " },
+                )]),
                 Line::from(vec![
                     label(3, "PHP version"),
                     Span::styled("‹ ", Style::new().fg(t.muted)),
