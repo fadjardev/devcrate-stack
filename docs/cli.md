@@ -342,6 +342,10 @@ Two differences from `stop.bat`:
   `timeout /t 4` after nginx whether or not nginx has gone. This polls, so a
   clean stack goes down in about a second; the per-service ceilings (10s for
   nginx, 30s for MariaDB and RabbitMQ) are only reached when something is stuck.
+  When the shutdown command itself fails — `mariadb-admin` refused because
+  root was given a password, say — nothing is going to shut down, so the
+  service gets two seconds rather than its ceiling before it is terminated, and
+  the line names the failure: `terminated (1 process(es)) after: ...`.
 
 `epmd.exe` is cleared once the broker is confirmed down — it is excluded from
 the running/stopped decision precisely because it outlives RabbitMQ, so

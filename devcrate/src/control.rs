@@ -73,6 +73,9 @@ const STARTUP: &[ServiceKind] = &[
 /// How often to re-check whether a service has finished going away.
 const POLL: Duration = Duration::from_millis(200);
 
+/// How long a service gets to go away when its shutdown command failed.
+const FAILED_ASK_GRACE: Duration = Duration::from_secs(2);
+
 /// How long each kind gets to shut itself down before it is terminated.
 ///
 /// These are ceilings, not waits: the poll returns as soon as the processes are
@@ -273,7 +276,15 @@ fn stop_service(stack: &Stack, service: &Service) -> Stopped {
 
     let reason = ask_nicely(stack, service).err().map(|err| format!("{err:#}"));
 
-    if wait_until_gone(service, grace(service.kind)) {
+    // A shutdown command that failed -- MariaDB's root given a password, say
+    // -- asked for nothing, so sitting out the whole grace for it is 30
+    // seconds of waiting on nothing. A short look still covers a command that
+    // reports failure after it has taken effect.
+    let patience = match reason {
+        Some(_) => grace(service.kind).min(FAILED_ASK_GRACE),
+        None => grace(service.kind),
+    };
+    if wait_until_gone(service, patience) {
         return Stopped::Graceful;
     }
 
@@ -1009,6 +1020,50 @@ mod tests {
         assert!(matches!(steps[0].outcome, Stopped::LeftAlone(1)), "{:?}", steps[0].outcome);
         assert!(!steps[0].outcome.is_failure());
         assert!(still_there, "the process running from node\\ was terminated");
+    }
+
+    /// A MariaDB whose shutdown command fails is terminated after a short
+    /// look, not after the full 30-second grace that a working command gets.
+    /// A copy of hostname.exe stands in for mariadb-admin: given these arguments
+    /// it fails at once, as an "Access denied" does. ping.exe is the server.
+    #[test]
+    fn a_failed_shutdown_command_does_not_wait_out_the_grace() {
+        let root = std::env::temp_dir().join(format!("devcrate-stop-mariadb-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let bin = root.join("mariadb").join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(root.join("nginx").join("conf")).unwrap();
+        std::fs::write(root.join("nginx").join("conf").join("nginx.conf"), "").unwrap();
+        let system = std::env::var_os("SystemRoot").map(PathBuf::from).unwrap_or_else(|| r"C:\Windows".into());
+        std::fs::copy(system.join("System32").join("PING.EXE"), bin.join("mariadbd.exe")).unwrap();
+        std::fs::copy(system.join("System32").join("HOSTNAME.EXE"), bin.join("mariadb-admin.exe")).unwrap();
+        let stack = Stack::open(crate::root::StackRoot {
+            path: root.clone(),
+            source: crate::root::RootSource::Flag,
+        })
+        .unwrap();
+
+        let mut child = Command::new(bin.join("mariadbd.exe"))
+            .args(["-n", "120", "127.0.0.1"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mariadb = stack.services.iter().find(|s| s.kind == ServiceKind::MariaDb).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while running(mariadb).is_empty() && Instant::now() < deadline {
+            sleep(POLL);
+        }
+
+        let began = Instant::now();
+        let outcome = stop_service(&stack, mariadb);
+        let took = began.elapsed();
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert!(matches!(outcome, Stopped::Terminated { count: 1, reason: Some(_) }), "{outcome:?}");
+        assert!(took < Duration::from_secs(10), "took {took:?}; the grace is {:?}", grace(ServiceKind::MariaDb));
     }
 
     /// Every service kind has to appear in both orders, or one of them would be
