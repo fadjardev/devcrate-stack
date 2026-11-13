@@ -89,6 +89,13 @@ never started or died thirty seconds ago. The dashboard stays resident, holds th
 previous scan, and can therefore tell the difference. A service that goes from
 `up` to `stopped` without anyone asking it to is shown as **`crashed`**.
 
+"Asking" means the action that takes that service down: a stop or restart of
+it, an extension change that restarts its PHP worker, an install or removal of
+its runtime, or setup. A service that goes down while some *other* action runs
+(a certificate renewal, a site added, an install of something else) is still a
+crash. A crash stays marked until the service is started again or comes back
+up; another action in between does not clear it.
+
 That is the whole of the "real process supervision" constraint in
 [roadmap](roadmap.md) item 1, and it is the one thing the subcommands genuinely
 cannot do.

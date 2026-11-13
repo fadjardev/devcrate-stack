@@ -226,6 +226,7 @@ mod tests {
     use crate::config::{Service, ServiceKind};
     use crate::root::RootSource;
     use crate::status::{PortStatus, ServiceStatus, State, StatusReport};
+    use crate::tui::worker::{Job, JobResult};
 
     fn stack() -> Arc<Stack> {
         let root = PathBuf::from("C:\\devcrate");
@@ -349,6 +350,37 @@ mod tests {
         assert!(!app.crashed("php-8.5"));
         assert!(!app.crashed("nginx"));
         assert!(!draw(&app).contains("crashed"));
+    }
+
+    /// A crash while some unrelated job runs is still a crash. It used to be
+    /// excused by any job in flight, and then left looking like a stop. What
+    /// the running job takes down on purpose -- the PHP worker an extension
+    /// restarts -- is still not one.
+    #[test]
+    fn a_crash_during_an_unrelated_job_is_reported() {
+        let mut app = App::new(stack());
+        app.on_status(report(State::Up, State::Up));
+
+        app.submit(Job::CertRenew("myapp.test".into())).expect("accepted");
+        app.on_status(report(State::Stopped, State::Up));
+        assert!(app.crashed("nginx"), "a certificate renewal does not take nginx down");
+
+        // The job finishing does not clear it, and nor does the next job
+        // unless that job starts it.
+        app.on_done(JobResult { label: "Renew".into(), lines: Vec::new(), failed: false, sites_changed: false });
+        app.submit(Job::SiteSync).expect("accepted");
+        assert!(app.crashed("nginx"), "an unrelated job does not wipe a reported crash");
+        app.on_done(JobResult { label: "Sync".into(), lines: Vec::new(), failed: false, sites_changed: false });
+
+        // An extension change restarts its PHP worker: that is the job.
+        app.submit(Job::PhpExt { php: "php-8.5".into(), ext: "intl".into(), on: true }).expect("accepted");
+        app.on_status(report(State::Stopped, State::Stopped));
+        assert!(!app.crashed("php-8.5"), "the job restarts it");
+
+        // Starting it is what answers the crash.
+        app.on_done(JobResult { label: "Ext".into(), lines: Vec::new(), failed: false, sites_changed: false });
+        app.submit(Job::Start(Some("nginx".into()))).expect("accepted");
+        assert!(!app.crashed("nginx"));
     }
 
     /// A key that starts something must not be accepted twice while the first

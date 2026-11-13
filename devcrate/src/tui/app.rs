@@ -250,6 +250,10 @@ pub struct App {
     watches: HashMap<String, Watch>,
     /// Services the user took down on purpose. Not crashes.
     deliberate: HashSet<String>,
+    /// Services the running job may take down on its way -- a stop, a PHP
+    /// worker restarted for an extension, an install of that runtime. One of
+    /// these going down while it runs is the job, not a crash; any other is.
+    in_flight: HashSet<String>,
     /// Set when the selected log file changes, for the caller to pick up.
     pub log_target_dirty: bool,
     /// Set by `r`, cleared by the caller once the scanner has been nudged.
@@ -295,6 +299,7 @@ impl App {
             auto_tried: HashSet::new(),
             watches: HashMap::new(),
             deliberate: HashSet::new(),
+            in_flight: HashSet::new(),
             log_target_dirty: true,
             rescan_wanted: false,
             launch_wanted: None,
@@ -362,9 +367,11 @@ impl App {
 
             let went_down = previously == Some(State::Up)
                 && matches!(service.state, State::Stopped | State::Absent);
-            // An action in flight is taking things down on purpose, whatever
-            // the user asked for.
-            let asked_for = self.deliberate.contains(&service.id) || self.busy.is_some();
+            // Only what the running job can take down is excused. It used to
+            // be anything while any job ran, so a crash during an install or a
+            // certificate renewal was never reported -- and the service then
+            // sat there looking stopped on purpose.
+            let asked_for = self.deliberate.contains(&service.id) || self.in_flight.contains(&service.id);
             if went_down && !asked_for {
                 watch.crashed_at = Some(Instant::now());
             }
@@ -440,6 +447,7 @@ impl App {
     pub fn on_done(&mut self, result: JobResult) {
         self.busy = None;
         self.progress = None;
+        self.in_flight.clear();
         // Only setup can run from the first-run screen. A failure keeps the
         // screen up with the reason under the steps; success leaves it for
         // the dashboard, with the steps in the usual output box.
@@ -974,24 +982,57 @@ impl App {
 
     /// Hand a job to the actor, unless one is already running. Records what is
     /// being taken down on purpose, so it is not then reported as a crash.
-    fn submit(&mut self, job: Job) -> Option<Job> {
+    pub(super) fn submit(&mut self, job: Job) -> Option<Job> {
         if self.busy.is_some() {
             return None;
         }
-        let ids = self.targets_of(&job);
         if job.stops() {
-            self.deliberate.extend(ids);
-        } else {
-            for id in ids {
+            self.deliberate.extend(self.targets_of(&job));
+        }
+        // Only a start answers a crash. Every other job used to clear every
+        // crash mark on the way in, so a renewal or an install made a crash
+        // that had been reported quietly disappear.
+        if matches!(job, Job::Start(_) | Job::Restart(_) | Job::Setup) {
+            for id in self.targets_of(&job) {
                 self.deliberate.remove(&id);
                 if let Some(watch) = self.watches.get_mut(&id) {
                     watch.crashed_at = None;
                 }
             }
         }
+        self.in_flight = self.may_take_down(&job).into_iter().collect();
         self.busy = Some(job.label());
         self.modal = None;
         Some(job)
+    }
+
+    /// Which services `job` may take down while it runs.
+    fn may_take_down(&self, job: &Job) -> Vec<String> {
+        let of_kind = |kinds: &[&str]| {
+            self.stack
+                .services
+                .iter()
+                .filter(|s| kinds.contains(&s.kind.as_str()))
+                .map(|s| s.id.clone())
+                .collect::<Vec<_>>()
+        };
+        match job {
+            Job::Stop(_) | Job::Restart(_) => self.targets_of(job),
+            // Installs what is missing and starts the lot.
+            Job::Setup => self.targets_of(job),
+            // A runtime's own services -- RabbitMQ runs on Erlang.
+            Job::Install { runtime, .. } | Job::Uninstall { runtime, .. } => match runtime.as_str() {
+                "erlang" => of_kind(&["rabbitmq"]),
+                runtime => of_kind(&[runtime]),
+            },
+            // The one PHP worker that is restarted to load the change.
+            Job::PhpExt { php, .. } | Job::PhpExtInstall { php, .. } => match crate::php::find(&self.stack, php) {
+                Ok(service) => vec![service.id.clone()],
+                Err(_) => of_kind(&["php"]),
+            },
+            // Reloads, file edits, and starts: nothing goes down.
+            _ => Vec::new(),
+        }
     }
 
     /// Which service ids a start/stop actually covers. `php` means all of them,
