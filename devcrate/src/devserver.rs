@@ -436,7 +436,8 @@ pub fn print_start(stack: &Stack, name: &str) -> Result<u8> {
 
 pub fn print_stop(stack: &Stack, name: &str) -> Result<u8> {
     match stop(stack, name)? {
-        Stopped::NotRunning => println!("no dev server running for {name}"),
+        // `LeftAlone` is the runtimes' answer, never a dev server's.
+        Stopped::NotRunning | Stopped::LeftAlone(_) => println!("no dev server running for {name}"),
         Stopped::Failed(why) => {
             println!("FAILED to stop the dev server for {name}: {why}");
             return Ok(crate::exit::ERROR);

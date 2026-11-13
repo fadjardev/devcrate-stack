@@ -83,6 +83,7 @@ fn grace(kind: ServiceKind) -> Duration {
         ServiceKind::Nginx => Duration::from_secs(10),
         // A FastCGI pool has no shutdown command; it is terminated outright,
         // exactly as stop.bat does. No point waiting for something to happen.
+        // Node and Bun never get this far: `stop_service` leaves them alone.
         ServiceKind::Php | ServiceKind::Node | ServiceKind::Bun => Duration::ZERO,
         ServiceKind::RabbitMq => Duration::from_secs(30),
         ServiceKind::MariaDb => Duration::from_secs(30),
@@ -111,6 +112,10 @@ pub enum Stopped {
     Terminated { count: usize, reason: Option<String> },
     /// Still there afterwards.
     Failed(String),
+    /// A runtime rather than a server: what runs from it was not started by
+    /// devcrate as this service, so it is left running. Carries how many
+    /// processes that is.
+    LeftAlone(usize),
 }
 
 impl Stopped {
@@ -254,8 +259,16 @@ fn select<'a>(
 }
 
 fn stop_service(stack: &Stack, service: &Service) -> Stopped {
-    if running(service).is_empty() {
+    let pids = running(service);
+    if pids.is_empty() {
         return Stopped::NotRunning;
+    }
+    // Node.js and Bun are runtimes: whatever runs from node\ or bun\ -- a
+    // `npm run dev` in another terminal, an editor's language server -- is
+    // somebody else's, and terminating by folder would take it all down. The
+    // dev servers devcrate did start are stopped by PID in `devserver`.
+    if matches!(service.kind, ServiceKind::Node | ServiceKind::Bun) {
+        return Stopped::LeftAlone(pids.len());
     }
 
     let reason = ask_nicely(stack, service).err().map(|err| format!("{err:#}"));
@@ -942,6 +955,9 @@ pub fn describe(outcome: &Stopped, helpers: usize) -> String {
             format!("terminated ({count} process(es)) after: {why}")
         }
         Stopped::Failed(why) => format!("FAILED: {why}"),
+        Stopped::LeftAlone(count) => format!(
+            "left running ({count} process(es) not started by devcrate; `dev stop <site>` stops a dev server)"
+        ),
     };
     match helpers {
         0 => main,
@@ -952,6 +968,48 @@ pub fn describe(outcome: &Stopped, helpers: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Whatever runs from `node\` is left running by `stop` -- it used to be
+    /// terminated, taking down a `npm run dev` in someone else's terminal. A
+    /// copy of ping.exe stands in for node.exe: all that matters is its path.
+    #[test]
+    fn stopping_node_leaves_processes_running_from_it_alone() {
+        let root = std::env::temp_dir().join(format!("devcrate-stop-node-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let bin = root.join("node").join("v99.0.0");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(root.join("nginx").join("conf")).unwrap();
+        std::fs::write(root.join("nginx").join("conf").join("nginx.conf"), "").unwrap();
+        let system = std::env::var_os("SystemRoot").map(PathBuf::from).unwrap_or_else(|| r"C:\Windows".into());
+        std::fs::copy(system.join("System32").join("PING.EXE"), bin.join("node.exe")).unwrap();
+        let stack = Stack::open(crate::root::StackRoot {
+            path: root.clone(),
+            source: crate::root::RootSource::Flag,
+        })
+        .unwrap();
+
+        let mut child = Command::new(bin.join("node.exe"))
+            .args(["-n", "60", "127.0.0.1"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let node = stack.services.iter().find(|s| s.kind == ServiceKind::Node).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while running(node).is_empty() && Instant::now() < deadline {
+            sleep(POLL);
+        }
+
+        let steps = run_stop(&stack, Some("node")).unwrap();
+        let still_there = child.try_wait().unwrap().is_none();
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert!(matches!(steps[0].outcome, Stopped::LeftAlone(1)), "{:?}", steps[0].outcome);
+        assert!(!steps[0].outcome.is_failure());
+        assert!(still_there, "the process running from node\\ was terminated");
+    }
 
     /// Every service kind has to appear in both orders, or one of them would be
     /// silently skipped at start or stop. It is easy to add a kind to

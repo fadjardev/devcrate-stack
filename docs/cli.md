@@ -351,8 +351,20 @@ something has to clean it up. That is the "helper process(es) cleared" note.
 <host>` lines, see [`devcrate dev`](#devcrate-dev)); stopping one service leaves
 them alone.
 
-Exit code 0 when every targeted service ended up stopped, 1 if any is still
-running afterwards.
+Node.js and Bun are runtimes, not servers, so nothing running from `node\` or
+`bun\` is terminated — not by `stop`, not by `restart`, and not by `x` on their
+dashboard rows. Whatever runs there (a `npm run dev` in another terminal, an
+editor's language server) was not started by devcrate as that service. Their
+lines say so instead:
+
+```
+  Node.js   left running (2 process(es) not started by devcrate; `dev stop <site>` stops a dev server)
+```
+
+The dev servers devcrate did start are stopped by PID, as above.
+
+Exit code 0 when every targeted service ended up stopped, or was left running
+on purpose (Node.js and Bun), and 1 if any is still running afterwards.
 
 ### `devcrate php use`
 
