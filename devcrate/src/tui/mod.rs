@@ -1163,6 +1163,35 @@ mod tests {
         assert!(top.contains("entry 000") && !top.contains("(empty)"), "{top}");
     }
 
+    /// PgDn right after Home moves the view: scrolling stops where the drawn
+    /// pane does, so there is no hidden overshoot to use up first.
+    #[test]
+    fn page_down_after_home_moves_at_once() {
+        let mut app = App::new(stack());
+        app.tab = app::Tab::Logs;
+        let path = PathBuf::from("C:\\devcrate\\nginx\\logs\\error.log");
+        app.logs = vec![logs::LogFile { label: "nginx  error".into(), path: path.clone(), size: 1 }];
+        app.on_log(worker::LogView {
+            path,
+            lines: (0..200).map(|i| format!("entry {i:03}")).collect(),
+            bytes: 1,
+            truncated: false,
+        });
+        draw(&app);
+        let height = app.log_height.get();
+        assert!(height > 0 && height < 200, "the pane is {height} rows");
+
+        app.on_key(KeyEvent::from(KeyCode::Home));
+        assert_eq!(app.log_scroll, 200 - height, "Home stops at the first page");
+        app.on_key(KeyEvent::from(KeyCode::PageUp));
+        assert_eq!(app.log_scroll, 200 - height, "nothing above the first page");
+
+        app.on_key(KeyEvent::from(KeyCode::PageDown));
+        let screen = draw(&app);
+        assert!(!screen.contains("entry 000"), "the first PgDn moves:
+{screen}");
+    }
+
     /// Every pane's footer fits a 100-column terminal, `q quit` included.
     #[test]
     fn footers_fit_a_hundred_columns() {

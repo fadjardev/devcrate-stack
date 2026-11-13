@@ -862,9 +862,11 @@ fn render_logs(frame: &mut Frame, app: &App, area: Rect) {
     // Show the window ending `log_scroll` lines above the last line -- but
     // never scrolled past a full first page: Home asks for "as far up as
     // there is", which is the top of the file, not an empty pane above it.
+    // The height goes back to the app so its scrolling stops at the same place.
     let block = panel(&view.path.display().to_string()).padding(Padding::left(1));
     let inner = block.inner(tail_area);
     let height = inner.height as usize;
+    app.log_height.set(height);
     let scroll = app.log_scroll.min(view.lines.len().saturating_sub(height));
     let end = view.lines.len() - scroll;
     let start = end.saturating_sub(height);

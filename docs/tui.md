@@ -299,7 +299,8 @@ want.
 
 Only the last 256 kB of a file is read, and at most 2000 lines are kept — an
 nginx access log that has been growing for a month opens instantly. Scrolling up
-turns following off, so the view stops moving under you while you read.
+turns following off, so the view stops moving under you while you read. It stops
+at the first page, so `PgDn` after `Home` moves straight away.
 
 ## How it stays responsive
 

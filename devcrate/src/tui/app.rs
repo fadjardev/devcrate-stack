@@ -4,6 +4,7 @@
 //! turns keys into [`Job`]s for the actor and folds incoming [`Event`]s into
 //! something drawable.
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -262,6 +263,11 @@ pub struct App {
     pub log_row: usize,
     /// Lines scrolled up from the bottom of the log pane. 0 is "following".
     pub log_scroll: usize,
+    /// Rows the log pane showed when last drawn, written by the view. Scrolling
+    /// stops a full page short of the first line, where the view stops, so a
+    /// PgDn after Home moves at once instead of first using up the overshoot.
+    /// 0 until the first draw, which allows the whole log.
+    pub log_height: Cell<usize>,
     pub follow: bool,
 
     pub modal: Option<Modal>,
@@ -323,6 +329,7 @@ impl App {
             site_row: 0,
             log_row: 0,
             log_scroll: 0,
+            log_height: Cell::new(0),
             follow: true,
             modal: None,
             busy: None,
@@ -768,7 +775,7 @@ impl App {
             KeyCode::PageDown => self.scroll_log(-(page as isize)),
             KeyCode::Home => {
                 self.follow = false;
-                self.log_scroll = self.log.as_ref().map(|l| l.lines.len()).unwrap_or(0);
+                self.log_scroll = self.max_log_scroll();
             }
             KeyCode::End => {
                 self.follow = true;
@@ -1153,14 +1160,20 @@ impl App {
     }
 
     fn scroll_log(&mut self, by: isize) {
-        let len = self.log.as_ref().map(|view| view.lines.len()).unwrap_or(0) as isize;
-        let next = (self.log_scroll as isize + by).clamp(0, len);
+        let max = self.max_log_scroll() as isize;
+        let next = (self.log_scroll as isize + by).clamp(0, max);
         self.log_scroll = next as usize;
         // Scrolling up is an explicit statement that you want to read
         // something, so stop yanking the view back to the bottom.
         if self.log_scroll > 0 {
             self.follow = false;
         }
+    }
+
+    /// How far up the log can scroll: until its first line tops the pane.
+    fn max_log_scroll(&self) -> usize {
+        let len = self.log.as_ref().map(|view| view.lines.len()).unwrap_or(0);
+        len.saturating_sub(self.log_height.get())
     }
 
     /// Which service a vhost's FastCGI port belongs to, for the Sites table.
