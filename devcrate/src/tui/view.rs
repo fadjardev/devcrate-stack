@@ -1050,14 +1050,13 @@ fn render_modal(frame: &mut Frame, app: &App, modal: &Modal) {
         Modal::Confirm { question, .. } => {
             let mut text = Text::from(question.as_str());
             text.push_line(Line::from(""));
-            // Enter confirms as well as y, and this says so: a line promising
-            // that every other key cancels was not true of the one key most
-            // likely to be pressed without reading.
+            // Only y confirms; Enter is named among the keys that cancel,
+            // since it is the one most likely to be pressed without reading.
             text.push_line(Line::from(vec![
                 key("y"),
-                Span::styled("or ", Style::new().fg(t.muted)),
+                Span::styled("does it     ", Style::new().fg(t.muted)),
                 key("Enter"),
-                Span::styled("does it     any other key cancels", Style::new().fg(t.muted)),
+                Span::styled("or any other key cancels", Style::new().fg(t.muted)),
             ]));
             let area = centred(frame.area(), 64, 9);
             frame.render_widget(Clear, area);

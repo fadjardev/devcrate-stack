@@ -226,6 +226,11 @@ it rewrites the `fastcgi_pass` line and nothing else, so a hand-edited conf
 survives. `d` deletes only the conf — the project folder under `projects\` and
 the certificate are left alone, and the confirmation says so.
 
+Every confirmation (`d` here, and removals from the Uninstall picker) is
+answered with `y` only. `Enter`, like any other key, cancels: it is the key
+pressed without reading, often still held from the picker that opened the
+question.
+
 `N` is `devcrate new` — see [cli.md](cli.md#devcrate-new). The form previews
 the host the name becomes and refuses, in place, a name that cannot be one;
 WordPress offers MariaDB alone. The hosts entry and the certificate are always

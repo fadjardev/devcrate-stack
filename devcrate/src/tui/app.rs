@@ -963,8 +963,12 @@ impl App {
                 }
                 _ => {}
             },
+            // `y` alone confirms. `Enter` did too, and it is the key pressed
+            // without reading -- still held from the picker that opened this,
+            // or out of habit -- so it deleted vhosts by reflex. It cancels,
+            // like every other key.
             Some(Modal::Confirm { .. }) => match key.code {
-                KeyCode::Char('y') | KeyCode::Enter => {
+                KeyCode::Char('y' | 'Y') => {
                     let Some(Modal::Confirm { job, .. }) = self.modal.take() else {
                         return None;
                     };

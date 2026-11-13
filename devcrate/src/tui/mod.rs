@@ -515,7 +515,13 @@ mod tests {
         let asking = draw(&app);
         assert!(asking.contains("Confirm"), "{asking}");
         assert!(asking.contains("left alone"), "it says what is kept: {asking}");
+        assert!(asking.contains("Enter or any other key cancels"), "{asking}");
 
+        // Enter is the reflex, not the answer: it cancels.
+        assert!(app.on_key(KeyEvent::from(KeyCode::Enter)).is_none(), "Enter does not delete");
+        assert!(app.modal.is_none(), "and the question is gone");
+
+        app.on_key(KeyEvent::from(KeyCode::Char('d')));
         let job = app.on_key(KeyEvent::from(KeyCode::Char('y'))).expect("y confirms");
         assert!(matches!(job, worker::Job::SiteRemove(host) if host == "myapp.test"));
     }
