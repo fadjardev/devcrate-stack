@@ -75,11 +75,48 @@ pub struct SiteCert {
     pub expires: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub names: Vec<String>,
+    /// Whether this machine's mkcert CA issued it: `None` when that cannot be
+    /// told -- no CA found, or no certificate read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issued_here: Option<bool>,
 }
 
 impl SiteCert {
+    /// Not fine: listed by `status` and `cert list`, and renewed by a
+    /// `cert renew` that names it.
     pub fn needs_renewal(&self) -> bool {
         self.state != CertState::Ok
+    }
+
+    /// Renewed without being named -- on `start`, or by a bare `cert renew`.
+    ///
+    /// Only what is devcrate's to replace: a certificate under devcrate's own
+    /// name (`_wildcard.<domain>.pem`, whichever machine's mkcert made it --
+    /// a stack copied from another machine brings its old CA's), one this
+    /// machine's mkcert CA issued, or one that is missing outright. Anything
+    /// else from another CA was put there on purpose, and an unreadable one
+    /// may be a kind devcrate cannot parse rather than a broken one; replacing
+    /// either is a decision for whoever put it there.
+    pub fn renews_by_itself(&self) -> bool {
+        if self.state == CertState::Ok {
+            return false;
+        }
+        if self.devcrate_named() {
+            return true;
+        }
+        match self.state {
+            CertState::Ok => false,
+            CertState::Missing => true,
+            CertState::Unreadable | CertState::ForeignCa => false,
+            CertState::Expiring | CertState::Expired | CertState::NotCovering => self.issued_here == Some(true),
+        }
+    }
+
+    /// Whether the conf names a certificate under the name devcrate issues
+    /// them as -- `site add`, `cert renew`, and `new-vhost.bat` before them.
+    fn devcrate_named(&self) -> bool {
+        let name = self.file.rsplit(['/', '\\']).next().unwrap_or("");
+        name.starts_with("_wildcard.") && name.ends_with(".pem") && !name.ends_with("-key.pem")
     }
 }
 
@@ -130,6 +167,7 @@ pub fn judge(host: &str, file: &str, path: &Path, ca: Option<&[u8]>, now: i64) -
         days_left: None,
         expires: None,
         names: Vec::new(),
+        issued_here: None,
     };
     let Ok(text) = std::fs::read_to_string(path) else {
         site.state = CertState::Missing;
@@ -143,6 +181,7 @@ pub fn judge(host: &str, file: &str, path: &Path, ca: Option<&[u8]>, now: i64) -
     site.days_left = Some(days);
     site.expires = Some(civil_date(cert.not_after));
     site.names = cert.names.clone();
+    site.issued_here = ca.map(|ca| ca == cert.issuer.as_slice());
     site.state = if cert.not_after <= now {
         CertState::Expired
     } else if !x509::covers(&cert.names, host) {
@@ -212,6 +251,9 @@ pub struct Renewed {
 pub struct Renewal {
     pub renewed: Vec<Renewed>,
     pub failed: Vec<(String, String)>,
+    /// Hosts that need a renewal but were not renewed without being named,
+    /// and why -- see [`SiteCert::renews_by_itself`].
+    pub left: Vec<(String, String)>,
     /// `None` when nothing changed, so there was nothing to reload.
     pub reload: Option<Reload>,
 }
@@ -250,14 +292,37 @@ pub fn renew(stack: &Stack, hosts: &[String]) -> Result<Renewal> {
     Ok(renewal)
 }
 
-/// Every vhost whose certificate needs it.
+/// Every vhost whose certificate needs it and may be renewed unasked; the
+/// rest that need it are reported as left alone.
 pub fn renew_needed(stack: &Stack) -> Result<Renewal> {
-    let hosts: Vec<String> =
-        inspect(stack).into_iter().filter(SiteCert::needs_renewal).map(|site| site.host).collect();
-    if hosts.is_empty() {
-        return Ok(Renewal::default());
+    let (hosts, left) = split_unasked(inspect(stack));
+    let mut renewal = match hosts.is_empty() {
+        true => Renewal::default(),
+        false => renew(stack, &hosts)?,
+    };
+    renewal.left = left;
+    Ok(renewal)
+}
+
+/// The hosts an unasked renewal acts on, and the ones it leaves, with why.
+fn split_unasked(certs: Vec<SiteCert>) -> (Vec<String>, Vec<(String, String)>) {
+    let mut hosts = Vec::new();
+    let mut left = Vec::new();
+    for site in certs.into_iter().filter(SiteCert::needs_renewal) {
+        if site.renews_by_itself() {
+            hosts.push(site.host);
+        } else {
+            let why = match (site.state, site.issued_here) {
+                (CertState::ForeignCa, _) | (_, Some(false)) => "issued by another CA",
+                (CertState::Unreadable, _) => "unreadable",
+                _ => "issuer unknown (mkcert's CA was not found)",
+            };
+            let label = site.state.label();
+            let reason = if label == why { why.to_string() } else { format!("{why}, {label}") };
+            left.push((site.host, reason));
+        }
     }
-    renew(stack, &hosts)
+    (hosts, left)
 }
 
 /// Make the host's conf name `certs/<file>` and its key; `Ok(false)` when it
@@ -309,6 +374,9 @@ pub fn describe(renewal: &Renewal) -> Vec<String> {
     for (host, why) in &renewal.failed {
         lines.push(format!("FAILED   {host}: {why}"));
     }
+    for (host, why) in &renewal.left {
+        lines.push(format!("left     {host}: {why}; `devcrate cert renew {host}` replaces it"));
+    }
     if let Some(reload) = &renewal.reload {
         lines.push(reload.note());
     }
@@ -341,9 +409,16 @@ pub fn print_list(stack: &Stack) -> Result<u8> {
             site.expires.as_deref().unwrap_or("-")
         );
     }
-    let needing = all.iter().filter(|s| s.needs_renewal()).count();
-    if needing > 0 {
-        println!("{needing} need(s) renewing: `devcrate cert renew` issues them again.");
+    let by_itself = all.iter().filter(|s| s.renews_by_itself()).count();
+    let by_name = all.iter().filter(|s| s.needs_renewal() && !s.renews_by_itself()).count();
+    if by_itself > 0 {
+        println!("{by_itself} need(s) renewing: `devcrate cert renew` issues them again.");
+    }
+    if by_name > 0 {
+        println!(
+            "{by_name} left alone unless named (another CA, or not readable): \
+             `devcrate cert renew <host>` replaces one."
+        );
     }
     if ca_subject(stack).is_none() {
         println!("(mkcert's CA was not found, so no certificate is judged by its issuer)");
@@ -385,15 +460,17 @@ mod tests {
     const LEAF: &str = include_str!("../tests/fixtures/db.test.pem");
     const CA: &str = include_str!("../tests/fixtures/test-ca.pem");
 
-    fn fixture() -> PathBuf {
-        let path = std::env::temp_dir().join(format!("devcrate-cert-{}.pem", std::process::id()));
+    /// The leaf fixture in a file of its own per test: tests run in parallel,
+    /// and one deleting a shared file pulls it from under another.
+    fn fixture(test: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("devcrate-cert-{test}-{}.pem", std::process::id()));
         std::fs::write(&path, LEAF).unwrap();
         path
     }
 
     #[test]
     fn a_certificate_is_judged_for_its_host() {
-        let path = fixture();
+        let path = fixture("judged");
         let ca = x509::parse_pem(CA).unwrap().subject;
         // The fixture expires 2029-01-18 07:29:33 UTC.
         let expires = x509::days_from_civil(2029, 1, 18) * 86_400 + 7 * 3600 + 29 * 60 + 33;
@@ -413,6 +490,53 @@ mod tests {
         assert_eq!(site.days_left, Some(400));
         let missing = judge("db.test", "certs/x.pem", Path::new("Z:\\nope.pem"), None, early);
         assert_eq!(missing.state, CertState::Missing);
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// An unasked renewal -- on `start`, or a bare `cert renew` -- replaces
+    /// only certificates this machine's mkcert CA issued, and missing ones.
+    /// It used to replace one from another CA too, rewriting the conf that
+    /// chose it. Expired or not, a foreign certificate is left and reported.
+    #[test]
+    fn an_unasked_renewal_leaves_another_cas_certificate_alone() {
+        let path = fixture("unasked");
+        let ca = x509::parse_pem(CA).unwrap().subject;
+        let expires = x509::days_from_civil(2029, 1, 18) * 86_400 + 7 * 3600 + 29 * 60 + 33;
+        let early = expires - 400 * 86_400;
+        let site = |host: &str, ca: Option<&[u8]>, now: i64| judge(host, "certs/x.pem", &path, ca, now);
+
+        let ours_expiring = site("ours.db.test", Some(&ca), expires - 10 * 86_400);
+        let ours_expired = site("db.test", Some(&ca), expires + 1);
+        let foreign = site("db.test", Some(b"another CA"), early);
+        let foreign_expired = site("api.db.test", Some(b"another CA"), expires + 1);
+        let unknown = site("db.test", None, expires + 1);
+        let missing = judge("gone.test", "certs/x.pem", Path::new("Z:\\nope.pem"), Some(&ca), early);
+        assert_eq!(foreign_expired.state, CertState::Expired, "expired is judged before the issuer");
+        assert_eq!(foreign_expired.issued_here, Some(false));
+
+        for (cert, by_itself) in [
+            (&ours_expiring, true),
+            (&ours_expired, true),
+            (&missing, true),
+            (&foreign, false),
+            (&foreign_expired, false),
+            (&unknown, false),
+        ] {
+            assert!(cert.needs_renewal(), "{cert:?}");
+            assert_eq!(cert.renews_by_itself(), by_itself, "{cert:?}");
+        }
+
+        // A stack copied from another machine: devcrate's own name, the old
+        // machine's CA. That is still devcrate's to replace.
+        let copied = judge("db.test", "certs/_wildcard.db.test.pem", &path, Some(b"another CA"), early);
+        assert_eq!(copied.state, CertState::ForeignCa);
+        assert!(copied.renews_by_itself());
+
+        let (hosts, left) = split_unasked(vec![ours_expired, foreign, foreign_expired, missing]);
+        assert_eq!(hosts, ["db.test", "gone.test"]);
+        assert_eq!(left.len(), 2);
+        assert_eq!(left[0], ("db.test".to_string(), "issued by another CA".to_string()), "said once");
+        assert_eq!(left[1], ("api.db.test".to_string(), "issued by another CA, expired".to_string()));
         let _ = std::fs::remove_file(path);
     }
 

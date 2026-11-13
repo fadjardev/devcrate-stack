@@ -821,12 +821,21 @@ however many hosts share it. mkcert writes to temporary names, which are then
 renamed over the old pair, so nginx never reads half of one. A vhost whose conf
 named a different certificate (`*.test`, say) has its `ssl_certificate` and
 `ssl_certificate_key` lines pointed at the new one, and nothing else in the
-conf changes. nginx is reloaded once at the end. With no site named and no
-`--all`, it renews exactly the ones `cert list` does not call ok.
+conf changes. nginx is reloaded once at the end.
 
-**`start` renews by itself.** Whenever nginx is among what is started, the
-certificates that need it are issued again first, so nginx loads them fresh,
-and the lines say which. `[certs] auto_renew = false` in `devcrate.toml`
+With no site named and no `--all`, it renews the ones `cert list` does not call
+ok, **except a certificate someone chose**: one issued by another CA, or one
+devcrate cannot read, whose file is not devcrate's own `_wildcard.<domain>.pem`.
+A `certs/company.pem` from a company CA is left as it is, expired or not, with a
+`left` line naming it. `cert renew <host>` (or `--all`) still replaces it when
+asked by name. A `_wildcard.<domain>.pem` from another machine's mkcert CA, which
+is what a copied stack carries, is devcrate's own and is renewed. `cert list`
+counts the two kinds apart.
+
+**`start` renews by itself**, on the same terms as a bare `cert renew`.
+Whenever nginx is among what is started, the certificates that need it are
+issued again first, so nginx loads them fresh, and the lines say which, and
+which were left. `[certs] auto_renew = false` in `devcrate.toml`
 turns that off. `devcrate status` (and `status --json`, under `certs`) lists
 every certificate that is not ok.
 

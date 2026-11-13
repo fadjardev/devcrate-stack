@@ -612,6 +612,7 @@ mod tests {
             days_left: Some(days),
             expires: None,
             names: Vec::new(),
+            issued_here: Some(true),
         };
         status.certs = vec![
             cert("myapp.test", CertState::Ok, 800),
@@ -1114,6 +1115,7 @@ mod tests {
                     days_left: Some(812),
                     expires: Some("2029-02-03".into()),
                     names: vec!["*.test".into()],
+                    issued_here: Some(true),
                 })
                 .collect(),
         };
