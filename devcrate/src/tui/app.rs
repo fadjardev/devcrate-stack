@@ -745,6 +745,13 @@ impl App {
 
     fn sites_key(&mut self, key: KeyEvent) -> Option<Job> {
         match key.code {
+            KeyCode::Char('H') => {
+                let hosts: Vec<String> = self.sites.iter().map(|site| site.host.clone()).collect();
+                if hosts.is_empty() {
+                    return None;
+                }
+                self.submit(Job::HostsAdd(hosts))
+            }
             KeyCode::Char('n') => {
                 self.modal = Some(Modal::NewSite(NewSiteForm::new()));
                 None

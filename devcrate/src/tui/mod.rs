@@ -857,10 +857,11 @@ mod tests {
     fn the_help_shows_every_key() {
         let mut app = App::new(stack());
         app.on_key(KeyEvent::from(KeyCode::Char('?')));
-        let mut terminal = Terminal::new(TestBackend::new(100, 34)).unwrap();
+        // 22 rows: the height the two-column list is made to fit.
+        let mut terminal = Terminal::new(TestBackend::new(100, 22)).unwrap();
         terminal.draw(|frame| view::render(frame, &app)).unwrap();
         let screen = format!("{:?}", terminal.backend().buffer());
-        for row in ["switch pane", "open in the browser", "Home / End"] {
+        for row in ["switch pane", "open in the browser", "add every vhost to the hosts file", "Home / End"] {
             assert!(screen.contains(row), "{row} missing: {screen}");
         }
     }
@@ -995,6 +996,23 @@ mod tests {
         for want in ["step13", "✗ stopped at start", "s carry on"] {
             assert!(screen.contains(want), "{want} missing:\n{screen}");
         }
+    }
+
+    /// `H` on Sites adds every vhost to the hosts file in one job -- the
+    /// asked-for write, with its one UAC prompt, that an unasked auto-vhost
+    /// sync points at instead of prompting by itself.
+    #[test]
+    fn h_adds_every_vhost_to_the_hosts_file() {
+        let mut app = App::new(stack());
+        app.tab = app::Tab::Sites;
+        app.sites = ["shop.test", "blog.test"]
+            .iter()
+            .map(|host| crate::site::Site::read(&PathBuf::from(format!("C:\\devcrate\\nginx\\conf\\sites\\{host}.conf"))))
+            .collect();
+        let wanted: Vec<String> = app.sites.iter().map(|site| site.host.clone()).collect();
+        let job = app.on_key(KeyEvent::from(KeyCode::Char('H'))).expect("submitted");
+        let worker::Job::HostsAdd(hosts) = job else { panic!("not a hosts job") };
+        assert_eq!(hosts, wanted);
     }
 
     /// A folder the scanner reports unserved is served once per session, and

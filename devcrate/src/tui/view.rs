@@ -1416,6 +1416,7 @@ fn render_help(frame: &mut Frame) {
         row("p", "change PHP version"),
         row("v", "dev server (npm run dev) on / off"),
         row("R", "issue its certificate again"),
+        row("H", "add every vhost to the hosts file"),
         row("o e c", "open in the browser, folder, shell"),
         row("d", "delete the vhost conf"),
         Line::from(""),

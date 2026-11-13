@@ -128,16 +128,22 @@ pub fn host_for(folder: &str) -> Option<String> {
     })
 }
 
-/// What a sync may touch outside the stack root. Both on for real use; off in
+/// What a sync may touch outside the stack root. On for real use; off in
 /// tests, which must not edit the machine's hosts file.
 #[derive(Debug, Clone, Copy)]
 pub struct Options {
     pub hosts: bool,
     pub tls: bool,
+    /// Whether a hosts write that needs Administrator may raise a UAC prompt.
+    /// Off when nobody asked for the sync -- the dashboard noticing a new
+    /// folder -- so a prompt never appears out of nowhere.
+    pub elevate: bool,
 }
 
 impl Options {
-    pub const FULL: Options = Options { hosts: true, tls: true };
+    pub const FULL: Options = Options { hosts: true, tls: true, elevate: true };
+    /// A sync nobody pressed a key for.
+    pub const UNASKED: Options = Options { elevate: false, ..Options::FULL };
 }
 
 #[derive(Debug, Default)]
@@ -170,7 +176,7 @@ pub fn sync(stack: &Stack, options: Options) -> Result<Synced> {
     }
     if options.hosts && !synced.created.is_empty() {
         let hosts: Vec<&str> = synced.created.iter().map(|c| c.host.as_str()).collect();
-        synced.hosts = Some(match crate::hosts::add_entries(&hosts) {
+        synced.hosts = Some(match crate::hosts::add_entries_with(&hosts, options.elevate) {
             Ok(crate::hosts::HostsResult::FallbackManual(why)) => Some(why),
             Ok(_) => None,
             Err(err) => Some(format!("{err:#}")),
@@ -338,7 +344,7 @@ mod tests {
         std::fs::write(shop.join("index.html"), "<h1>mine</h1>").unwrap();
 
         let stack = open(&root);
-        let synced = sync(&stack, Options { hosts: false, tls: false }).unwrap();
+        let synced = sync(&stack, Options { hosts: false, tls: false, elevate: false }).unwrap();
         assert!(synced.failed.is_empty(), "{:?}", synced.failed);
         assert_eq!(synced.created.len(), 1);
         assert_eq!(synced.hosts, None, "hosts left alone when told to");
@@ -356,7 +362,7 @@ mod tests {
         assert!(lines[1].contains("plain HTTP (--no-tls)"), "{lines:?}");
         assert!(!conf.contains("443"), "{conf}");
 
-        let again = sync(&stack, Options { hosts: false, tls: false }).unwrap();
+        let again = sync(&stack, Options { hosts: false, tls: false, elevate: false }).unwrap();
         assert!(again.created.is_empty() && again.plan.new.is_empty());
         assert_eq!(again.plan.served, 1);
 

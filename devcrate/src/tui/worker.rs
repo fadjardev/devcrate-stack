@@ -100,8 +100,12 @@ pub enum Job {
     PhpExtInstall { php: String, ext: String },
     /// `devcrate setup`: install what is missing and start the stack.
     Setup,
-    /// `devcrate site sync`: serve the folders no vhost serves yet.
+    /// `devcrate site sync`: serve the folders no vhost serves yet. Started by
+    /// the dashboard itself, not a key, so it never raises a UAC prompt.
     SiteSync,
+    /// Add the hosts entries any vhost is missing, in one write: `H` on Sites,
+    /// the way to finish what an unasked [`Job::SiteSync`] could not.
+    HostsAdd(Vec<String>),
     /// `devcrate cert renew <host>`.
     CertRenew(String),
     /// `devcrate dev start` / `stop` for a site, whichever it is not.
@@ -139,6 +143,7 @@ impl Job {
             Job::PhpExtInstall { php, ext } => format!("Downloading & installing {ext} for {php}"),
             Job::Setup => "Setting up the stack".to_string(),
             Job::SiteSync => "Serving new folders under projects".to_string(),
+            Job::HostsAdd(_) => "Adding the vhosts to the hosts file".to_string(),
             Job::New { kind, name, .. } => format!("Creating the {} project {name}", kind.label()),
             Job::AutostartToggle => "Switching autostart".to_string(),
             Job::DevToggle(host) => format!("Switching the dev server for {host}"),
@@ -634,6 +639,19 @@ fn run(stack: &Stack, job: Job, tx: &Sender<Event>) -> JobResult {
             }
         }
 
+        Job::HostsAdd(hosts) => {
+            let names: Vec<&str> = hosts.iter().map(String::as_str).collect();
+            let (lines, failed) = match crate::hosts::add_entries(&names) {
+                Ok(crate::hosts::HostsResult::Updated) => (vec![format!("hosts    added: {}", hosts.join(", "))], false),
+                Ok(crate::hosts::HostsResult::Unchanged) => (vec!["hosts    every vhost is in it already".to_string()], false),
+                Ok(crate::hosts::HostsResult::FallbackManual(why)) => {
+                    (vec![format!("hosts    not updated ({why}); add them as 127.0.0.1 by hand")], true)
+                }
+                Err(err) => (vec![format!("{err:#}")], true),
+            };
+            JobResult { label, lines, failed, sites_changed: false }
+        }
+
         Job::CertRenew(host) => match crate::cert::renew(stack, std::slice::from_ref(&host)) {
             Ok(renewal) => {
                 let failed = !renewal.failed.is_empty()
@@ -741,11 +759,14 @@ fn run(stack: &Stack, job: Job, tx: &Sender<Event>) -> JobResult {
             }
         }
 
-        Job::SiteSync => match crate::autosite::sync(stack, crate::autosite::Options::FULL) {
+        Job::SiteSync => match crate::autosite::sync(stack, crate::autosite::Options::UNASKED) {
             Ok(synced) => {
                 let mut lines = crate::autosite::describe(&synced);
                 if lines.is_empty() {
                     lines.push("nothing new to serve".into());
+                }
+                if synced.hosts.as_ref().is_some_and(Option::is_some) {
+                    lines.push("         or press H on Sites to add them, with one UAC prompt".into());
                 }
                 let failed = lines.iter().any(|line| line.starts_with("FAILED") || line.starts_with("hosts "));
                 JobResult { label, lines, failed, sites_changed: true }

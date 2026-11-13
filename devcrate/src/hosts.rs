@@ -170,13 +170,27 @@ pub fn read_devcrate_entries(content: &str) -> Vec<String> {
     entries
 }
 
+/// Why a hosts write that was not allowed to elevate did not land.
+pub const NOT_ELEVATED: &str = "it needs Administrator, and no UAC prompt is raised unasked";
+
 /// Write new hosts content, using UAC elevation fallback if permission denied.
 pub fn write_hosts_content(new_content: &str) -> Result<HostsResult> {
-    let target = hosts_path();
-    let backup = target.with_file_name("hosts.bak");
+    write_hosts(new_content, true)
+}
+
+/// As [`write_hosts_content`], but with `elevate` false a refused write is
+/// reported rather than turned into a UAC prompt -- for writes nobody pressed
+/// a key for, which must not put a prompt in front of them.
+fn write_hosts(new_content: &str, elevate: bool) -> Result<HostsResult> {
     // A refused backup is made by the elevated copy below, which a refused
     // backup almost always means is next.
     let _ = backup_hosts();
+    write_to(&hosts_path(), new_content, elevate)
+}
+
+fn write_to(target: &Path, new_content: &str, elevate: bool) -> Result<HostsResult> {
+    let target = target.to_path_buf();
+    let backup = target.with_file_name("hosts.bak");
 
     // Atomic where it can be: a reader -- or an interruption -- sees the old
     // file or the new one, never half of it. The rename can still be refused
@@ -187,6 +201,7 @@ pub fn write_hosts_content(new_content: &str) -> Result<HostsResult> {
 
     match written {
         Ok(_) => Ok(HostsResult::Updated),
+        Err(_) if !elevate => Ok(HostsResult::FallbackManual(NOT_ELEVATED.to_string())),
         Err(_) => {
             // Permission denied -> write to temp file and request elevation
             let temp_file = std::env::temp_dir().join("devcrate_hosts.txt");
@@ -251,6 +266,12 @@ pub fn add_entry(host: &str) -> Result<HostsResult> {
 /// Add every one of `hosts` in a single write -- so a batch costs at most one
 /// elevation prompt, not one per host.
 pub fn add_entries(hosts: &[&str]) -> Result<HostsResult> {
+    add_entries_with(hosts, true)
+}
+
+/// As [`add_entries`]; with `elevate` false, a write that needs Administrator
+/// is reported as [`NOT_ELEVATED`] instead of prompting.
+pub fn add_entries_with(hosts: &[&str], elevate: bool) -> Result<HostsResult> {
     let content = read_hosts(&hosts_path())?;
     let mut entries = read_devcrate_entries(&content);
 
@@ -270,7 +291,7 @@ pub fn add_entries(hosts: &[&str]) -> Result<HostsResult> {
         return Ok(HostsResult::Unchanged);
     }
 
-    write_hosts_content(&new_content)
+    write_hosts(&new_content, elevate)
 }
 
 /// Remove a host mapping from the devcrate block.
@@ -296,6 +317,37 @@ pub fn remove_entry(host: &str) -> Result<HostsResult> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A write nobody asked for is not turned into a UAC prompt: refused, it
+    /// says why and leaves the file as it was. A read-only file refuses the
+    /// way the real hosts file does without Administrator.
+    #[test]
+    fn an_unelevated_write_reports_instead_of_prompting() {
+        let dir = std::env::temp_dir().join(format!("devcrate-hosts-unelevated-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("hosts");
+        fs::write(&target, "127.0.0.1 localhost\r\n").unwrap();
+        let mut perms = fs::metadata(&target).unwrap().permissions();
+        perms.set_readonly(true);
+        fs::set_permissions(&target, perms.clone()).unwrap();
+
+        let began = std::time::Instant::now();
+        let result = write_to(&target, "127.0.0.1 shop.test\r\n", false).unwrap();
+        let took = began.elapsed();
+        let now = fs::read_to_string(&target).unwrap();
+
+        #[allow(clippy::permissions_set_readonly_false)]
+        perms.set_readonly(false);
+        fs::set_permissions(&target, perms).unwrap();
+        let _ = fs::remove_dir_all(&dir);
+
+        assert_eq!(result, HostsResult::FallbackManual(NOT_ELEVATED.to_string()));
+        assert_eq!(now, "127.0.0.1 localhost\r\n", "left as it was");
+        assert!(!dir.join("hosts.devcrate-tmp").exists(), "no temp file left behind");
+        // A prompt would have waited for an answer; this returns at once.
+        assert!(took < std::time::Duration::from_secs(5), "took {took:?}");
+    }
 
     #[test]
     fn test_update_devcrate_block() {

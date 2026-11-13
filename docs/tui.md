@@ -219,6 +219,7 @@ dashboard never forces: replacing a DLL already there stays `php ext install
 | `p` | Change the selected vhost's PHP version |
 | `v` | Start or stop the selected site's dev server (`devcrate dev`) |
 | `R` | Issue the selected site's certificate again (`devcrate cert renew`) |
+| `H` | Add every vhost to the hosts file in one write — one UAC prompt when it needs Administrator |
 | `o` | Open the site in the default browser |
 | `e` | Open the project folder in Explorer |
 | `c` | Open a terminal in the project folder — Windows Terminal where installed, a cmd window otherwise |
@@ -271,9 +272,13 @@ for folders under `projects\` that no vhost serves, and serves them through
 the same `devcrate site sync` — see [cli.md](cli.md#devcrate-site-sync). It
 waits rather than interrupts: not while another action runs, a form or picker
 is open, or the first-run screen is up. Each folder is tried once per session,
-so one that fails is not retried — with its UAC prompt — every two seconds,
-and a site deleted with `d` is not served straight back; it returns the next
-time the dashboard opens unless its folder is in `[sites] ignore`.
+so one that fails is not retried every two seconds, and a site deleted with `d`
+is not served straight back; it returns the next time the dashboard opens
+unless its folder is in `[sites] ignore`.
+
+Since nobody pressed a key for it, it never raises a UAC prompt. The vhost is
+made either way; when the hosts file needs Administrator, the result says so and
+`H` adds the entries, with the one prompt you asked for.
 
 `o` sends the browser to `https://<host>/`, or `http://` when the conf has no
 `listen` on 443 or with `ssl`. `e` and `c` open the *project* folder, not the
