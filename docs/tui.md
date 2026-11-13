@@ -48,6 +48,12 @@ with the stack at a glance, and a rule that is heavy under the tab that has the
 keyboard — then the pane, then two rows of footer: what is happening or what
 last happened, and the keys.
 
+"What last happened" is one line per result. A success leads with its first
+line. A failure leads with what failed: the first line marked `FAILED` and how
+many more did (`MariaDB FAILED: port 3306 is held by ... (and 1 more failed)`),
+or the result's last line when none is marked. A result of more than one line
+also opens in full.
+
 Two things appear only where the screen has room for them, and take nothing
 away where it has not:
 

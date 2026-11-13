@@ -208,6 +208,41 @@ pub struct Note {
     at: Instant,
 }
 
+/// The one line a result is summed up by on the note line.
+///
+/// A failure is summed up by what failed: the first line marked `FAILED`,
+/// and how many more there are, or the last line when none is marked -- an
+/// error is reported last. It used to be the first line whatever happened,
+/// so a stack start that failed at MariaDB read "nginx listening in 0.3s".
+/// Otherwise setup's last line is where it ended up ("start  3 started, 3
+/// up"), and everything else leads with its result.
+fn summary(result: &JobResult, from_welcome: bool) -> String {
+    let line = if result.failed {
+        let mut failures = result.lines.iter().filter(|line| line.contains("FAILED"));
+        match failures.next() {
+            Some(first) => {
+                let more = failures.count();
+                let first = squeeze(first);
+                return match more {
+                    0 => first,
+                    n => format!("{first} (and {n} more failed)"),
+                };
+            }
+            None => result.lines.last(),
+        }
+    } else if from_welcome {
+        result.lines.last()
+    } else {
+        result.lines.first()
+    };
+    line.map(|line| squeeze(line)).unwrap_or_else(|| "done".into())
+}
+
+/// Runs of whitespace -- the column padding of a step line -- to one space.
+fn squeeze(line: &str) -> String {
+    line.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 impl Note {
     /// A result is worth reading for a while and then worth forgetting -- a
     /// line saying the stack started is misleading ten minutes later, once
@@ -466,14 +501,7 @@ impl App {
             self.sites = read_sites(&self.stack);
             self.site_row = self.site_row.min(self.sites.len().saturating_sub(1));
         }
-        // Setup's last line is where it ended up ("start  3 started, 3 up");
-        // everything else leads with its result.
-        let summary = match from_welcome {
-            true => result.lines.last(),
-            false => result.lines.first(),
-        };
-        let summary = summary.map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "));
-        let summary = summary.unwrap_or_else(|| "done".into());
+        let summary = summary(&result, from_welcome);
         self.note = Some(Note {
             text: format!("{}: {summary}", result.label),
             failed: result.failed,

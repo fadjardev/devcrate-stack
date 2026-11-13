@@ -383,6 +383,45 @@ mod tests {
         assert!(!app.crashed("nginx"));
     }
 
+    /// A failed result is summed up by what failed, not by its first line --
+    /// a start that failed at MariaDB used to read "nginx listening". A
+    /// success still leads with its first line.
+    #[test]
+    fn a_failure_is_summed_up_by_what_failed() {
+        let mut app = App::new(stack());
+        let done = |app: &mut App, lines: &[&str], failed: bool| {
+            app.on_done(JobResult {
+                label: "Starting the stack".into(),
+                lines: lines.iter().map(|l| l.to_string()).collect(),
+                failed,
+                sites_changed: false,
+            });
+            app.note.as_ref().unwrap().text.clone()
+        };
+
+        let note = done(
+            &mut app,
+            &[
+                "nginx     listening in 0.3s",
+                "PHP 8.5   listening in 0.2s",
+                "MariaDB   FAILED: port 3306 is held by mysqld.exe (pid 4242); not started",
+                "Redis     FAILED: exited immediately",
+            ],
+            true,
+        );
+        assert_eq!(
+            note,
+            "Starting the stack: MariaDB FAILED: port 3306 is held by mysqld.exe (pid 4242); not started (and 1 more failed)"
+        );
+
+        // No line marked: the error comes last.
+        let note = done(&mut app, &["installed node_modules first", "npm: missing script: dev"], true);
+        assert_eq!(note, "Starting the stack: npm: missing script: dev");
+
+        let note = done(&mut app, &["nginx     listening in 0.3s", "PHP 8.5   listening in 0.2s"], false);
+        assert_eq!(note, "Starting the stack: nginx listening in 0.3s");
+    }
+
     /// A key that starts something must not be accepted twice while the first
     /// one is still running -- two `devcrate start`s racing is exactly the
     /// double-MariaDB situation the restart guard exists to avoid.
