@@ -151,7 +151,7 @@ fn inspect(
         .ports
         .iter()
         .map(|&port| {
-            let listening = probe::is_listening(port);
+            let listening = probe::is_listening_in(port, listeners);
             // A port held by one of our own processes is not "held by
             // somebody"; it is the service working.
             let holder = listeners

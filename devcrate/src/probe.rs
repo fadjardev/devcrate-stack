@@ -25,6 +25,23 @@ pub fn is_listening(port: u16) -> bool {
     TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT).is_ok()
 }
 
+/// [`is_listening`], asked of the kernel's listener table first.
+///
+/// A connect to a closed loopback port on Windows is not refused at once: it
+/// waits out the whole timeout, so `status` spent a quarter-second on every
+/// stopped service's port -- three seconds and more for the full stack. Only
+/// an IPv4 listener can take a connection to 127.0.0.1, and `listeners` is
+/// that table, so a port missing from it is answered without connecting. One
+/// in it is still connected to, since a listener on another address is in the
+/// table too. An empty table -- the call failed, or nothing listens at all --
+/// says nothing either way, and every port is connected to as before.
+pub fn is_listening_in(port: u16, listeners: &BTreeMap<u16, u32>) -> bool {
+    if !listeners.is_empty() && !listeners.contains_key(&port) {
+        return false;
+    }
+    is_listening(port)
+}
+
 #[derive(Debug, Clone)]
 pub struct ProcessEntry {
     pub pid: u32,
@@ -305,6 +322,26 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
 
         assert!(found.contains(&child.id()), "pid {} not under {}: {found:?}", child.id(), long.display());
+    }
+
+    /// A port nothing listens on is answered from the table, without the
+    /// connect that waits out its timeout; one that is listened on is found.
+    #[test]
+    fn a_closed_port_is_answered_without_connecting() {
+        let open = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = open.local_addr().unwrap().port();
+        let table = listeners();
+        assert!(table.contains_key(&port), "the table lists our own listener");
+        assert!(is_listening_in(port, &table));
+
+        // Free a port, then ask about it.
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let table = listeners();
+        let began = std::time::Instant::now();
+        assert!(!is_listening_in(closed, &table));
+        // A connect would wait out CONNECT_TIMEOUT (250 ms) here; the table
+        // answers in microseconds.
+        assert!(began.elapsed() < Duration::from_millis(50), "took {:?}", began.elapsed());
     }
 
     #[test]
