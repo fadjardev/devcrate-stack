@@ -653,6 +653,18 @@ pub fn set_php(stack: &Stack, host: &str, wanted: &str) -> Result<u8> {
     Ok(exit::OK)
 }
 
+/// The vhost a name on the command line means. A conf of exactly that name
+/// wins -- `api.local`, made by `site add` with a host outside `.test` -- and
+/// otherwise the name is read as a folder is, so `shop` means `shop.test`.
+pub fn named(stack: &Stack, name: &str) -> Result<String> {
+    let lower = name.trim().to_ascii_lowercase();
+    let plain = !lower.is_empty() && !lower.contains(['/', '\\', ':']) && !lower.starts_with('.');
+    if plain && stack.sites_dir().join(format!("{lower}.conf")).is_file() {
+        return Ok(lower);
+    }
+    crate::autosite::host_for(&lower).ok_or_else(|| anyhow!("{name:?} is not a site name"))
+}
+
 /// Rewrite the FastCGI port in place. Returns the new text and how many
 /// `fastcgi_pass` lines were changed, so a conf with none can be reported
 /// rather than silently rewritten to no effect.
@@ -1362,4 +1374,25 @@ mod tests {
         assert_eq!(out, "server {\n    fastcgi_pass    127.0.0.1:9085;\n}");
     }
 
+    /// A site outside `.test` is found by its own name; a bare folder name
+    /// still means `<name>.test`.
+    #[test]
+    fn a_site_is_named_by_its_conf_first() {
+        let root = std::env::temp_dir().join(format!("devcrate-site-named-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let sites = root.join("nginx").join("conf").join("sites");
+        std::fs::create_dir_all(&sites).unwrap();
+        std::fs::write(root.join("nginx").join("conf").join("nginx.conf"), "").unwrap();
+        std::fs::write(sites.join("api.local.conf"), "server {}\n").unwrap();
+        let stack = Stack::open(crate::root::StackRoot { path: root.clone(), source: crate::root::RootSource::Flag })
+            .unwrap();
+
+        let got = |name: &str| named(&stack, name).ok();
+        assert_eq!(got("api.local").as_deref(), Some("api.local"));
+        assert_eq!(got("API.local").as_deref(), Some("api.local"));
+        assert_eq!(got("shop").as_deref(), Some("shop.test"));
+        assert_eq!(got("shop.test").as_deref(), Some("shop.test"));
+        assert_eq!(got("my app"), None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

@@ -24,7 +24,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use serde::Serialize;
 
 use crate::config::Stack;
@@ -437,7 +437,7 @@ pub fn print_renew(stack: &Stack, hosts: &[String], all: bool) -> Result<u8> {
     } else {
         let named: Vec<String> = hosts
             .iter()
-            .map(|name| crate::autosite::host_for(name).ok_or_else(|| anyhow!("{name:?} is not a site name")))
+            .map(|name| crate::site::named(stack, name))
             .collect::<Result<_>>()?;
         renew(stack, &named)?
     };

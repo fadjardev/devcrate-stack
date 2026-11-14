@@ -851,6 +851,10 @@ devcrate dev list           REM what devcrate started, running or exited
 devcrate dev stop shop
 ```
 
+A site is named as its conf is (`api.local` for `api.local.conf`); a bare name
+with no conf of its own means `<name>.test`, so `shop` and `shop.test` are the
+same site. `cert renew <host>` reads its names the same way.
+
 ```
   ...      npm install
   ...      npm run dev

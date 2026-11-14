@@ -255,7 +255,7 @@ pub struct Started {
 
 /// The site whose project a dev server runs in: `shop`, `shop.test`, either.
 fn site_folder(stack: &Stack, name: &str) -> Result<(String, PathBuf)> {
-    let host = crate::autosite::host_for(name).ok_or_else(|| anyhow!("{name:?} is not a site name"))?;
+    let host = site::named(stack, name)?;
     let conf = stack.sites_dir().join(format!("{host}.conf"));
     if !conf.is_file() {
         bail!("no site {host}: {} does not exist", stack.rel(&conf));
@@ -361,7 +361,7 @@ fn tail(log: &Path) -> String {
 
 /// Stop one dev server: its process and everything under it.
 pub fn stop(stack: &Stack, name: &str) -> Result<Stopped> {
-    let host = crate::autosite::host_for(name).ok_or_else(|| anyhow!("{name:?} is not a site name"))?;
+    let host = site::named(stack, name)?;
     let path = record_path(stack, &host);
     let Some(record) = read_record(&path) else {
         return Ok(Stopped::NotRunning);
