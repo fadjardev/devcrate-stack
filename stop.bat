@@ -46,6 +46,21 @@ if exist "%ROOT%\rabbitmq\sbin\rabbitmqctl.bat" (
 taskkill /F /IM erl.exe /T 2>nul
 taskkill /F /IM epmd.exe /T 2>nul
 
+echo Gracefully stopping PostgreSQL ...
+if exist "%ROOT%\postgres\bin\pg_ctl.exe" if exist "%ROOT%\postgres\data\postmaster.pid" (
+    REM -m fast, as `devcrate stop` does: roll back open transactions, do not wait on them.
+    "%ROOT%\postgres\bin\pg_ctl.exe" -D "%ROOT%\postgres\data" -m fast stop >nul 2>&1
+)
+
+echo Gracefully stopping Redis ...
+if exist "%ROOT%\redis\redis-cli.exe" (
+    "%ROOT%\redis\redis-cli.exe" -p 6379 shutdown >nul 2>&1
+)
+
+echo Stopping Mailpit ...
+REM Mailpit has no shutdown command; `devcrate stop` terminates it too.
+taskkill /F /IM mailpit.exe /T 2>nul
+
 echo Gracefully stopping MariaDB ...
 if exist "%ROOT%\mariadb\bin\mariadb-admin.exe" (
     "%ROOT%\mariadb\bin\mariadb-admin.exe" --defaults-file="%ROOT%\mariadb\my.ini" -u root shutdown 2>nul

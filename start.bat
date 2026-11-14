@@ -17,27 +17,20 @@ set "ERLANG_HOME=%ROOT%\erlang"
 set "RABBITMQ_BASE=%ROOT%\rabbitmq\data"
 set "PATH=%ROOT%\erlang\bin;%PATH%"
 
-echo [1/6] MariaDB 12.3  (port 3306) ...
+echo [1/7] MariaDB 12.3  (port 3306) ...
 if exist "%ROOT%\mariadb\bin\mariadbd.exe" (
     start /B "MariaDB" "%ROOT%\mariadb\bin\mariadbd.exe" --defaults-file="%ROOT%\mariadb\my.ini"
 ) else ( echo   SKIPPED - %ROOT%\mariadb\bin\mariadbd.exe not found )
 
-echo [2/6] PHP 7.4  (port 9074) ...
-if exist "%ROOT%\php\php-7.4\php-cgi.exe" (
-    start /B /D "%ROOT%\php\php-7.4" "PHP74-CGI" "%ROOT%\php\php-7.4\php-cgi.exe" -b 127.0.0.1:9074
-) else ( echo   SKIPPED - %ROOT%\php\php-7.4\php-cgi.exe not found )
+echo [2/7] PHP  (every php\php-X.Y folder, port 90 + its digits) ...
+REM The same rule as the binary: the folder name is the version, and the port
+REM is derived from it -- php-5.6 serves on 9056, php-8.5 on 9085. Unpacking a
+REM new php-X.Y folder is all it takes for this to start it.
+set "PHP_FOUND="
+for /d %%D in ("%ROOT%\php\php-*") do call :start_php "%%~fD"
+if not defined PHP_FOUND echo   SKIPPED - no php\php-X.Y folder with php-cgi.exe under %ROOT%\php
 
-echo [3/6] PHP 8.2  (port 9082) ...
-if exist "%ROOT%\php\php-8.2\php-cgi.exe" (
-    start /B /D "%ROOT%\php\php-8.2" "PHP82-CGI" "%ROOT%\php\php-8.2\php-cgi.exe" -b 127.0.0.1:9082
-) else ( echo   SKIPPED - %ROOT%\php\php-8.2\php-cgi.exe not found )
-
-echo [4/6] PHP 8.5  (port 9085) ...
-if exist "%ROOT%\php\php-8.5\php-cgi.exe" (
-    start /B /D "%ROOT%\php\php-8.5" "PHP85-CGI" "%ROOT%\php\php-8.5\php-cgi.exe" -b 127.0.0.1:9085
-) else ( echo   SKIPPED - %ROOT%\php\php-8.5\php-cgi.exe not found ^(download PHP 8.5 to enable^) )
-
-echo [5/6] RabbitMQ 4.3.2  (ports 5672 / 15672) ...
+echo [3/7] RabbitMQ 4.3.2  (ports 5672 / 15672) ...
 if exist "%ROOT%\rabbitmq\sbin\rabbitmq-server.bat" (
     REM The same loopback-only conf `devcrate start` writes, unless one is there.
     if not exist "%RABBITMQ_BASE%" mkdir "%RABBITMQ_BASE%"
@@ -52,10 +45,30 @@ if exist "%ROOT%\rabbitmq\sbin\rabbitmq-server.bat" (
     start /B "RabbitMQ" cmd /c ""%ROOT%\rabbitmq\sbin\rabbitmq-server.bat" -detached"
 ) else ( echo   SKIPPED - %ROOT%\rabbitmq\sbin\rabbitmq-server.bat not found )
 
+REM The three below are started exactly as `devcrate start` starts them, with
+REM their output discarded as it does: each keeps its own log.
+echo [4/7] PostgreSQL  (port 5432) ...
+if exist "%ROOT%\postgres\data\PG_VERSION" (
+    REM postgres.exe itself, never pg_ctl, which forks the server and exits.
+    start /B "PostgreSQL" "%ROOT%\postgres\bin\postgres.exe" -D "%ROOT%\postgres\data" -p 5432 >nul 2>&1
+) else ( echo   SKIPPED - %ROOT%\postgres\data\PG_VERSION not found )
+
+echo [5/7] Redis  (port 6379) ...
+if exist "%ROOT%\redis\redis-server.exe" (
+    REM devcrate.conf by a relative name, from its own folder: the msys2 build
+    REM misreads a drive-letter path given on the command line.
+    start /B /D "%ROOT%\redis" "Redis" "%ROOT%\redis\redis-server.exe" devcrate.conf >nul 2>&1
+) else ( echo   SKIPPED - %ROOT%\redis\redis-server.exe not found )
+
+echo [6/7] Mailpit  (SMTP 1025, inbox 8025) ...
+if exist "%ROOT%\mailpit\mailpit.exe" (
+    start /B /D "%ROOT%\mailpit" "Mailpit" "%ROOT%\mailpit\mailpit.exe" --listen 127.0.0.1:8025 --smtp 127.0.0.1:1025 --database data\mailpit.db --log-file data\mailpit.log --smtp-auth-accept-any --smtp-auth-allow-insecure --disable-version-check >nul 2>&1
+) else ( echo   SKIPPED - %ROOT%\mailpit\mailpit.exe not found )
+
 REM Give php-cgi a moment to bind before nginx starts proxying
 timeout /t 2 /nobreak > nul
 
-echo [6/6] Nginx ...
+echo [7/7] Nginx ...
 REM --- Resolve the nginx prefix and binary -------------------------------
 REM The prefix is the folder holding conf\, logs\, and temp\ -- what -p is
 REM given. Two layouts answer to that and both keep working: the current
@@ -94,10 +107,11 @@ if not defined NGX_EXE (
 echo.
 echo All services started.
 echo   MariaDB  -^>  127.0.0.1:3306  (user: root, no password)
-echo   PHP 7.4  -^>  127.0.0.1:9074
-echo   PHP 8.2  -^>  127.0.0.1:9082
-echo   PHP 8.5  -^>  127.0.0.1:9085
+for /d %%D in ("%ROOT%\php\php-*") do call :show_php "%%~fD"
 echo   RabbitMQ -^>  127.0.0.1:5672  (mgmt UI http://127.0.0.1:15672  guest/guest)
+echo   Postgres -^>  127.0.0.1:5432
+echo   Redis    -^>  127.0.0.1:6379
+echo   Mailpit  -^>  SMTP 127.0.0.1:1025, inbox http://127.0.0.1:8025
 echo   Nginx    -^>  :80 / :443
 echo.
 echo --- Vhosts (conf/sites/*.conf) ---
@@ -110,3 +124,28 @@ echo   supplier.qhomedata.id.test       -^>  PHP 7.4  (CodeIgniter 2, projects\s
 echo   supplier.qhomemart.cloud.test    -^>  PHP 7.4  (CodeIgniter 2, projects\supplier.qhomemart.cloud)
 echo.
 echo Run stop.bat to shut everything down cleanly.
+goto :eof
+
+REM ---------------------------------------------------------------------------
+REM :start_php <folder> -- one PHP version as a FastCGI worker. A subroutine
+REM rather than delayed expansion, so a "!" in the stack's path is harmless.
+:start_php
+set "PHP_DIR=%~1"
+set "PHP_VER=%~nx1"
+set "PHP_VER=%PHP_VER:php-=%"
+set "PHP_DIGITS=%PHP_VER:.=%"
+if not exist "%PHP_DIR%\php-cgi.exe" (
+    echo   SKIPPED - %PHP_DIR%\php-cgi.exe not found
+    goto :eof
+)
+set "PHP_FOUND=1"
+echo   PHP %PHP_VER%  (port 90%PHP_DIGITS%)
+start /B /D "%PHP_DIR%" "PHP%PHP_DIGITS%-CGI" "%PHP_DIR%\php-cgi.exe" -b 127.0.0.1:90%PHP_DIGITS%
+goto :eof
+
+:show_php
+set "PHP_VER=%~nx1"
+set "PHP_VER=%PHP_VER:php-=%"
+set "PHP_DIGITS=%PHP_VER:.=%"
+if exist "%~1\php-cgi.exe" echo   PHP %PHP_VER%  -^>  127.0.0.1:90%PHP_DIGITS%
+goto :eof
