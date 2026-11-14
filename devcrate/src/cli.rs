@@ -469,7 +469,8 @@ pub struct ServiceArgs {
 #[derive(Debug, Args)]
 pub struct InstallArgs {
     /// Runtime to install: `php`, `nginx`, `composer`, `mariadb`, `rabbitmq`,
-    /// `erlang`, `node`, `bun`, `postgres`, or `python`.
+    /// `erlang`, `node`, `bun`, `postgres`, `python`, `redis`, `adminer`, or
+    /// `mailpit`.
     pub runtime: String,
     /// Version to install: 8.4, 84, and php-8.4 for PHP; 1.31.3 or the series
     /// 1.31 for nginx; a line (stable, lts) or an exact version for Composer; an
@@ -491,10 +492,11 @@ pub struct UninstallArgs {
     pub runtime: String,
     /// Version to remove, for the runtimes that have versions (php, nginx,
     /// node, bun, python). Omitted: list what is installed. Ignored for
-    /// composer, mariadb, rabbitmq, erlang, and postgres, which have only one.
+    /// composer, mariadb, rabbitmq, erlang, postgres, redis, adminer, and
+    /// mailpit, which have only one.
     pub version: Option<String>,
-    /// Also delete the data directory a database service (mariadb, postgres,
-    /// rabbitmq) keeps beside its binaries. Irreversible, so it must be paired
+    /// Also delete the data directory a service (mariadb, postgres, rabbitmq,
+    /// redis, mailpit) keeps beside its binaries. Irreversible, so it must be paired
     /// with --force; left off, the data directory survives and everything else
     /// is removed.
     #[arg(long)]
@@ -504,4 +506,26 @@ pub struct UninstallArgs {
     /// Also required together with --data to actually delete a data directory.
     #[arg(long)]
     pub force: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `install --help` names every runtime `install` accepts: the list is
+    /// read from the error `Runtime::parse` gives for an unknown name, so a
+    /// runtime added there and not here fails this.
+    #[test]
+    fn install_help_names_every_runtime() {
+        use clap::CommandFactory;
+
+        let known = format!("{:#}", crate::install::Runtime::parse("no-such-runtime").unwrap_err());
+        let names: Vec<&str> = known.split("Known:").nth(1).unwrap().split(',').map(str::trim).collect();
+        assert!(names.len() >= 13, "{names:?}");
+        let mut cli = Cli::command();
+        let help = cli.find_subcommand_mut("install").unwrap().render_long_help().to_string();
+        for name in names {
+            assert!(help.contains(&format!("`{name}`")), "{name} missing from:\n{help}");
+        }
+    }
 }
