@@ -85,58 +85,57 @@ pub fn update_devcrate_block(content: &str, mut entries: Vec<String>) -> (String
     entries.sort();
     entries.dedup();
 
-    let lines: Vec<&str> = content.lines().collect();
-    let mut begin_idx = None;
-    let mut end_idx = None;
+    // Every line outside the block is kept byte for byte, its line ending
+    // included; the block's own lines use the file's style -- CRLF unless the
+    // file is LF throughout -- so an LF hosts file is not turned into CRLF.
+    let nl = if content.contains("\r\n") || !content.contains('\n') { "\r\n" } else { "\n" };
+    let raw: Vec<&str> = content.split_inclusive('\n').collect();
+    let bare = |line: &str| line.trim_end_matches(['\r', '\n']).trim().to_string();
 
-    for (i, line) in lines.iter().enumerate() {
-        if line.trim() == BEGIN_MARKER {
-            begin_idx = Some(i);
-        } else if line.trim() == END_MARKER {
-            end_idx = Some(i);
-        }
-    }
+    let begin_idx = raw.iter().rposition(|line| bare(line) == BEGIN_MARKER);
+    let end_idx = raw.iter().rposition(|line| bare(line) == END_MARKER);
 
-    let new_block_lines: Vec<String> = if entries.is_empty() {
-        vec![]
-    } else {
-        let mut b = vec![BEGIN_MARKER.to_string()];
+    let mut block = String::new();
+    if !entries.is_empty() {
+        block.push_str(BEGIN_MARKER);
+        block.push_str(nl);
         for entry in &entries {
-            b.push(format!("127.0.0.1   {entry}"));
+            block.push_str(&format!("127.0.0.1   {entry}{nl}"));
         }
-        b.push(END_MARKER.to_string());
-        b
-    };
-
-    let mut result_lines = Vec::new();
-    if let (Some(start), Some(end)) = (begin_idx, end_idx) {
-        if start < end {
-            result_lines.extend_from_slice(&lines[..start]);
-            for l in &new_block_lines {
-                result_lines.push(l.as_str());
-            }
-            if end + 1 < lines.len() {
-                result_lines.extend_from_slice(&lines[end + 1..]);
-            }
-        } else {
-            result_lines.extend_from_slice(&lines);
-            if !new_block_lines.is_empty() {
-                result_lines.extend(new_block_lines.iter().map(|s| s.as_str()));
-            }
-        }
-    } else {
-        result_lines.extend_from_slice(&lines);
-        if !new_block_lines.is_empty() {
-            if !result_lines.is_empty() && !result_lines.last().unwrap().is_empty() {
-                result_lines.push("");
-            }
-            result_lines.extend(new_block_lines.iter().map(|s| s.as_str()));
-        }
+        block.push_str(END_MARKER);
+        block.push_str(nl);
     }
+    // Ends with a line break exactly when the file did.
+    let ends_open = !content.is_empty() && !content.ends_with('\n');
 
-    let mut new_content = result_lines.join("\r\n");
-    if content.ends_with("\n") || content.ends_with("\r\n") {
-        new_content.push_str("\r\n");
+    let mut new_content = String::with_capacity(content.len() + block.len());
+    match (begin_idx, end_idx) {
+        (Some(start), Some(end)) if start < end => {
+            new_content.push_str(&raw[..start].concat());
+            new_content.push_str(&block);
+            new_content.push_str(&raw[end + 1..].concat());
+            if end + 1 == raw.len() && ends_open && new_content.ends_with(nl) {
+                new_content.truncate(new_content.len() - nl.len());
+            }
+        }
+        (begin, end) => {
+            new_content.push_str(content);
+            if !block.is_empty() {
+                if ends_open {
+                    new_content.push_str(nl);
+                }
+                // A blank line before a fresh block, not before one whose
+                // markers were found out of order.
+                let well_formed = begin.is_none() || end.is_none();
+                if well_formed && !content.is_empty() && raw.last().is_some_and(|l| !bare(l).is_empty()) {
+                    new_content.push_str(nl);
+                }
+                new_content.push_str(&block);
+                if ends_open || content.is_empty() {
+                    new_content.truncate(new_content.len() - nl.len());
+                }
+            }
+        }
     }
 
     let changed = new_content != content;
@@ -347,6 +346,38 @@ mod tests {
         assert!(!dir.join("hosts.devcrate-tmp").exists(), "no temp file left behind");
         // A prompt would have waited for an answer; this returns at once.
         assert!(took < std::time::Duration::from_secs(5), "took {took:?}");
+    }
+
+    /// Lines outside the block are kept byte for byte, line endings included,
+    /// and the block takes the file's own style: an LF file stays LF.
+    #[test]
+    fn the_hosts_file_keeps_its_line_endings() {
+        let entries = || vec!["shop.test".to_string()];
+
+        let lf = "127.0.0.1 localhost\n# mine\n";
+        let (out, _) = update_devcrate_block(lf, entries());
+        assert!(!out.contains('\r'), "LF stays LF: {out:?}");
+        assert!(out.starts_with(lf), "{out:?}");
+        assert!(out.ends_with("# --- devcrate end ---\n"), "{out:?}");
+
+        let crlf = "127.0.0.1 localhost\r\n# mine\r\n";
+        let (out, _) = update_devcrate_block(crlf, entries());
+        assert_eq!(out.matches('\n').count(), out.matches("\r\n").count(), "CRLF stays CRLF: {out:?}");
+
+        // Mixed: someone's LF line inside a CRLF file is not rewritten, and a
+        // block that is already right changes nothing at all.
+        let mixed = "a\r\nb\nc\r\n\r\n# --- devcrate begin ---\r\n127.0.0.1   shop.test\r\n# --- devcrate end ---\r\nd\n";
+        let (out, changed) = update_devcrate_block(mixed, entries());
+        assert_eq!(out, mixed);
+        assert!(!changed);
+        let (out, _) = update_devcrate_block(mixed, vec!["shop.test".into(), "blog.test".into()]);
+        assert!(out.starts_with("a\r\nb\nc\r\n") && out.ends_with("# --- devcrate end ---\r\nd\n"), "{out:?}");
+
+        // No line break at the end before, none after.
+        let (out, _) = update_devcrate_block("127.0.0.1 localhost", entries());
+        assert!(out.ends_with("shop.test\r\n# --- devcrate end ---"), "{out:?}");
+        let (out, _) = update_devcrate_block(&out, vec![]);
+        assert_eq!(out, "127.0.0.1 localhost\r\n", "as the old code had it: {out:?}");
     }
 
     #[test]

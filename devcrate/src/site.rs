@@ -661,34 +661,33 @@ pub fn set_php(stack: &Stack, host: &str, wanted: &str) -> Result<u8> {
 /// address the generator writes is touched -- a `fastcgi_pass` pointing at a
 /// unix socket or another host is somebody's deliberate choice, not a port to
 /// swap.
+///
+/// Each line keeps its own line ending, so a conf saved with CRLF stays CRLF
+/// and one with LF stays LF -- only the lines named above change at all.
 fn repoint(text: &str, php_name: &str, php_id: &str, port: u16) -> (String, usize) {
     let mut changed = 0;
-    let ends_with_newline = text.ends_with('\n');
-
-    let mut out: Vec<String> = Vec::new();
-    for line in text.lines() {
+    let mut out = String::with_capacity(text.len());
+    for raw in text.split_inclusive('\n') {
+        let line = raw.trim_end_matches(['\r', '\n']);
+        let ending = &raw[line.len()..];
         let trimmed = line.trim_start();
         let indent = &line[..line.len() - trimmed.len()];
 
         if let Some(rest) = trimmed.strip_prefix("fastcgi_pass")
             && rest.trim_start().starts_with("127.0.0.1:")
         {
-            out.push(format!("{indent}fastcgi_pass    127.0.0.1:{port};"));
+            out.push_str(&format!("{indent}fastcgi_pass    127.0.0.1:{port};"));
             changed += 1;
         } else if trimmed.starts_with("# PHP") && trimmed.contains("->") {
             // The generated header. Keeping it in step matters because it is
             // what someone reads before `devcrate site list`.
-            out.push(format!("{indent}# PHP     : {php_id} ({php_name}) -> 127.0.0.1:{port}"));
+            out.push_str(&format!("{indent}# PHP     : {php_id} ({php_name}) -> 127.0.0.1:{port}"));
         } else {
-            out.push(line.to_string());
+            out.push_str(line);
         }
+        out.push_str(ending);
     }
-
-    let mut text = out.join("\n");
-    if ends_with_newline {
-        text.push('\n');
-    }
-    (text, changed)
+    (out, changed)
 }
 
 #[derive(Debug)]
@@ -1347,4 +1346,20 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&root);
     }
+
+    /// `site set-php` changes the `fastcgi_pass` line and nothing else: a conf
+    /// saved with CRLF keeps CRLF, line by line.
+    #[test]
+    fn repointing_keeps_each_lines_ending() {
+        let crlf = "# PHP     : php-8.2 (PHP 8.2) -> 127.0.0.1:9082\r\nserver {\r\n    fastcgi_pass    127.0.0.1:9082;\n}\r\n";
+        let (out, changed) = repoint(crlf, "PHP 8.5", "php-8.5", 9085);
+        assert_eq!(changed, 1);
+        assert_eq!(
+            out,
+            "# PHP     : php-8.5 (PHP 8.5) -> 127.0.0.1:9085\r\nserver {\r\n    fastcgi_pass    127.0.0.1:9085;\n}\r\n"
+        );
+        let (out, _) = repoint("server {\n    fastcgi_pass 127.0.0.1:9082;\n}", "PHP 8.5", "php-8.5", 9085);
+        assert_eq!(out, "server {\n    fastcgi_pass    127.0.0.1:9085;\n}");
+    }
+
 }
