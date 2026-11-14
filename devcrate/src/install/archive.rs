@@ -96,7 +96,10 @@ pub fn extract(
         let entry = zip
             .by_index(index)
             .with_context(|| format!("reading entry {index} of {}", archive.display()))?;
-        entries.push((entry.name().to_string(), entry.is_dir()));
+        // Since zip 9 a name that is not valid text is an error, not a lossy
+        // string: an entry whose name cannot be read is not unpacked.
+        let name = entry.name().with_context(|| format!("reading the name of entry {index} of {}", archive.display()))?;
+        entries.push((name.to_string(), entry.is_dir()));
     }
     let stripped_root = common_root(&entries);
 
@@ -106,7 +109,10 @@ pub fn extract(
             .by_index(index)
             .with_context(|| format!("reading entry {index} of {}", archive.display()))?;
 
-        let name = entry.name().to_string();
+        let name = entry
+            .name()
+            .with_context(|| format!("reading the name of entry {index} of {}", archive.display()))?
+            .to_string();
         let Some(relative) = safe_entry_path(&name) else {
             bail!(
                 "{} contains an unsafe entry path and was not unpacked: {name:?}",
