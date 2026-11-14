@@ -95,7 +95,12 @@ selected by `phpuse`.
 Everything but nginx is bound to loopback: MariaDB and PostgreSQL by their
 configs, Redis and Mailpit by the confs and arguments devcrate gives them, and
 RabbitMQ by the `data\rabbitmq.conf` devcrate writes on install and start
-(unless one is there already). MariaDB's password-less `root` is therefore not
+(unless one is there already) -- AMQP and the management UI, that is. Its
+Erlang distribution port (25672) and epmd (4369) stay on every interface,
+guarded by the Erlang cookie: the node is named after the hostname, which
+resolves to the LAN address, so on loopback the node either does not start
+(epmd) or cannot be reached by `rabbitmqctl` for a graceful stop
+(distribution). MariaDB's password-less `root` is therefore not
 reachable from the network. nginx listens on every interface, so the vhosts can
 be opened from another device on the LAN -- a phone, say -- when Windows
 Firewall lets it; Adminer refuses any request not from `127.0.0.1` or `::1`.

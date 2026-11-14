@@ -15,8 +15,17 @@ pub struct Configured {
 
 /// RabbitMQ's own defaults listen on every interface. Like Redis and Mailpit,
 /// the stack's broker is for this machine only, so AMQP and the management UI
-/// are bound to loopback. The node's Erlang distribution port and epmd are
-/// left as RabbitMQ sets them.
+/// are bound to loopback.
+///
+/// The node's Erlang distribution port (25672) and epmd (4369) stay on every
+/// interface, on purpose: the node is `rabbit@<HOSTNAME>`, and the hostname
+/// resolves to the LAN address, not 127.0.0.1. With epmd on loopback
+/// (`ERL_EPMD_ADDRESS`) the node cannot register and does not start; with
+/// `distribution.listener.interface = 127.0.0.1` it starts, but `rabbitmqctl`
+/// cannot reach it, so `devcrate stop` and `stop.bat` lose the graceful
+/// shutdown and fall back to terminating the broker. Renaming the node to
+/// `rabbit@localhost` would fix both and orphan its data directory, which is
+/// named after the node. Both ports are guarded by the Erlang cookie.
 pub const LOOPBACK_CONF: &str = "\
 # Written by devcrate: the broker answers this machine only.
 listeners.tcp.default = 127.0.0.1:5672
