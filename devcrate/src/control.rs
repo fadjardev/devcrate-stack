@@ -767,6 +767,9 @@ fn launch(stack: &Stack, service: &Service) -> Result<()> {
                 return Err(anyhow!("{} not found", stack.rel(&server)));
             }
             let rabbit_dir = ancestor(&service.install_marker, 2)?;
+            // A broker installed before devcrate wrote this conf gets it on
+            // its next start; one already there is never touched.
+            crate::install::rabbitmq_ensure_conf(&rabbit_dir.join("data"))?;
             let mut command = Command::new("cmd");
             command
                 .args(["/c", "call"])

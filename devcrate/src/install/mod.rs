@@ -34,6 +34,7 @@ mod php;
 mod postgres;
 mod python;
 mod rabbitmq;
+pub use rabbitmq::ensure_conf as rabbitmq_ensure_conf;
 mod redis;
 pub mod wordpress;
 
@@ -309,6 +310,7 @@ pub struct RabbitMqInstalled {
     pub dir: String,
     pub data_dir_created: bool,
     pub plugins_file_created: bool,
+    pub conf_created: bool,
 }
 
 #[derive(Debug)]
@@ -520,6 +522,7 @@ fn rabbitmq_from_archive(
             dir: stack.rel(&dest),
             data_dir_created: configured.data_dir_created && !kept_data,
             plugins_file_created: configured.plugins_file_created && !kept_data,
+            conf_created: configured.conf_created && !kept_data,
         }),
     })
 }
@@ -3292,6 +3295,9 @@ fn print_rabbitmq_installed(done: &Installed, rabbitmq: &RabbitMqInstalled, emit
     }
     if rabbitmq.plugins_file_created {
         emit_line!(emit, "  enabled rabbitmq_management plugin");
+    }
+    if rabbitmq.conf_created {
+        emit_line!(emit, "  wrote data/rabbitmq.conf: AMQP and the management UI on 127.0.0.1 only");
     }
     if done.replaced {
         emit_line!(emit, "  replaced the previous RabbitMQ installation");

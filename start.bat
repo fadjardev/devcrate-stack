@@ -39,6 +39,13 @@ if exist "%ROOT%\php\php-8.5\php-cgi.exe" (
 
 echo [5/6] RabbitMQ 4.3.2  (ports 5672 / 15672) ...
 if exist "%ROOT%\rabbitmq\sbin\rabbitmq-server.bat" (
+    REM The same loopback-only conf `devcrate start` writes, unless one is there.
+    if not exist "%RABBITMQ_BASE%" mkdir "%RABBITMQ_BASE%"
+    if not exist "%RABBITMQ_BASE%\rabbitmq.conf" (
+        echo # Written by devcrate: the broker answers this machine only.
+        echo listeners.tcp.default = 127.0.0.1:5672
+        echo management.tcp.ip = 127.0.0.1
+    ) > "%RABBITMQ_BASE%\rabbitmq.conf"
     REM -detached: run the broker as a background Erlang node. Do NOT redirect
     REM stdout/stderr to a file -- OTP's terminal driver crashes with "nouser"
     REM when its console is a non-tty. Logs go to %RABBITMQ_BASE%\log\rabbit@HOST.log

@@ -92,6 +92,14 @@ selected by `phpuse`.
 | Nginx HTTP | `0.0.0.0:80` | redirects to HTTPS |
 | Nginx HTTPS | `0.0.0.0:443` | TLS via mkcert |
 
+Everything but nginx is bound to loopback: MariaDB and PostgreSQL by their
+configs, Redis and Mailpit by the confs and arguments devcrate gives them, and
+RabbitMQ by the `data\rabbitmq.conf` devcrate writes on install and start
+(unless one is there already). MariaDB's password-less `root` is therefore not
+reachable from the network. nginx listens on every interface, so the vhosts can
+be opened from another device on the LAN -- a phone, say -- when Windows
+Firewall lets it; Adminer refuses any request not from `127.0.0.1` or `::1`.
+
 The FastCGI port convention is `90` + the PHP version digits: `php-7.4 -> 9074`,
 `php-8.2 -> 9082`, `php-8.5 -> 9085`.
 
