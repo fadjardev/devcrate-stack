@@ -114,14 +114,11 @@ echo   Redis    -^>  127.0.0.1:6379
 echo   Mailpit  -^>  SMTP 127.0.0.1:1025, inbox http://127.0.0.1:8025
 echo   Nginx    -^>  :80 / :443
 echo.
-echo --- Vhosts (conf/sites/*.conf) ---
-echo   api-qlearning.qhomeapps.test     -^>  PHP 8.2  (CodeIgniter 4, projects\api-qlearning.qhomeapps.id\public)
-echo   asm.qhomemart.test               -^>  PHP 8.2  (CodeIgniter 3, projects\asm.qhomemart.cloud)
-echo   hris.qhomedata.test              -^>  PHP 8.2  (CodeIgniter 3, projects\hris.qhomedata.id)
-echo   ic-stokdigital.test              -^>  PHP 7.4  (CodeIgniter 3, projects\ic-stokdigital)
-echo   qlearning.qhomeapps.test         -^>  PHP 8.2  (CodeIgniter 4, projects\qlearning.qhomeapps.id\public)
-echo   supplier.qhomedata.id.test       -^>  PHP 7.4  (CodeIgniter 2, projects\supplier.qhomedata.id)
-echo   supplier.qhomemart.cloud.test    -^>  PHP 7.4  (CodeIgniter 2, projects\supplier.qhomemart.cloud)
+echo --- Vhosts (conf\sites\*.conf) ---
+REM Read from the confs themselves, so the list is this stack's and never stale.
+set "SITES_FOUND="
+if defined NGX_PREFIX for %%F in ("%NGX_PREFIX%\conf\sites\*.conf") do call :show_site "%%~fF"
+if not defined SITES_FOUND echo   (none yet -- `devcrate site add ^<host^>` or a folder under projects\)
 echo.
 echo Run stop.bat to shut everything down cleanly.
 goto :eof
@@ -141,6 +138,15 @@ if not exist "%PHP_DIR%\php-cgi.exe" (
 set "PHP_FOUND=1"
 echo   PHP %PHP_VER%  (port 90%PHP_DIGITS%)
 start /B /D "%PHP_DIR%" "PHP%PHP_DIGITS%-CGI" "%PHP_DIR%\php-cgi.exe" -b 127.0.0.1:90%PHP_DIGITS%
+goto :eof
+
+REM :show_site <conf> -- one vhost and what serves it: a PHP-CGI port or a proxy.
+:show_site
+set "SITES_FOUND=1"
+set "SITE_BACKEND=static files"
+for /f "tokens=2 delims=:;" %%P in ('findstr /r /c:"^ *fastcgi_pass  *127\.0\.0\.1:" "%~1" 2^>nul') do set "SITE_BACKEND=PHP-CGI 127.0.0.1:%%P"
+for /f "tokens=3 delims=:;/" %%P in ('findstr /r /c:"^ *proxy_pass  *http://localhost:" "%~1" 2^>nul') do set "SITE_BACKEND=proxy localhost:%%P"
+echo   %~n1  -^>  %SITE_BACKEND%
 goto :eof
 
 :show_php

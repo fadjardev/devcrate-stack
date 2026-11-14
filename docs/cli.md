@@ -332,12 +332,12 @@ Each service is asked to shut itself down first — `nginx -s quit`,
 afterwards is terminated. A FastCGI pool has no shutdown command, so it is
 terminated outright, exactly as the script does it.
 
-Two differences from `stop.bat`:
+Both stop only this stack: a process is matched on its executable's path, so
+a second stack or a system-wide MariaDB is left alone. (`stop.bat` used
+`taskkill /F /IM php-cgi.exe`, which took every `php-cgi.exe` on the machine; it
+now terminates only what runs from under its own root.) One difference from
+`stop.bat` remains:
 
-- **It only stops this stack.** `taskkill /F /IM php-cgi.exe` kills every
-  `php-cgi.exe` on the machine; this matches on the executable path, so a second
-  stack or a system-wide MariaDB is left alone. Same for `erl.exe`, `epmd.exe`,
-  and `mariadbd.exe`.
 - **It waits only as long as it needs to.** The script pays a flat
   `timeout /t 4` after nginx whether or not nginx has gone. This polls, so a
   clean stack goes down in about a second; the per-service ceilings (10s for
