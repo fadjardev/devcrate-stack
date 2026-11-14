@@ -28,6 +28,8 @@ alternative to Laragon and XAMPP; see
 [Toward a Laragon / XAMPP alternative](#toward-a-laragon--xampp-alternative).
 The same review recorded where the docs had drifted from the code, in
 [docs/issue/docs-drift-audit-2026-10-15.md](issue/docs-drift-audit-2026-10-15.md).
+A later review, on 2026-11-14, of what could be adopted from Lerd is recorded in
+[Candidates from a review of Lerd](#candidates-from-a-review-of-lerd).
 
 ---
 
@@ -557,6 +559,98 @@ Lower in the ranking, recorded so they are not lost:
   need a second form. The cost is much larger than the audience.
 - **XAMPP's extras** — FileZilla, Mercury, Tomcat, Perl. Little used for modern
   PHP development.
+
+---
+
+## Candidates from a review of Lerd
+
+A review on 2026-11-14 of [Lerd](https://lerd.sh/), a local PHP stack for
+Linux and macOS (rootless Podman containers; on Windows it runs inside WSL2,
+not natively), for what Devcrate could take from it. The pages read were the
+landing page, *Services*, *Web UI*, *MCP*, *Sites*, and *PHP*; the command
+reference was not, so the list may be incomplete.
+
+Lerd's *mechanisms* mostly do not transfer — containers and a web dashboard
+are exactly what Devcrate chose not to be — so what is recorded here is the
+*workflow* each feature serves, restated for a native Windows stack driven
+from the TUI and CLI. Every item is `proposed`.
+
+**Already covered, so not candidates:** several PHP versions served at once
+(Lerd's per-version FPM containers), `park` / `link` (`site sync`, `site add`),
+`secure` (mkcert and `cert renew`), `open` / `code` (`o` / `e` / `c` in the
+Sites pane), Mailpit, Adminer and `db create|drop|import|export`, `php:ext` and
+`xdebug on|off` (item 10), host-proxied dev servers (`dev start`,
+`site add --proxy`), `framework project_new` (`devcrate new`), and autostart.
+
+Ranked by how much each would change day-to-day use:
+
+1. **A per-project PHP on the command line** — `devcrate php`, `devcrate
+   composer`, `devcrate a` (artisan), and `devcrate <bin>` for anything in
+   `vendor/bin` (pest, pint, phpstan). Today a vhost can serve on PHP 7.4
+   while `php` in a terminal is whatever `php\current` names, so the CLI and
+   the web disagree. The version can be read from the `fastcgi_pass` of the
+   vhost whose root contains the working directory, which needs no new file.
+   Lerd does this with shims that exec into the project's FPM container.
+2. **A per-project config file** (`.devcrate.toml`, Lerd's `.lerd.yaml`),
+   committed with the project: its PHP and Node versions, the workers it runs,
+   the services it needs. `.php-version` and `.node-version` read as well.
+   `.node-version` holds an exact version, which sidesteps the constraint
+   parsing that left item 5's per-project Node detection undelivered.
+3. **Laravel workers under supervision** — queue, schedule, horizon, reverb —
+   an extension of `dev start` rather than a new mechanism: shown in the Sites
+   pane, stopped with the stack. The scheduler matters most on Windows, which
+   has no cron, so `schedule:work` is otherwise left running in a terminal of
+   its own. Lerd declares them under `workers:` and syncs CLI and UI toggles
+   back into the file.
+4. **`devcrate env`** — write the stack's connection values (database, Redis,
+   Mailpit, `APP_URL`) into an *existing* project's `.env`, never touching
+   `.env.example`. Quick-create already does this for a new project; this makes
+   it a command of its own.
+5. **An MCP server (`devcrate mcp`)** so a coding agent can drive the stack:
+   sites, services, databases, PHP extensions, logs. "One core, two front
+   ends" already makes it cheap — the core functions return structured results,
+   and MCP would be a third front end over them. Lerd also writes the
+   per-project client configs (`mcp:inject` / `mcp:eject`).
+6. **`devcrate doctor`** — one command that checks the things that otherwise
+   fail mysteriously: the Visual C++ redistributable (the preflight item 2
+   asked for and that is not built), ports, the hosts entry, certificate
+   expiry, the extensions `composer.json` requires, and workers that are
+   failing; each finding with the command that fixes it.
+7. **`devcrate share`**, already under [Further candidates](#further-candidates),
+   gains detail: Lerd offers ngrok, Cloudflare Tunnel, Expose, Serveo, and
+   localhost.run, and a separate LAN mode. LAN sharing is the cheaper half
+   here — a listen on the LAN address and an alias vhost.
+8. **The command palette**, also already a candidate, is confirmed as useful:
+   Lerd has one in both its web UI (Ctrl+K or `/`) and its TUI (Ctrl+P).
+9. **Small, cheap additions:**
+   - named database snapshots — `db snapshot` / `db restore`, on top of the
+     export and import that exist;
+   - pausing a site — the vhost disabled without being removed;
+   - backups of the vhost confs before a change (Lerd keeps the last ten of
+     its site registry);
+   - `devcrate cleanup` — prune `_downloads\`, previewing first;
+   - on a port collision, take the next free port and write it into `.env`,
+     where `start` now only reports the collision.
+10. **Services defined in configuration** — a `[services.<name>]` entry in
+    `devcrate.toml` naming a command, a port, and a data directory, supervised
+    like the built-in services. This is the native counterpart of Lerd's
+    40-odd container presets: Meilisearch, Typesense, or an S3-compatible store
+    could be added with no new code, *provided the vendor ships a Windows
+    build* — which is what limits it.
+
+**Considered and not taken from Lerd:**
+
+- **The web dashboard, PWA, and system tray** — Devcrate stays a terminal tool;
+  see the decision above.
+- **Containers (`Containerfile.lerd`, per-site images)** — Devcrate is native
+  and portable by design.
+- **Git worktree management, dashboard themes, and fifteen UI languages** —
+  large for what a terminal tool gains from them.
+- **Request timing, N+1 query detection, the SPX profiler, and the
+  `dump()` bridge** — useful, but each is a project of its own; worth
+  revisiting only once the items above are done.
+- **Lerd's preset catalogue as such** — many of its services have no native
+  Windows build; item 10 is the part that transfers.
 
 ---
 
