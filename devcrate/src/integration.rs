@@ -163,6 +163,9 @@ pub struct Places {
     pub desktop: PathBuf,
     /// Windows Terminal's fragments folder, when Windows Terminal is installed.
     pub wt_fragments: Option<PathBuf>,
+    /// `wt.exe`, when Windows Terminal is installed: the shortcuts open the
+    /// dashboard's own profile through it rather than in a plain console.
+    pub wt: Option<PathBuf>,
     /// The JetBrains Mono family installed for this user, by the name Windows
     /// knows it under, for the Windows Terminal profile. `None` when there is
     /// none: the profile then names no font and Windows Terminal uses its own.
@@ -195,10 +198,15 @@ impl Places {
             .filter(|name| !name.is_empty())
             .map(str::to_string);
         let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
-        let wt_fragments = local
-            .filter(|local| local.join("Microsoft").join("WindowsApps").join("wt.exe").exists())
+        let wt = local
+            .as_ref()
+            .map(|local| local.join("Microsoft").join("WindowsApps").join("wt.exe"))
+            .filter(|wt| wt.exists());
+        let wt_fragments = wt
+            .as_ref()
+            .and(local)
             .map(|local| local.join("Microsoft").join("Windows Terminal").join("Fragments"));
-        Ok(Places { programs, desktop, wt_fragments, font })
+        Ok(Places { programs, desktop, wt_fragments, wt, font })
     }
 }
 
@@ -221,14 +229,15 @@ pub fn write_shortcuts(stack: &Stack, places: &Places) -> Result<Vec<Made>> {
     let links = [places.programs.join(&name), places.desktop.join(&name)];
     let mut made: Vec<Made> = links.iter().map(|path| Made { path: path.clone(), existed: path.exists() }).collect();
 
+    let (target, args) = shortcut_target(&stack.root, &exe, places.wt.as_deref().filter(|_| places.wt_fragments.is_some()));
     let mut script = String::from("$shell = New-Object -ComObject WScript.Shell\n");
     for link in &links {
         script.push_str(&format!(
             "$s = $shell.CreateShortcut({link})\n$s.TargetPath = {exe}\n$s.Arguments = {args}\n\
              $s.WorkingDirectory = {root}\n$s.Description = {description}\n$s.Save()\n",
             link = ps_quote(&link.to_string_lossy()),
-            exe = ps_quote(&exe.to_string_lossy()),
-            args = ps_quote(&format!("--root \"{}\"", stack.root.display())),
+            exe = ps_quote(&target.to_string_lossy()),
+            args = ps_quote(&args),
             root = ps_quote(&stack.root.to_string_lossy()),
             description = ps_quote(&format!("The devcrate dashboard for {}", stack.root.display())),
         ));
@@ -252,6 +261,22 @@ pub fn write_shortcuts(stack: &Stack, places: &Places) -> Result<Vec<Made>> {
     }
     receipt.write(stack)?;
     Ok(made)
+}
+
+/// What a shortcut runs: Windows Terminal with the dashboard's own profile
+/// when it is installed, `devcrate.exe` itself otherwise.
+///
+/// A `.lnk` to a console program opens it in a plain console window, whose
+/// font and colours devcrate has no say over -- the shortcut's own console
+/// settings are a binary block WScript cannot write. The Windows Terminal
+/// profile `setup` writes beside it is the one place the font and the scheme
+/// are chosen, so with Windows Terminal there the shortcut opens that profile,
+/// named by its GUID, which no other profile can share.
+pub fn shortcut_target(root: &Path, exe: &Path, wt: Option<&Path>) -> (PathBuf, String) {
+    match wt {
+        Some(wt) => (wt.to_path_buf(), format!("-p \"{}\"", profile_guid(root))),
+        None => (exe.to_path_buf(), format!("--root \"{}\"", root.display())),
+    }
 }
 
 /// A Windows Terminal fragment adding one profile that opens the dashboard,
@@ -660,8 +685,10 @@ mod tests {
             programs: base.join("Programs"),
             desktop: base.join("Desktop"),
             wt_fragments: Some(base.join("Fragments")),
+            wt: Some(base.join("wt.exe")),
             font: None,
         };
+        std::fs::write(base.join("wt.exe"), "").unwrap();
         std::fs::create_dir_all(&places.programs).unwrap();
         std::fs::create_dir_all(&places.desktop).unwrap();
         let stack = Stack::open(StackRoot { path: root.clone(), source: RootSource::Flag }).unwrap();
@@ -670,6 +697,17 @@ mod tests {
         assert_eq!(made.len(), 3);
         assert!(made.iter().all(|m| !m.existed && m.path.is_file()), "{made:?}");
         assert!(places.desktop.join("Devcrate (shop).lnk").is_file());
+        // With Windows Terminal there, the shortcut opens the dashboard's profile.
+        let read = powershell(&format!(
+            "$s = (New-Object -ComObject WScript.Shell).CreateShortcut({})\n$s.TargetPath\n$s.Arguments",
+            ps_quote(&places.desktop.join("Devcrate (shop).lnk").to_string_lossy())
+        ))
+        .unwrap();
+        let mut read = read.lines().map(str::trim);
+        // WScript stores the target in its long form; %TEMP% may be 8.3 here.
+        let wt = crate::root::clean(&base.join("wt.exe")).unwrap();
+        assert_eq!(read.next(), Some(wt.to_string_lossy().as_ref()));
+        assert_eq!(read.next(), Some(format!("-p \"{}\"", profile_guid(&root)).as_str()));
         assert_eq!(Receipt::read(&stack).unwrap().files.len(), 3);
 
         let again = write_shortcuts(&stack, &places).unwrap();
@@ -684,5 +722,24 @@ mod tests {
         assert!(!root.join(RECEIPT).exists());
         assert!(undo(&stack).unwrap().removed.is_empty(), "a second undo has nothing to do");
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Windows Terminal there: its profile, by GUID -- the same GUID the
+    /// fragment gives it. Not there: devcrate.exe, as before.
+    #[test]
+    fn a_shortcut_opens_the_dashboards_terminal_profile() {
+        let root = Path::new(r"C:\devcrate");
+        let exe = Path::new(r"C:\devcrate\devcrate.exe");
+        let wt = Path::new(r"C:\Users\me\AppData\Local\Microsoft\WindowsApps\wt.exe");
+
+        let (target, args) = shortcut_target(root, exe, Some(wt));
+        assert_eq!(target, wt);
+        assert_eq!(args, format!("-p \"{}\"", profile_guid(root)));
+        let fragment: serde_json::Value = serde_json::from_str(&wt_fragment(root, exe, None)).unwrap();
+        assert_eq!(fragment["profiles"][0]["guid"], profile_guid(root), "the profile it names is the fragment's");
+
+        let (target, args) = shortcut_target(root, exe, None);
+        assert_eq!(target, exe);
+        assert_eq!(args, r#"--root "C:\devcrate""#);
     }
 }

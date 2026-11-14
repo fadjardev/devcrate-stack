@@ -1055,7 +1055,11 @@ touched. The fragment also carries a colour scheme, `Devcrate`, whose
 background is the dashboard's, and the profile names JetBrains Mono as its font
 when a JetBrains Mono family is installed (the plain one, or a Nerd Font build
 such as `JetBrainsMono NFM`) — a profile naming a font that is not there opens
-with a warning, so none is named then. All three run the stack root's `devcrate.exe` with `--root`. They are
+with a warning, so none is named then. The profile runs the stack root's
+`devcrate.exe` with `--root`. Where Windows Terminal is installed the two
+shortcuts open that profile (`wt.exe -p {<its GUID>}`), so the dashboard gets its
+font and scheme from the Start Menu too; without it they run `devcrate.exe
+--root` in a plain console window, whose font devcrate cannot set. They are
 named `Devcrate`, or `Devcrate (<folder>)` when the root folder is called
 something else, so two stack roots get two sets. A second `setup` rewrites
 them — which also repoints them at a root that has moved — and reports them as

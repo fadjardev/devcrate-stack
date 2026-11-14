@@ -342,9 +342,11 @@ draws characters; the terminal decides what they look like. So the one place
 devcrate can ask for a font is the Windows Terminal profile `devcrate setup`
 writes (see [cli.md](cli.md#devcrate-setup)): that profile names JetBrains Mono
 when a JetBrains Mono family is installed — the plain one or a Nerd Font build
-— and a colour scheme whose background is the dashboard's. Opened any other way
-(a shortcut into a console window, another terminal's own profile), the
-dashboard uses whatever font that terminal is set to. Nothing it draws needs an
+— and a colour scheme whose background is the dashboard's. The Start Menu and
+Desktop shortcuts open that profile when Windows Terminal is installed. Opened
+any other way (the shortcuts on a machine without Windows Terminal, which run it
+in a plain console window, or another terminal's own profile), the dashboard
+uses whatever font that terminal is set to. Nothing it draws needs an
 icon font: every glyph is box drawing, a block element, or a plain geometric
 shape.
 
