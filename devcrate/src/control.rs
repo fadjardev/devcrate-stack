@@ -1002,7 +1002,9 @@ mod tests {
         let system = std::env::var_os("SystemRoot").map(PathBuf::from).unwrap_or_else(|| r"C:\Windows".into());
         std::fs::copy(system.join("System32").join("PING.EXE"), bin.join("node.exe")).unwrap();
         let stack = Stack::open(crate::root::StackRoot {
-            path: root.clone(),
+            // Long, as root::resolve always gives it: %TEMP% can be 8.3 here,
+            // and process paths are compared in their long form.
+            path: crate::root::clean(&root).unwrap(),
             source: crate::root::RootSource::Flag,
         })
         .unwrap();
@@ -1062,7 +1064,7 @@ mod tests {
         std::fs::copy(system.join("System32").join("PING.EXE"), bin.join("mariadbd.exe")).unwrap();
         std::fs::copy(system.join("System32").join("HOSTNAME.EXE"), bin.join("mariadb-admin.exe")).unwrap();
         let stack = Stack::open(crate::root::StackRoot {
-            path: root.clone(),
+            path: crate::root::clean(&root).unwrap(),
             source: crate::root::RootSource::Flag,
         })
         .unwrap();

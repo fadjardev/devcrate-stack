@@ -50,6 +50,20 @@ pub struct ProcessTable {
     entries: Vec<ProcessEntry>,
 }
 
+/// `exe` with any 8.3 short component (`IT-PRO~1`) expanded to its long name.
+///
+/// A process started through a short path reports that path, while the stack's
+/// prefixes are long, so without this `C:\Users\IT-PRO~1\dev\nginx\...` is not
+/// "under" `C:\Users\IT-PROGRAMER\dev\nginx` and the stack loses sight of its
+/// own service. Only a path with a `~` in it pays for the lookup.
+fn long_form(exe: &Path) -> PathBuf {
+    let short = exe.components().any(|c| c.as_os_str().to_string_lossy().contains('~'));
+    match short {
+        true => crate::root::clean(exe).unwrap_or_else(|_| exe.to_path_buf()),
+        false => exe.to_path_buf(),
+    }
+}
+
 impl ProcessTable {
     pub fn scan() -> ProcessTable {
         let mut system = System::new_with_specifics(RefreshKind::nothing().with_processes(
@@ -61,7 +75,7 @@ impl ProcessTable {
             .processes()
             .values()
             .filter_map(|process| {
-                let exe = process.exe()?.to_path_buf();
+                let exe = long_form(process.exe()?);
                 Some(ProcessEntry {
                     pid: process.pid().as_u32(),
                     parent: process.parent().map(|p| p.as_u32()),
@@ -265,6 +279,41 @@ fn supervisors_first(matched: &[&ProcessEntry]) -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A service started through an 8.3 short path is still found under the
+    /// stack's long prefix. %TEMP% is such a path on a machine whose user name
+    /// is longer than eight characters, which is how the stack went blind to
+    /// its own MariaDB when its root was reached through it. Elsewhere both
+    /// spellings are the same and this checks only the ordinary case.
+    #[test]
+    fn a_process_started_through_a_short_path_is_matched() {
+        let dir = std::env::temp_dir().join(format!("devcrate-probe-short-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("svc.exe");
+        std::fs::copy(r"C:\Windows\System32\PING.EXE", &exe).unwrap();
+        let mut child = std::process::Command::new(&exe)
+            .args(["-n", "30", "127.0.0.1"])
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+
+        let long = crate::root::clean(&dir).unwrap();
+        let found = ProcessTable::scan().matching(&long, &[]);
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert!(found.contains(&child.id()), "pid {} not under {}: {found:?}", child.id(), long.display());
+    }
+
+    #[test]
+    fn only_a_path_with_a_tilde_is_looked_up() {
+        let plain = Path::new(r"C:\no\such\place\nginx.exe");
+        assert_eq!(long_form(plain), plain);
+        let missing = Path::new(r"C:\NOSUCH~1\nginx.exe");
+        assert_eq!(long_form(missing), missing, "kept as it was when it cannot be resolved");
+    }
 
     fn entry(pid: u32, parent: u32, name: &str) -> ProcessEntry {
         ProcessEntry {
